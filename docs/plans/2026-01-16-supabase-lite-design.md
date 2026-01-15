@@ -508,7 +508,7 @@ Supabase Lite (dev/small scale)
          │  Export:
          │  • auth_users → auth.users
          │  • app tables → public.*
-         │  • RLS policies (manual translation)
+         │  • RLS policies → CREATE POLICY statements
          │
          ▼
 Supabase (production/scale)
@@ -518,10 +518,45 @@ Supabase (production/scale)
 
 1. Dump SQLite tables to SQL/CSV
 2. Import into Supabase PostgreSQL
-3. Translate RLS policies (syntax is similar)
+3. Run exported RLS policies (auto-generated, valid PostgreSQL)
 4. Update client to point to new URL
 
 Password hashes work without changes due to bcrypt compatibility.
+
+### RLS Policy Export
+
+Policies use Supabase-compatible syntax, so they export directly to valid PostgreSQL:
+
+```sql
+-- From _rls_policies table:
+-- table_name: 'todos', policy_name: 'user_isolation',
+-- command: 'ALL', using_expr: 'user_id = auth.uid()'
+
+-- Exported as valid PostgreSQL:
+ALTER TABLE todos ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY user_isolation ON todos
+    FOR ALL
+    USING (user_id = auth.uid());
+```
+
+**Why this works:**
+
+| Expression | Supabase Lite | Supabase (PostgreSQL) |
+|------------|---------------|----------------------|
+| `auth.uid()` | Replaced at query rewrite time | Actual SQL function |
+| `auth.role()` | Replaced at query rewrite time | Actual SQL function |
+| `auth.jwt()->>'key'` | Replaced at query rewrite time | Actual SQL function |
+
+The syntax is identical - only the implementation differs.
+
+**Export command:**
+
+```bash
+sblite export --policies > policies.sql
+sblite export --data > data.sql
+sblite export --all > full-export.sql
+```
 
 ---
 
