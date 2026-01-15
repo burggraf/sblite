@@ -127,7 +127,9 @@ func (s *Service) RefreshSession(refreshToken string) (*User, *Session, string, 
 	}
 
 	// Revoke old token
-	s.db.Exec("UPDATE auth_refresh_tokens SET revoked = 1 WHERE token = ?", refreshToken)
+	if _, err := s.db.Exec("UPDATE auth_refresh_tokens SET revoked = 1 WHERE token = ?", refreshToken); err != nil {
+		return nil, nil, "", fmt.Errorf("failed to revoke old refresh token: %w", err)
+	}
 
 	user, err := s.GetUserByID(userID)
 	if err != nil {
