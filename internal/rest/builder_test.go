@@ -24,6 +24,36 @@ func TestBuildSelectQuery(t *testing.T) {
 	if len(args) != 1 || args[0] != "false" {
 		t.Errorf("expected args [false], got %v", args)
 	}
+
+	// Test without limit - should not have OFFSET
+	queryNoLimit := Query{
+		Table:  "todos",
+		Select: []string{"*"},
+	}
+	sqlNoLimit, _ := BuildSelectQuery(queryNoLimit)
+	expectedNoLimit := `SELECT * FROM "todos"`
+	if sqlNoLimit != expectedNoLimit {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedNoLimit, sqlNoLimit)
+	}
+}
+
+func TestBuildSelectQueryWithoutLimit(t *testing.T) {
+	query := Query{
+		Table:   "todos",
+		Select:  []string{"id", "title", "completed"},
+		Filters: []Filter{{Column: "completed", Operator: "eq", Value: "false"}},
+		Order:   []OrderBy{{Column: "created_at", Desc: true}},
+	}
+
+	sql, args := BuildSelectQuery(query)
+
+	expectedSQL := `SELECT "id", "title", "completed" FROM "todos" WHERE "completed" = ? ORDER BY "created_at" DESC`
+	if sql != expectedSQL {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedSQL, sql)
+	}
+	if len(args) != 1 || args[0] != "false" {
+		t.Errorf("expected args [false], got %v", args)
+	}
 }
 
 func TestBuildInsertQuery(t *testing.T) {

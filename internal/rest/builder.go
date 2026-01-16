@@ -55,8 +55,8 @@ func BuildSelectQuery(q Query) (string, []any) {
 	// LIMIT and OFFSET
 	if q.Limit > 0 {
 		sb.WriteString(fmt.Sprintf(" LIMIT %d", q.Limit))
+		sb.WriteString(fmt.Sprintf(" OFFSET %d", q.Offset))
 	}
-	sb.WriteString(fmt.Sprintf(" OFFSET %d", q.Offset))
 
 	return sb.String(), args
 }
