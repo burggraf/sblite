@@ -16,12 +16,23 @@ import (
 )
 
 type Handler struct {
-	db       *db.DB
-	enforcer *rls.Enforcer
+	db        *db.DB
+	enforcer  *rls.Enforcer
+	relCache  *RelationshipCache
+	relExec   *RelationQueryExecutor
 }
 
 func NewHandler(database *db.DB, enforcer *rls.Enforcer) *Handler {
-	return &Handler{db: database, enforcer: enforcer}
+	// Get the underlying *sql.DB for relationship cache (db.DB embeds *sql.DB)
+	relCache := NewRelationshipCache(database.DB)
+	relExec := NewRelationQueryExecutor(database.DB, relCache)
+
+	return &Handler{
+		db:       database,
+		enforcer: enforcer,
+		relCache: relCache,
+		relExec:  relExec,
+	}
 }
 
 // GetAuthContextFromRequest extracts auth context from request for RLS
@@ -217,18 +228,35 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	accept := r.Header.Get("Accept")
 	wantSingle := strings.Contains(accept, "application/vnd.pgrst.object+json")
 
-	sqlStr, args := BuildSelectQuery(q)
-	rows, err := h.db.Query(sqlStr, args...)
-	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "query_error", err.Error())
-		return
-	}
-	defer rows.Close()
+	// Parse the select string to check for relations
+	selectParam := r.URL.Query().Get("select")
+	parsedSelect, parseErr := ParseSelectString(selectParam)
 
-	results, err := h.scanRows(rows)
-	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "scan_error", err.Error())
-		return
+	var results []map[string]any
+	var err error
+
+	// Use RelationQueryExecutor if relations are present
+	if parseErr == nil && parsedSelect.HasRelations() {
+		results, err = h.relExec.ExecuteWithRelations(q, parsedSelect)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "query_error", err.Error())
+			return
+		}
+	} else {
+		// Standard query without relations
+		sqlStr, args := BuildSelectQuery(q)
+		rows, err := h.db.Query(sqlStr, args...)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "query_error", err.Error())
+			return
+		}
+		defer rows.Close()
+
+		results, err = h.scanRows(rows)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "scan_error", err.Error())
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
