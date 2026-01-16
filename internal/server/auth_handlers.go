@@ -179,3 +179,83 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(response)
 }
+
+func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r)
+	if user == nil {
+		s.writeError(w, http.StatusUnauthorized, "unauthorized", "User not found in context")
+		return
+	}
+
+	response := map[string]any{
+		"id":            user.ID,
+		"email":         user.Email,
+		"role":          user.Role,
+		"created_at":    user.CreatedAt,
+		"updated_at":    user.UpdatedAt,
+		"app_metadata":  user.AppMetadata,
+		"user_metadata": user.UserMetadata,
+	}
+
+	if user.EmailConfirmedAt != nil {
+		response["email_confirmed_at"] = user.EmailConfirmedAt
+	}
+	if user.LastSignInAt != nil {
+		response["last_sign_in_at"] = user.LastSignInAt
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+type UpdateUserRequest struct {
+	Email        string         `json:"email,omitempty"`
+	Password     string         `json:"password,omitempty"`
+	UserMetadata map[string]any `json:"user_metadata,omitempty"`
+}
+
+func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r)
+	if user == nil {
+		s.writeError(w, http.StatusUnauthorized, "unauthorized", "User not found in context")
+		return
+	}
+
+	var req UpdateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.UserMetadata != nil {
+		if err := s.authService.UpdateUserMetadata(user.ID, req.UserMetadata); err != nil {
+			s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to update user")
+			return
+		}
+	}
+
+	if req.Password != "" {
+		if len(req.Password) < 6 {
+			s.writeError(w, http.StatusBadRequest, "validation_failed", "Password must be at least 6 characters")
+			return
+		}
+		if err := s.authService.UpdatePassword(user.ID, req.Password); err != nil {
+			s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to update password")
+			return
+		}
+	}
+
+	// Refetch user to get updated data
+	user, _ = s.authService.GetUserByID(user.ID)
+
+	response := map[string]any{
+		"id":            user.ID,
+		"email":         user.Email,
+		"role":          user.Role,
+		"created_at":    user.CreatedAt,
+		"updated_at":    user.UpdatedAt,
+		"app_metadata":  user.AppMetadata,
+		"user_metadata": user.UserMetadata,
+	}
+
+	json.NewEncoder(w).Encode(response)
+}

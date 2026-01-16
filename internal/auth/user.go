@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -71,13 +72,14 @@ func (s *Service) GetUserByID(id string) (*User, error) {
 	var user User
 	var createdAt, updatedAt string
 	var emailConfirmedAt, lastSignInAt sql.NullString
+	var rawAppMetaData, rawUserMetaData string
 
 	err := s.db.QueryRow(`
 		SELECT id, email, encrypted_password, email_confirmed_at, last_sign_in_at,
-		       role, created_at, updated_at
+		       role, created_at, updated_at, raw_app_meta_data, raw_user_meta_data
 		FROM auth_users WHERE id = ? AND deleted_at IS NULL
 	`, id).Scan(&user.ID, &user.Email, &user.EncryptedPassword, &emailConfirmedAt,
-		&lastSignInAt, &user.Role, &createdAt, &updatedAt)
+		&lastSignInAt, &user.Role, &createdAt, &updatedAt, &rawAppMetaData, &rawUserMetaData)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("user not found")
@@ -96,8 +98,18 @@ func (s *Service) GetUserByID(id string) (*User, error) {
 		t, _ := time.Parse(time.RFC3339, lastSignInAt.String)
 		user.LastSignInAt = &t
 	}
-	user.AppMetadata = map[string]any{"provider": "email", "providers": []string{"email"}}
+
+	// Parse app metadata from JSON
+	user.AppMetadata = map[string]any{}
+	if rawAppMetaData != "" {
+		json.Unmarshal([]byte(rawAppMetaData), &user.AppMetadata)
+	}
+
+	// Parse user metadata from JSON
 	user.UserMetadata = map[string]any{}
+	if rawUserMetaData != "" {
+		json.Unmarshal([]byte(rawUserMetaData), &user.UserMetadata)
+	}
 
 	return &user, nil
 }
@@ -125,5 +137,29 @@ func (s *Service) ValidatePassword(user *User, password string) bool {
 func (s *Service) UpdateLastSignIn(userID string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.Exec("UPDATE auth_users SET last_sign_in_at = ? WHERE id = ?", now, userID)
+	return err
+}
+
+func (s *Service) UpdateUserMetadata(userID string, metadata map[string]any) error {
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.Exec("UPDATE auth_users SET raw_user_meta_data = ?, updated_at = ? WHERE id = ?",
+		string(metadataJSON), now, userID)
+	return err
+}
+
+func (s *Service) UpdatePassword(userID, password string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.Exec("UPDATE auth_users SET encrypted_password = ?, updated_at = ? WHERE id = ?",
+		string(hash), now, userID)
 	return err
 }

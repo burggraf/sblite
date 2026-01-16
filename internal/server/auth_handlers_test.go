@@ -116,3 +116,150 @@ func TestLoginInvalidPassword(t *testing.T) {
 		t.Errorf("expected status 401, got %d", w.Code)
 	}
 }
+
+func TestGetUserEndpoint(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user and login to get token
+	signupBody := `{"email": "test@example.com", "password": "password123"}`
+	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	loginBody := `{"email": "test@example.com", "password": "password123"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var loginResp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &loginResp)
+	token := loginResp["access_token"].(string)
+
+	// Get user
+	req = httptest.NewRequest("GET", "/auth/v1/user", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var userResp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &userResp)
+	if userResp["email"] != "test@example.com" {
+		t.Errorf("expected email test@example.com, got %v", userResp["email"])
+	}
+}
+
+func TestGetUserUnauthorized(t *testing.T) {
+	srv := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/auth/v1/user", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401, got %d", w.Code)
+	}
+}
+
+func TestUpdateUserMetadata(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user and login to get token
+	signupBody := `{"email": "test@example.com", "password": "password123"}`
+	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	loginBody := `{"email": "test@example.com", "password": "password123"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var loginResp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &loginResp)
+	token := loginResp["access_token"].(string)
+
+	// Update user metadata
+	updateBody := `{"user_metadata": {"name": "Test User", "age": 30}}`
+	req = httptest.NewRequest("PUT", "/auth/v1/user", bytes.NewBufferString(updateBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var userResp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &userResp)
+	metadata, ok := userResp["user_metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected user_metadata to be map, got %T", userResp["user_metadata"])
+	}
+	if metadata["name"] != "Test User" {
+		t.Errorf("expected name 'Test User', got %v", metadata["name"])
+	}
+}
+
+func TestUpdateUserPassword(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user and login to get token
+	signupBody := `{"email": "test@example.com", "password": "password123"}`
+	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	loginBody := `{"email": "test@example.com", "password": "password123"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var loginResp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &loginResp)
+	token := loginResp["access_token"].(string)
+
+	// Update password
+	updateBody := `{"password": "newpassword123"}`
+	req = httptest.NewRequest("PUT", "/auth/v1/user", bytes.NewBufferString(updateBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Try to login with new password
+	loginBody = `{"email": "test@example.com", "password": "newpassword123"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200 for new password login, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Try to login with old password (should fail)
+	loginBody = `{"email": "test@example.com", "password": "password123"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for old password login, got %d", w.Code)
+	}
+}

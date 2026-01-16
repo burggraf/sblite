@@ -38,6 +38,13 @@ func (s *Server) setupRoutes() {
 	s.router.Route("/auth/v1", func(r chi.Router) {
 		r.Post("/signup", s.handleSignup)
 		r.Post("/token", s.handleToken)
+
+		// Protected routes
+		r.Group(func(r chi.Router) {
+			r.Use(s.authMiddleware)
+			r.Get("/user", s.handleGetUser)
+			r.Put("/user", s.handleUpdateUser)
+		})
 	})
 }
 
