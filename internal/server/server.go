@@ -44,6 +44,7 @@ func (s *Server) setupRoutes() {
 			r.Use(s.authMiddleware)
 			r.Get("/user", s.handleGetUser)
 			r.Put("/user", s.handleUpdateUser)
+			r.Post("/logout", s.handleLogout)
 		})
 	})
 }

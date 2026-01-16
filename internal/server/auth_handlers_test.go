@@ -263,3 +263,34 @@ func TestUpdateUserPassword(t *testing.T) {
 		t.Errorf("expected status 401 for old password login, got %d", w.Code)
 	}
 }
+
+func TestLogoutEndpoint(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user and login
+	signupBody := `{"email": "test@example.com", "password": "password123"}`
+	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	loginBody := `{"email": "test@example.com", "password": "password123"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var loginResp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &loginResp)
+	token := loginResp["access_token"].(string)
+
+	// Logout
+	req = httptest.NewRequest("POST", "/auth/v1/logout", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected status 204, got %d: %s", w.Code, w.Body.String())
+	}
+}

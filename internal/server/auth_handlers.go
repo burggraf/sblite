@@ -259,3 +259,24 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(response)
 }
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	claims := GetClaimsFromContext(r)
+	if claims == nil {
+		s.writeError(w, http.StatusUnauthorized, "unauthorized", "Claims not found in context")
+		return
+	}
+
+	sessionID, ok := (*claims)["session_id"].(string)
+	if !ok || sessionID == "" {
+		s.writeError(w, http.StatusBadRequest, "invalid_session", "Session ID not found in token")
+		return
+	}
+
+	if err := s.authService.RevokeSession(sessionID); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to revoke session")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
