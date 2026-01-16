@@ -8,6 +8,8 @@ export default defineConfig({
     hookTimeout: 30000,
     setupFiles: ['./setup/global-setup.ts'],
     include: ['**/*.test.ts'],
+    // Run test files sequentially to avoid database state conflicts
+    fileParallelism: false,
     sequence: {
       shuffle: false,
     },
