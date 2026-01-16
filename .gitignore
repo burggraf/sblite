@@ -1,2 +1,4 @@
 sblite
 data.db*
+test.db*
+e2e/node_modules/

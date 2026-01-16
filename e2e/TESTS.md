@@ -4,29 +4,32 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 ## Legend
 
-- ✅ Implemented and active
+- ✅ Passing
+- ❌ Failing (should be working but isn't)
 - ⏭️ Skipped (feature not yet implemented)
 
 ## Summary
 
-| Category | Total | Active | Skipped |
-|----------|-------|--------|---------|
-| REST - SELECT | 16 | 6 | 10 |
-| REST - INSERT | 9 | 9 | 0 |
-| REST - UPDATE | 10 | 8 | 2 |
-| REST - UPSERT | 7 | 5 | 2 |
-| REST - DELETE | 10 | 10 | 0 |
-| Filters - Basic | 24 | 22 | 2 |
-| Filters - Advanced | 15 | 0 | 15 |
-| Filters - Logical | 11 | 3 | 8 |
-| Modifiers | 18 | 14 | 4 |
-| Auth - Sign Up | 11 | 8 | 3 |
-| Auth - Sign In/Out | 12 | 8 | 4 |
-| Auth - Session | 11 | 9 | 2 |
-| Auth - User | 12 | 7 | 5 |
-| Auth - State Change | 11 | 6 | 5 |
-| Auth - Password Reset | 6 | 0 | 6 |
-| **TOTAL** | **173** | **115** | **58** |
+| Category | Total | Passing | Failing | Skipped |
+|----------|-------|---------|---------|---------|
+| REST - SELECT | 16 | 6 | 0 | 10 |
+| REST - INSERT | 9 | 4 | 5 | 0 |
+| REST - UPDATE | 10 | 4 | 4 | 2 |
+| REST - UPSERT | 7 | 2 | 3 | 2 |
+| REST - DELETE | 10 | 2 | 8 | 0 |
+| Filters - Basic | 24 | 14 | 8 | 2 |
+| Filters - Advanced | 15 | 0 | 0 | 15 |
+| Filters - Logical | 11 | 2 | 1 | 8 |
+| Modifiers | 18 | 11 | 3 | 4 |
+| Auth - Sign Up | 11 | 6 | 2 | 3 |
+| Auth - Sign In/Out | 12 | 8 | 0 | 4 |
+| Auth - Session | 11 | 2 | 7 | 2 |
+| Auth - User | 12 | 1 | 6 | 5 |
+| Auth - State Change | 11 | 2 | 4 | 5 |
+| Auth - Password Reset | 6 | 0 | 0 | 6 |
+| **TOTAL** | **173** | **64** | **51** | **58** |
+
+*Last tested: 2026-01-16*
 
 ---
 
@@ -89,17 +92,17 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should handle insert with only required fields
 
 **2. Create a record and return it**
-- ✅ should insert and return the inserted record
-- ✅ should return only selected columns when specified
+- ❌ should insert and return the inserted record (`Prefer: return=representation` not implemented)
+- ❌ should return only selected columns when specified
 
 **3. Bulk create**
-- ✅ should insert multiple records in a single operation
-- ✅ should insert multiple records and return them
+- ❌ should insert multiple records in a single operation
+- ❌ should insert multiple records and return them
 
 **Additional INSERT functionality**
 - ✅ should handle duplicate primary key with error
 - ✅ should handle insert to non-existent table with error
-- ✅ should handle insert with null values where allowed
+- ❌ should handle insert with null values where allowed
 
 ---
 
@@ -110,16 +113,16 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should update multiple fields at once
 
 **2. Update a record and return it**
-- ✅ should update and return the updated record
-- ✅ should return only selected columns
+- ❌ should update and return the updated record (`Prefer: return=representation` not implemented)
+- ❌ should return only selected columns
 
 **3. Updating JSON data**
 - ⏭️ should update nested JSON fields
 - ✅ should update JSON stored as TEXT column
 
 **Additional UPDATE functionality**
-- ✅ should not update any records if filter matches none
-- ✅ should update multiple records matching filter
+- ❌ should not update any records if filter matches none (returning wrong count)
+- ❌ should update multiple records matching filter
 - ✅ should handle update to non-existent table with error
 
 ---
@@ -127,19 +130,19 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 ### `tests/rest/upsert.test.ts`
 
 **1. Upsert your data**
-- ✅ should insert a new record if it does not exist
-- ✅ should update an existing record if it exists
+- ❌ should insert a new record if it does not exist (not returning data)
+- ❌ should update an existing record if it exists
 
 **2. Bulk Upsert your data**
-- ✅ should upsert multiple records
+- ❌ should upsert multiple records
 
 **3. Upserting into tables with constraints**
 - ⏭️ should use specified column for conflict resolution
 
 **Additional UPSERT functionality**
 - ✅ should handle upsert without select (no return)
-- ✅ should return selected columns only
-- ⏭️ should handle upsert to non-existent table with error
+- ❌ should return selected columns only
+- ✅ should handle upsert to non-existent table with error
 
 ---
 
@@ -147,21 +150,21 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 **1. Delete a single record**
 - ✅ should delete a single record matching the filter
-- ✅ should not affect other records
+- ❌ should not affect other records (verification failing)
 
 **2. Delete a record and return it**
-- ✅ should delete and return the deleted record
-- ✅ should return only selected columns
+- ❌ should delete and return the deleted record (`Prefer: return=representation` not implemented)
+- ❌ should return only selected columns
 
 **3. Delete multiple records**
-- ✅ should delete multiple records using in() filter
-- ✅ should delete and return multiple records
+- ❌ should delete multiple records using in() filter (`in()` filter broken)
+- ❌ should delete and return multiple records
 
 **Additional DELETE functionality**
-- ✅ should not delete any records if filter matches none
-- ✅ should delete records using other filters
+- ❌ should not delete any records if filter matches none
+- ❌ should delete records using other filters
 - ✅ should handle delete on non-existent table with error
-- ✅ should handle delete with combined filters
+- ❌ should handle delete with combined filters
 
 ---
 
@@ -196,12 +199,12 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 **like() - Pattern Matching**
 - ✅ should match rows using LIKE pattern with wildcards
-- ✅ should match with prefix wildcard
-- ✅ should match with suffix wildcard
+- ❌ should match with prefix wildcard (wildcard conversion issue)
+- ❌ should match with suffix wildcard (wildcard conversion issue)
 
 **ilike() - Case-Insensitive Pattern Matching**
 - ✅ should match rows case-insensitively
-- ✅ should match regardless of case
+- ❌ should match regardless of case
 
 **is() - Null/Boolean Check**
 - ✅ should match rows where column is null
@@ -209,9 +212,9 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ⏭️ should match rows where boolean column is false
 
 **in() - Match Any in Array**
-- ✅ should match rows where column is in array of values
-- ✅ should work with numeric arrays
-- ✅ should return empty array when no matches
+- ❌ should match rows where column is in array of values
+- ❌ should work with numeric arrays
+- ❌ should return empty array when no matches
 
 **Combined Filters**
 - ✅ should combine eq and gt filters
@@ -279,7 +282,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 **Workarounds for OR logic**
 - ✅ should use multiple queries for OR logic
-- ✅ should use in() for simple OR on same column
+- ❌ should use in() for simple OR on same column (`in()` filter broken)
 
 ---
 
@@ -288,8 +291,8 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 ### `tests/modifiers/modifiers.test.ts`
 
 **select() - Return Data After Insert/Update/Delete**
-- ✅ should return data after upsert
-- ✅ should return specific columns after insert
+- ❌ should return data after upsert (`Prefer: return=representation` not implemented)
+- ❌ should return specific columns after insert
 
 **order() - Sort Results**
 - ✅ should order results in descending order
@@ -308,9 +311,9 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should work for pagination
 
 **single() - Return Single Object**
-- ✅ should return data as single object instead of array
-- ✅ should error when multiple rows returned
-- ✅ should error when no rows returned
+- ❌ should return data as single object instead of array (returns array)
+- ❌ should error when multiple rows returned
+- ❌ should error when no rows returned
 
 **maybeSingle() - Return Zero or One Row**
 - ✅ should return single object when one row matches
@@ -337,7 +340,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 **1. Sign up with email and password**
 - ✅ should create a new user account
 - ✅ should return user object with expected properties
-- ✅ should return session when email confirmation is disabled
+- ❌ should return session when email confirmation is disabled (session not returned)
 - ✅ should reject duplicate email addresses
 - ✅ should reject weak passwords
 
@@ -348,7 +351,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ⏭️ should create account with phone via WhatsApp
 
 **4. Sign up with user metadata**
-- ✅ should store custom user metadata during signup
+- ❌ should store custom user metadata during signup
 - ✅ should handle empty metadata
 
 **5. Sign up with redirect URL**
@@ -392,15 +395,15 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 **getSession()**
 - ✅ should return null when not signed in
-- ✅ should return session when signed in
-- ✅ should return session with user object
+- ❌ should return session when signed in (client-side session not persisted)
+- ❌ should return session with user object
 
 **refreshSession() - Using current session**
-- ✅ should refresh the current session
-- ✅ should return new access token
+- ❌ should refresh the current session (session not available)
+- ❌ should return new access token
 
 **refreshSession() - Using refresh token**
-- ✅ should refresh session using provided refresh token
+- ❌ should refresh session using provided refresh token
 - ✅ should reject invalid refresh token
 
 **setSession()**
@@ -408,15 +411,15 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ⏭️ should reject invalid tokens
 
 **Session Lifecycle**
-- ✅ should clear session on sign out
+- ❌ should clear session on sign out
 
 ---
 
 ### `tests/auth/user.test.ts`
 
 **getUser() - Get user with current session**
-- ✅ should retrieve the logged in user
-- ✅ should return user with all expected properties
+- ❌ should retrieve the logged in user (needs session)
+- ❌ should return user with all expected properties
 
 **getUser() - Get user with custom JWT**
 - ⏭️ should retrieve user using provided JWT
@@ -431,12 +434,12 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ⏭️ should update user phone
 
 **updateUser() - Update password**
-- ✅ should update user password
-- ✅ should reject sign in with old password after update
+- ❌ should update user password (session needed)
+- ❌ should reject sign in with old password after update
 
 **updateUser() - Update metadata**
-- ✅ should update user metadata
-- ✅ should merge metadata with existing values
+- ❌ should update user metadata (session needed)
+- ❌ should merge metadata with existing values
 
 **updateUser() - Update with nonce**
 - ⏭️ should update password with reauthentication nonce
@@ -453,19 +456,19 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should be able to unsubscribe
 
 **onAuthStateChange() - SIGNED_OUT**
-- ✅ should fire SIGNED_OUT event on sign out
+- ❌ should fire SIGNED_OUT event on sign out
 
 **onAuthStateChange() - OAuth tokens**
 - ⏭️ should receive provider tokens on OAuth sign in
 
 **onAuthStateChange() - React context pattern**
-- ✅ should work with callback-based state management
+- ❌ should work with callback-based state management
 
 **onAuthStateChange() - PASSWORD_RECOVERY**
 - ⏭️ should fire PASSWORD_RECOVERY event
 
 **onAuthStateChange() - SIGNED_IN**
-- ✅ should fire SIGNED_IN event on sign in
+- ❌ should fire SIGNED_IN event on sign in
 
 **onAuthStateChange() - TOKEN_REFRESHED**
 - ⏭️ should fire TOKEN_REFRESHED on session refresh
@@ -474,7 +477,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ⏭️ should fire USER_UPDATED on user update
 
 **Event Data**
-- ✅ should include session in event callback
+- ❌ should include session in event callback
 
 ---
 
@@ -491,6 +494,28 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ⏭️ should handle non-existent email gracefully
 - ⏭️ should handle invalid email format
 - ⏭️ should rate limit password reset requests
+
+---
+
+## Known Issues Summary
+
+### Critical (Breaks Core Functionality)
+
+1. **`in()` filter not working** - Array-based filtering is broken
+2. **`Prefer: return=representation` not implemented** - INSERT/UPDATE/DELETE don't return affected rows
+3. **`single()` modifier** - Returns array instead of object, doesn't error properly
+
+### Medium (Partial Functionality)
+
+4. **`like()` wildcards** - Prefix (`*term`) and suffix (`term*`) wildcards not converting to SQL `%`
+5. **Session persistence** - Client-side session not being maintained across operations
+6. **User metadata** - Not being stored during signup
+
+### Auth-Related
+
+7. **`getSession()` fails** - Depends on session persistence
+8. **`refreshSession()` fails** - Same root cause
+9. **Auth state change events** - Not firing for SIGNED_IN/SIGNED_OUT
 
 ---
 
