@@ -41,7 +41,10 @@ func (s *Service) CreatePolicy(tableName, policyName, command, usingExpr, checkE
 		return nil, fmt.Errorf("failed to create policy: %w", err)
 	}
 
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get inserted policy ID: %w", err)
+	}
 	return s.GetPolicyByID(id)
 }
 
@@ -62,7 +65,11 @@ func (s *Service) GetPolicyByID(id int64) (*Policy, error) {
 
 	p.UsingExpr = usingExpr.String
 	p.CheckExpr = checkExpr.String
-	p.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	parsedTime, err := time.Parse(time.DateTime, createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse created_at timestamp: %w", err)
+	}
+	p.CreatedAt = parsedTime
 	return &p, nil
 }
 
@@ -73,7 +80,7 @@ func (s *Service) GetPoliciesForTable(tableName string) ([]*Policy, error) {
 		FROM _rls_policies WHERE table_name = ? AND enabled = 1
 	`, tableName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query policies for table: %w", err)
 	}
 	defer rows.Close()
 
@@ -84,11 +91,15 @@ func (s *Service) GetPoliciesForTable(tableName string) ([]*Policy, error) {
 		var usingExpr, checkExpr sql.NullString
 
 		if err := rows.Scan(&p.ID, &p.TableName, &p.PolicyName, &p.Command, &usingExpr, &checkExpr, &p.Enabled, &createdAt); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to scan policy: %w", err)
 		}
 		p.UsingExpr = usingExpr.String
 		p.CheckExpr = checkExpr.String
-		p.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		parsedTime, err := time.Parse(time.DateTime, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse created_at timestamp: %w", err)
+		}
+		p.CreatedAt = parsedTime
 		policies = append(policies, &p)
 	}
 	return policies, nil
@@ -101,7 +112,7 @@ func (s *Service) ListAllPolicies() ([]*Policy, error) {
 		FROM _rls_policies ORDER BY table_name, policy_name
 	`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query all policies: %w", err)
 	}
 	defer rows.Close()
 
@@ -112,11 +123,15 @@ func (s *Service) ListAllPolicies() ([]*Policy, error) {
 		var usingExpr, checkExpr sql.NullString
 
 		if err := rows.Scan(&p.ID, &p.TableName, &p.PolicyName, &p.Command, &usingExpr, &checkExpr, &p.Enabled, &createdAt); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to scan policy: %w", err)
 		}
 		p.UsingExpr = usingExpr.String
 		p.CheckExpr = checkExpr.String
-		p.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		parsedTime, err := time.Parse(time.DateTime, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse created_at timestamp: %w", err)
+		}
+		p.CreatedAt = parsedTime
 		policies = append(policies, &p)
 	}
 	return policies, nil
@@ -125,5 +140,8 @@ func (s *Service) ListAllPolicies() ([]*Policy, error) {
 // DeletePolicy deletes a policy by its ID
 func (s *Service) DeletePolicy(id int64) error {
 	_, err := s.db.Exec("DELETE FROM _rls_policies WHERE id = ?", id)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to delete policy: %w", err)
+	}
+	return nil
 }
