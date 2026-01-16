@@ -304,3 +304,46 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+type VerifyRequest struct {
+	Type  string `json:"type"`  // "signup" or "recovery"
+	Token string `json:"token"`
+}
+
+func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
+	var token, verifyType string
+
+	if r.Method == "GET" {
+		token = r.URL.Query().Get("token")
+		verifyType = r.URL.Query().Get("type")
+	} else {
+		var req VerifyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+			return
+		}
+		token = req.Token
+		verifyType = req.Type
+	}
+
+	if token == "" {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Token is required")
+		return
+	}
+
+	switch verifyType {
+	case "signup", "email", "":
+		user, err := s.authService.VerifyEmail(token)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid_token", "Invalid or expired token")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"message": "Email verified successfully",
+			"user":    user,
+		})
+	default:
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid verification type")
+	}
+}

@@ -2,7 +2,9 @@
 package auth
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -169,4 +171,47 @@ func (s *Service) UpdatePassword(userID, password string) error {
 	_, err = s.db.Exec("UPDATE auth_users SET encrypted_password = ?, updated_at = ? WHERE id = ?",
 		string(hash), now, userID)
 	return err
+}
+
+func generateToken() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)
+}
+
+func (s *Service) GenerateConfirmationToken(userID string) (string, error) {
+	token := generateToken()
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	_, err := s.db.Exec(`
+		UPDATE auth_users SET confirmation_token = ?, confirmation_sent_at = ?
+		WHERE id = ?
+	`, token, now, userID)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to generate confirmation token: %w", err)
+	}
+	return token, nil
+}
+
+func (s *Service) VerifyEmail(token string) (*User, error) {
+	var userID string
+	err := s.db.QueryRow(`
+		SELECT id FROM auth_users WHERE confirmation_token = ? AND deleted_at IS NULL
+	`, token).Scan(&userID)
+
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired token")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.Exec(`
+		UPDATE auth_users SET email_confirmed_at = ?, confirmation_token = NULL WHERE id = ?
+	`, now, userID)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify email: %w", err)
+	}
+
+	return s.GetUserByID(userID)
 }
