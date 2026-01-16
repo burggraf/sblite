@@ -224,8 +224,9 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for single() modifier via Accept header
+	// Check Accept header for response format preferences
 	accept := r.Header.Get("Accept")
+	wantCSV := strings.Contains(accept, "text/csv")
 	wantSingle := strings.Contains(accept, "application/vnd.pgrst.object+json")
 
 	// Parse the select string to check for relations
@@ -276,6 +277,12 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusInternalServerError, "scan_error", err.Error())
 			return
 		}
+	}
+
+	// Handle CSV response format if requested via Accept header
+	if wantCSV {
+		h.writeCSV(w, results)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
