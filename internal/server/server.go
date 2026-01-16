@@ -66,6 +66,8 @@ func (s *Server) setupRoutes() {
 	// REST routes (with optional auth for RLS)
 	s.router.Route("/rest/v1", func(r chi.Router) {
 		r.Use(s.optionalAuthMiddleware)
+		// OpenAPI schema endpoint (must be before /{table} to avoid conflict)
+		r.Get("/", s.handleOpenAPI)
 		r.Get("/{table}", s.restHandler.HandleSelect)
 		r.Post("/{table}", s.restHandler.HandleInsert)
 		r.Patch("/{table}", s.restHandler.HandleUpdate)
@@ -83,4 +85,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) ListenAndServe(addr string) error {
 	return http.ListenAndServe(addr, s.router)
+}
+
+// handleOpenAPI generates and returns the OpenAPI 3.0 specification for the REST API.
+func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+	spec, err := rest.GenerateOpenAPISpec(s.db.DB)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "openapi_error",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(spec)
 }
