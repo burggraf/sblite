@@ -916,3 +916,8 @@ func TestParseOrderMultipleWithRelated(t *testing.T) {
 		t.Error("expected second Desc to be true")
 	}
 }
+
+func TestJSONPathFilter(t *testing.T) {
+	f, err := ParseFilter("address->postcode=eq.90210")
+	if err != nil {
+		t.Fatalf("ParseFilter error: %v", err)

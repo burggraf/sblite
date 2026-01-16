@@ -69,6 +69,7 @@ func (s *Server) setupRoutes() {
 		// OpenAPI schema endpoint (must be before /{table} to avoid conflict)
 		r.Get("/", s.handleOpenAPI)
 		r.Get("/{table}", s.restHandler.HandleSelect)
+		r.Head("/{table}", s.restHandler.HandleSelect) // HEAD for count-only queries
 		r.Post("/{table}", s.restHandler.HandleInsert)
 		r.Patch("/{table}", s.restHandler.HandleUpdate)
 		r.Delete("/{table}", s.restHandler.HandleDelete)

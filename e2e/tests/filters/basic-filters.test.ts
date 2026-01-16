@@ -67,16 +67,18 @@ describe('Filters - Basic Operators', () => {
 
     /**
      * Example: JSON Column Filtering
-     * Note: Requires arrow operator support
+     * Uses arrow operator (-> or ->>) to filter on nested JSON fields
      */
-    it.skip('should filter on JSON columns using arrow notation', async () => {
-      // Requires JSON arrow operator support
+    it('should filter on JSON columns using arrow notation', async () => {
       const { data, error } = await supabase
         .from('users')
         .select()
         .eq('address->postcode', 90210)
 
       expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBe(1)
+      expect(data![0].name).toBe('Jane Smith')
     })
   })
 

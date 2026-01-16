@@ -4,6 +4,7 @@ package rest
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -13,6 +14,8 @@ type Filter struct {
 	Value         string
 	RelatedTable  string // If filtering on related table (e.g., "country" in "country.name=eq.Canada")
 	RelatedColumn string // The column in the related table (e.g., "name" in "country.name=eq.Canada")
+	JSONPath      string // JSON path for -> or ->> operators (e.g., "$.city")
+	JSONText      bool   // True if ->> (text extraction), false if -> (JSON)
 }
 
 // LogicalFilter groups multiple filters with OR or AND logic
@@ -74,6 +77,17 @@ func ParseFilter(input string) (Filter, error) {
 		return Filter{}, fmt.Errorf("unknown operator: %s", operator)
 	}
 
+	// Check for JSON path operator: "column->key" or "column->>key"
+	if jsonPath, baseCol, isText, ok := parseJSONPathFilter(column); ok {
+		return Filter{
+			Column:   baseCol,
+			Operator: operator,
+			Value:    value,
+			JSONPath: jsonPath,
+			JSONText: isText,
+		}, nil
+	}
+
 	// Check for dotted column reference: "table.column" (e.g., "country.name")
 	// This indicates filtering on a related table
 	if dotIdx := strings.Index(column, "."); dotIdx != -1 {
@@ -95,13 +109,79 @@ func ParseFilter(input string) (Filter, error) {
 	}, nil
 }
 
+// parseJSONPathFilter parses JSON path operators from a filter column.
+// Returns the JSON path, base column, whether it's text extraction, and success.
+// Examples:
+//   - "address->city" -> "$.city", "address", false, true
+//   - "data->>key" -> "$.key", "data", true, true
+//   - "data->outer->inner" -> "$.outer.inner", "data", false, true
+func parseJSONPathFilter(column string) (jsonPath, baseCol string, isText, ok bool) {
+	jsonArrowIdx := strings.Index(column, "->")
+	if jsonArrowIdx == -1 {
+		return "", "", false, false
+	}
+
+	baseCol = column[:jsonArrowIdx]
+	if baseCol == "" {
+		return "", "", false, false
+	}
+
+	remaining := column[jsonArrowIdx:]
+	var pathParts []string
+	isText = false
+
+	for len(remaining) > 0 {
+		if strings.HasPrefix(remaining, "->>") {
+			isText = true
+			remaining = remaining[3:]
+		} else if strings.HasPrefix(remaining, "->") {
+			remaining = remaining[2:]
+		} else {
+			// No more arrows, find next arrow or end
+			nextArrow := strings.Index(remaining, "->")
+			if nextArrow == -1 {
+				pathParts = append(pathParts, remaining)
+				remaining = ""
+			} else {
+				pathParts = append(pathParts, remaining[:nextArrow])
+				remaining = remaining[nextArrow:]
+			}
+		}
+	}
+
+	if len(pathParts) == 0 {
+		return "", "", false, false
+	}
+
+	jsonPath = "$." + strings.Join(pathParts, ".")
+	return jsonPath, baseCol, isText, true
+}
+
 func (f Filter) ToSQL() (string, []any) {
 	// Related table filters are handled separately via EXISTS subquery
 	if f.RelatedTable != "" {
 		return "", nil
 	}
 
-	quotedColumn := fmt.Sprintf("\"%s\"", f.Column)
+	// Build column expression (may include json_extract for JSON paths)
+	var quotedColumn string
+	if f.JSONPath != "" {
+		// Use json_extract for JSON path queries
+		quotedColumn = fmt.Sprintf("json_extract(\"%s\", '%s')", f.Column, f.JSONPath)
+	} else {
+		quotedColumn = fmt.Sprintf("\"%s\"", f.Column)
+	}
+
+	// Helper to convert filter value to appropriate type for JSON comparisons
+	// When using -> (not ->>), we preserve JSON types (number, boolean, null)
+	// When using ->> or regular columns, values stay as strings
+	convertValue := func(v string) any {
+		// For JSON path queries with -> (not ->>), try to convert to native type
+		if f.JSONPath != "" && !f.JSONText {
+			return tryConvertJSONValue(v)
+		}
+		return v
+	}
 
 	switch f.Operator {
 	case "is":
@@ -124,7 +204,7 @@ func (f Filter) ToSQL() (string, []any) {
 		args := make([]any, len(values))
 		for i, v := range values {
 			placeholders[i] = "?"
-			args[i] = v
+			args[i] = convertValue(v)
 		}
 		return fmt.Sprintf("%s IN (%s)", quotedColumn, strings.Join(placeholders, ", ")), args
 
@@ -145,8 +225,31 @@ func (f Filter) ToSQL() (string, []any) {
 
 	default:
 		sqlOp := validOperators[f.Operator]
-		return fmt.Sprintf("%s %s ?", quotedColumn, sqlOp), []any{f.Value}
+		return fmt.Sprintf("%s %s ?", quotedColumn, sqlOp), []any{convertValue(f.Value)}
 	}
+}
+
+// tryConvertJSONValue attempts to convert a string value to its JSON native type.
+// This is used for JSON path queries with -> (not ->>) to preserve type semantics.
+// Returns int64 for integers, float64 for floats, bool for booleans, or the original string.
+func tryConvertJSONValue(v string) any {
+	// Try boolean
+	if v == "true" {
+		return true
+	}
+	if v == "false" {
+		return false
+	}
+	// Try integer
+	if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return i
+	}
+	// Try float
+	if f, err := strconv.ParseFloat(v, 64); err == nil {
+		return f
+	}
+	// Return as string
+	return v
 }
 
 // parseNotFilter handles the not operator by negating the inner operator

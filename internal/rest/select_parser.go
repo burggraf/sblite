@@ -12,6 +12,8 @@ type SelectColumn struct {
 	Name     string          // Column name or "*"
 	Alias    string          // Optional alias (customName:columnName)
 	Relation *SelectRelation // If this is a relation
+	JSONPath string          // JSON path for -> or ->> operators (e.g., "$.city")
+	JSONText bool            // True if ->> (text extraction), false if -> (JSON)
 }
 
 // SelectRelation represents a nested relation in a select statement.
@@ -70,21 +72,102 @@ func parseSelectPart(part string) (SelectColumn, error) {
 		return parseRelationSelect(part)
 	}
 
-	// Check for alias: "alias:column"
+	// Check for alias: "alias:column" or "alias:column->path"
+	var alias string
+	remaining := part
 	if idx := strings.Index(part, ":"); idx != -1 {
-		alias := part[:idx]
-		name := part[idx+1:]
-		if alias == "" || name == "" {
-			return SelectColumn{}, fmt.Errorf("invalid alias format: %s", part)
+		// Check that colon comes before any JSON operator
+		arrowIdx := strings.Index(part, "->")
+		if arrowIdx == -1 || idx < arrowIdx {
+			alias = part[:idx]
+			remaining = part[idx+1:]
+			if alias == "" || remaining == "" {
+				return SelectColumn{}, fmt.Errorf("invalid alias format: %s", part)
+			}
 		}
+	}
+
+	// Check for JSON path: "column->key" or "column->>key"
+	if col, err := parseJSONPath(remaining, alias); err == nil && col.JSONPath != "" {
+		return col, nil
+	}
+
+	if alias != "" {
 		return SelectColumn{
 			Alias: alias,
-			Name:  name,
+			Name:  remaining,
 		}, nil
 	}
 
 	// Simple column
 	return SelectColumn{Name: part}, nil
+}
+
+// parseJSONPath parses JSON path operators (-> and ->>) from a column spec.
+// Returns a SelectColumn with JSONPath set if operators are found.
+// Supports chained paths like "data->outer->inner->>key"
+func parseJSONPath(input string, existingAlias string) (SelectColumn, error) {
+	// Check for -> (which also matches ->>)
+	jsonArrowIdx := strings.Index(input, "->")
+
+	if jsonArrowIdx == -1 {
+		return SelectColumn{}, nil // No JSON path
+	}
+
+	// Find the base column (everything before the first ->)
+	baseCol := input[:jsonArrowIdx]
+	if baseCol == "" {
+		return SelectColumn{}, fmt.Errorf("empty column name in JSON path: %s", input)
+	}
+
+	// Parse the path after the column name
+	// e.g., "address->city" -> path is "city"
+	// e.g., "data->outer->inner" -> path is "outer.inner"
+	// e.g., "data->outer->>inner" -> path is "outer.inner" with text extraction
+	remaining := input[jsonArrowIdx:]
+
+	var pathParts []string
+	isTextExtraction := false
+
+	for len(remaining) > 0 {
+		if strings.HasPrefix(remaining, "->>") {
+			isTextExtraction = true
+			remaining = remaining[3:]
+		} else if strings.HasPrefix(remaining, "->") {
+			remaining = remaining[2:]
+		} else {
+			// No more arrows, rest is the key
+			// Find next arrow or end
+			nextArrow := strings.Index(remaining, "->")
+			if nextArrow == -1 {
+				pathParts = append(pathParts, remaining)
+				remaining = ""
+			} else {
+				pathParts = append(pathParts, remaining[:nextArrow])
+				remaining = remaining[nextArrow:]
+			}
+		}
+	}
+
+	if len(pathParts) == 0 {
+		return SelectColumn{}, fmt.Errorf("empty path in JSON operator: %s", input)
+	}
+
+	// Build JSON path: "$.key" or "$.outer.inner"
+	jsonPath := "$." + strings.Join(pathParts, ".")
+
+	// Default alias to the last key in the path
+	alias := existingAlias
+	if alias == "" {
+		alias = pathParts[len(pathParts)-1]
+	}
+
+	return SelectColumn{
+		Name:     baseCol,
+		Alias:    alias,
+		JSONPath: jsonPath,
+		JSONText: isTextExtraction,
+	}, nil
 }
 
 // parseRelationSelect parses a relation select part.

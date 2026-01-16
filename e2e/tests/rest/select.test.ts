@@ -180,8 +180,7 @@ describe('REST API - SELECT Operations', () => {
    *   .select('*', { count: 'exact', head: true })
    */
   describe('10. Querying with count option', () => {
-    it.skip('should return only count without data when head: true', async () => {
-      // HEAD method not yet supported - requires server-side HEAD request handling
+    it('should return only count without data when head: true', async () => {
       const { data, count, error } = await supabase
         .from('characters')
         .select('*', { count: 'exact', head: true })
@@ -211,8 +210,7 @@ describe('REST API - SELECT Operations', () => {
    *   .select('id, name, address->city')
    */
   describe('11. Querying JSON data', () => {
-    it.skip('should extract fields from JSON columns using arrow notation', async () => {
-      // Requires JSON path extraction support
+    it('should extract fields from JSON columns using arrow notation', async () => {
       const { data, error } = await supabase
         .from('users')
         .select(`
@@ -305,9 +303,10 @@ describe('REST API - SELECT Operations', () => {
  * - Referenced tables (embedded resources)
  * - Count options (exact, planned, estimated)
  * - Inner join syntax (!inner)
+ * - JSON path extraction (-> and ->>)
+ * - HEAD method for count-only queries (head: true)
  *
  * NOT IMPLEMENTED:
  * - Many-to-many join table queries
- * - JSON path extraction
  * - Schema switching (N/A for SQLite)
  */

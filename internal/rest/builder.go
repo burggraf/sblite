@@ -7,6 +7,69 @@ import (
 	"strings"
 )
 
+// buildSelectColumn converts a column specification to SQL, handling JSON paths.
+// Supports:
+// - Simple columns: "name" -> "name"
+// - Aliased columns: "myAlias:name" -> "name" AS "myAlias"
+// - JSON paths: "data->key" -> json_extract("data", '$.key') AS "key"
+// - JSON text paths: "data->>key" -> json_extract("data", '$.key') AS "key"
+// - Aliased JSON: "myAlias:data->key" -> json_extract("data", '$.key') AS "myAlias"
+func buildSelectColumn(col string) string {
+	// Check for alias first: "alias:column" or "alias:column->path"
+	var alias string
+	remaining := col
+	if colonIdx := strings.Index(col, ":"); colonIdx != -1 {
+		// Ensure colon comes before any JSON operator
+		arrowIdx := strings.Index(col, "->")
+		if arrowIdx == -1 || colonIdx < arrowIdx {
+			alias = col[:colonIdx]
+			remaining = col[colonIdx+1:]
+		}
+	}
+
+	// Check for JSON path: "column->key" or "column->>key"
+	jsonArrowIdx := strings.Index(remaining, "->")
+	if jsonArrowIdx != -1 {
+		baseCol := remaining[:jsonArrowIdx]
+		pathPart := remaining[jsonArrowIdx:]
+
+		// Parse the path
+		var pathParts []string
+		for len(pathPart) > 0 {
+			if strings.HasPrefix(pathPart, "->>") {
+				pathPart = pathPart[3:]
+			} else if strings.HasPrefix(pathPart, "->") {
+				pathPart = pathPart[2:]
+			} else {
+				// Find next arrow or end
+				nextArrow := strings.Index(pathPart, "->")
+				if nextArrow == -1 {
+					pathParts = append(pathParts, pathPart)
+					pathPart = ""
+				} else {
+					pathParts = append(pathParts, pathPart[:nextArrow])
+					pathPart = pathPart[nextArrow:]
+				}
+			}
+		}
+
+		if len(pathParts) > 0 {
+			jsonPath := "$." + strings.Join(pathParts, ".")
+			// Default alias to the last key
+			if alias == "" {
+				alias = pathParts[len(pathParts)-1]
+			}
+			return fmt.Sprintf("json_extract(\"%s\", '%s') AS \"%s\"", baseCol, jsonPath, alias)
+		}
+	}
+
+	// Simple column or aliased column
+	if alias != "" {
+		return fmt.Sprintf("\"%s\" AS \"%s\"", remaining, alias)
+	}
+	return fmt.Sprintf("\"%s\"", col)
+}
+
 // ToSQL converts a LogicalFilter to SQL with grouped conditions
 func (lf LogicalFilter) ToSQL() (string, []any) {
 	if len(lf.Filters) == 0 {
@@ -41,7 +104,7 @@ func BuildSelectQuery(q Query) (string, []any) {
 	} else {
 		quotedCols := make([]string, len(q.Select))
 		for i, col := range q.Select {
-			quotedCols[i] = fmt.Sprintf("\"%s\"", strings.TrimSpace(col))
+			quotedCols[i] = buildSelectColumn(strings.TrimSpace(col))
 		}
 		sb.WriteString(strings.Join(quotedCols, ", "))
 	}

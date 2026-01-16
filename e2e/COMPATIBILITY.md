@@ -27,7 +27,8 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 | Query nested foreign tables | ✅ | One-to-many via `table(columns)` |
 | Filter through referenced tables | ✅ | `table.column` filter syntax |
 | Query with count | ✅ | `count: 'exact' | 'planned' | 'estimated'` |
-| Query JSON data | ❌ | Requires `->` operator |
+| Query with head: true | ✅ | HTTP HEAD method for count-only queries |
+| Query JSON data | ✅ | `->` and `->>` operators via `json_extract()` |
 | Query with inner join | ✅ | `table!inner(columns)` syntax |
 | Switching schemas | 🚫 | SQLite doesn't have schemas |
 
@@ -276,7 +277,8 @@ These Supabase features are not applicable to sblite:
 ### Phase 4 (Planned)
 
 - [ ] Full-text search with SQLite FTS5
-- [ ] JSON path extraction (`->`, `->>`)
+- [x] JSON path extraction (`->`, `->>`) - Implemented via `json_extract()`
+- [x] HEAD method support for count-only queries
 - [ ] Many-to-many relationship queries
 - [ ] Aliased joins for self-referential queries
 

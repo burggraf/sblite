@@ -59,12 +59,10 @@ describe('Count Queries', () => {
 
   /**
    * head: true - Returns only count without data
-   * Note: head: true uses HTTP HEAD method which is not yet supported.
-   * These tests are skipped until HEAD method support is added.
+   * Uses HTTP HEAD method to get count without returning data.
    */
   describe('head: true (count only)', () => {
-    it.skip('should return only count when head is true', async () => {
-      // Requires HEAD method support on /rest/v1/{table}
+    it('should return only count when head is true', async () => {
       const { data, count, error } = await supabase
         .from('characters')
         .select('*', { count: 'exact', head: true })
@@ -74,8 +72,7 @@ describe('Count Queries', () => {
       expect(count).toBe(5)
     })
 
-    it.skip('should return count with filters when head is true', async () => {
-      // Requires HEAD method support on /rest/v1/{table}
+    it('should return count with filters when head is true', async () => {
       const { data, count, error } = await supabase
         .from('characters')
         .select('*', { count: 'exact', head: true })
@@ -86,8 +83,7 @@ describe('Count Queries', () => {
       expect(count).toBe(1) // Only Luke is from Tatooine
     })
 
-    it.skip('should return zero count for no matches', async () => {
-      // Requires HEAD method support on /rest/v1/{table}
+    it('should return zero count for no matches', async () => {
       const { data, count, error } = await supabase
         .from('characters')
         .select('*', { count: 'exact', head: true })
@@ -206,9 +202,7 @@ describe('Count Queries', () => {
  * - Count with limit/range (count reflects total, not limited result)
  * - Count with ordering
  * - Count with column selection
- *
- * NOT IMPLEMENTED:
- * - head: true - Returns only count without data (requires HEAD method support)
+ * - head: true - Returns only count without data (HTTP HEAD method)
  *
  * NOTES:
  * - SQLite doesn't have EXPLAIN ANALYZE like PostgreSQL, so planned/estimated
