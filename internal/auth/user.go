@@ -2,14 +2,13 @@
 package auth
 
 import (
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/markb/sblite/internal/db"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -37,12 +36,10 @@ func NewService(database *db.DB, jwtSecret string) *Service {
 }
 
 func generateID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	return uuid.New().String()
 }
 
-func (s *Service) CreateUser(email, password string) (*User, error) {
+func (s *Service) CreateUser(email, password string, userMetadata map[string]any) (*User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -53,10 +50,20 @@ func (s *Service) CreateUser(email, password string) (*User, error) {
 	id := generateID()
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	// Marshal user metadata to JSON
+	userMetaJSON := "{}"
+	if userMetadata != nil {
+		metaBytes, err := json.Marshal(userMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal user metadata: %w", err)
+		}
+		userMetaJSON = string(metaBytes)
+	}
+
 	_, err = s.db.Exec(`
 		INSERT INTO auth_users (id, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
-		VALUES (?, ?, ?, '{"provider":"email","providers":["email"]}', '{}', ?, ?)
-	`, id, email, string(hash), now, now)
+		VALUES (?, ?, ?, '{"provider":"email","providers":["email"]}', ?, ?, ?)
+	`, id, email, string(hash), userMetaJSON, now, now)
 
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {

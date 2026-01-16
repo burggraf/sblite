@@ -26,7 +26,7 @@ func TestCreateUser(t *testing.T) {
 
 	service := NewService(database, "test-secret-key-min-32-characters")
 
-	user, err := service.CreateUser("test@example.com", "password123")
+	user, err := service.CreateUser("test@example.com", "password123", nil)
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
@@ -45,12 +45,12 @@ func TestCreateUserDuplicateEmail(t *testing.T) {
 
 	service := NewService(database, "test-secret-key-min-32-characters")
 
-	_, err := service.CreateUser("test@example.com", "password123")
+	_, err := service.CreateUser("test@example.com", "password123", nil)
 	if err != nil {
 		t.Fatalf("failed to create first user: %v", err)
 	}
 
-	_, err = service.CreateUser("test@example.com", "password456")
+	_, err = service.CreateUser("test@example.com", "password456", nil)
 	if err == nil {
 		t.Error("expected error for duplicate email")
 	}

@@ -55,7 +55,7 @@ func TestGenerateRefreshToken(t *testing.T) {
 
 	service := NewService(database, "test-secret-key-min-32-characters")
 
-	user, _ := service.CreateUser("test@example.com", "password123")
+	user, _ := service.CreateUser("test@example.com", "password123", nil)
 
 	session, refreshToken, err := service.CreateSession(user)
 	if err != nil {
@@ -115,7 +115,7 @@ func TestRefreshSession(t *testing.T) {
 
 	service := NewService(database, "test-secret-key-min-32-characters")
 
-	user, _ := service.CreateUser("test@example.com", "password123")
+	user, _ := service.CreateUser("test@example.com", "password123", nil)
 
 	session, refreshToken, err := service.CreateSession(user)
 	if err != nil {
@@ -154,7 +154,7 @@ func TestRevokeSession(t *testing.T) {
 
 	service := NewService(database, "test-secret-key-min-32-characters")
 
-	user, _ := service.CreateUser("test@example.com", "password123")
+	user, _ := service.CreateUser("test@example.com", "password123", nil)
 
 	session, refreshToken, err := service.CreateSession(user)
 	if err != nil {

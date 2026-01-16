@@ -28,11 +28,19 @@ func TestSignupEndpoint(t *testing.T) {
 		t.Fatalf("failed to parse response: %v", err)
 	}
 
-	if response["email"] != "test@example.com" {
-		t.Errorf("expected email test@example.com, got %v", response["email"])
+	// Now signup returns a TokenResponse with user nested
+	user, ok := response["user"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected user object in response, got %v", response)
 	}
-	if response["id"] == nil {
+	if user["email"] != "test@example.com" {
+		t.Errorf("expected email test@example.com, got %v", user["email"])
+	}
+	if user["id"] == nil {
 		t.Error("expected id to be set")
+	}
+	if response["access_token"] == nil {
+		t.Error("expected access_token in signup response")
 	}
 }
 
@@ -186,8 +194,8 @@ func TestUpdateUserMetadata(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &loginResp)
 	token := loginResp["access_token"].(string)
 
-	// Update user metadata
-	updateBody := `{"user_metadata": {"name": "Test User", "age": 30}}`
+	// Update user metadata (uses 'data' field like Supabase client)
+	updateBody := `{"data": {"name": "Test User", "age": 30}}`
 	req = httptest.NewRequest("PUT", "/auth/v1/user", bytes.NewBufferString(updateBody))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")

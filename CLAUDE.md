@@ -187,6 +187,7 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Error handling: wrap errors with context using `fmt.Errorf("context: %w", err)`
 - HTTP handlers return JSON with appropriate status codes
 - SQL queries use parameterized statements (no string concatenation)
+- **UUIDs**: All ID fields (user IDs, session IDs, etc.) must use proper UUID v4 format to maintain Supabase compatibility. Use `github.com/google/uuid` for generation. Never use hex-encoded random bytes or other non-UUID formats.
 
 ## Common Tasks
 

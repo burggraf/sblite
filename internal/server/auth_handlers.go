@@ -8,8 +8,9 @@ import (
 )
 
 type SignupRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string         `json:"email"`
+	Password string         `json:"password"`
+	Data     map[string]any `json:"data,omitempty"`
 }
 
 type ErrorResponse struct {
@@ -34,7 +35,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.authService.CreateUser(req.Email, req.Password)
+	user, err := s.authService.CreateUser(req.Email, req.Password, req.Data)
 	if err != nil {
 		if strings.Contains(err.Error(), "already exists") {
 			s.writeError(w, http.StatusBadRequest, "user_already_exists", "User already registered")
@@ -44,13 +45,36 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]any{
-		"id":            user.ID,
-		"email":         user.Email,
-		"created_at":    user.CreatedAt,
-		"updated_at":    user.UpdatedAt,
-		"app_metadata":  user.AppMetadata,
-		"user_metadata": user.UserMetadata,
+	// Create session and generate tokens
+	session, refreshToken, err := s.authService.CreateSession(user)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to create session")
+		return
+	}
+
+	accessToken, err := s.authService.GenerateAccessToken(user, session.ID)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to generate token")
+		return
+	}
+
+	// Update last sign in
+	s.authService.UpdateLastSignIn(user.ID)
+
+	response := TokenResponse{
+		AccessToken:  accessToken,
+		TokenType:    "bearer",
+		ExpiresIn:    3600,
+		RefreshToken: refreshToken,
+		User: map[string]any{
+			"id":            user.ID,
+			"email":         user.Email,
+			"role":          user.Role,
+			"created_at":    user.CreatedAt,
+			"updated_at":    user.UpdatedAt,
+			"app_metadata":  user.AppMetadata,
+			"user_metadata": user.UserMetadata,
+		},
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -208,9 +232,9 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateUserRequest struct {
-	Email        string         `json:"email,omitempty"`
-	Password     string         `json:"password,omitempty"`
-	UserMetadata map[string]any `json:"user_metadata,omitempty"`
+	Email    string         `json:"email,omitempty"`
+	Password string         `json:"password,omitempty"`
+	Data     map[string]any `json:"data,omitempty"`
 }
 
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
@@ -226,8 +250,8 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.UserMetadata != nil {
-		if err := s.authService.UpdateUserMetadata(user.ID, req.UserMetadata); err != nil {
+	if req.Data != nil {
+		if err := s.authService.UpdateUserMetadata(user.ID, req.Data); err != nil {
 			s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to update user")
 			return
 		}
