@@ -57,10 +57,31 @@ CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_token ON auth_refresh_tokens(
 CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_session_id ON auth_refresh_tokens(session_id);
 `
 
+// RLS policies table for storing row-level security policies
+const rlsSchema = `
+CREATE TABLE IF NOT EXISTS _rls_policies (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_name    TEXT NOT NULL,
+    policy_name   TEXT NOT NULL,
+    command       TEXT CHECK (command IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'ALL')),
+    using_expr    TEXT,
+    check_expr    TEXT,
+    enabled       INTEGER DEFAULT 1,
+    created_at    TEXT DEFAULT (datetime('now')),
+    UNIQUE(table_name, policy_name)
+);
+`
+
 func (db *DB) RunMigrations() error {
 	_, err := db.Exec(authSchema)
 	if err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
+		return fmt.Errorf("failed to run auth migrations: %w", err)
 	}
+
+	_, err = db.Exec(rlsSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run RLS migrations: %w", err)
+	}
+
 	return nil
 }
