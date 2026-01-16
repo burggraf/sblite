@@ -173,17 +173,22 @@ func (s *Service) UpdatePassword(userID, password string) error {
 	return err
 }
 
-func generateToken() string {
+func generateToken() (string, error) {
 	b := make([]byte, 32)
-	rand.Read(b)
-	return base64.URLEncoding.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
 }
 
 func (s *Service) GenerateConfirmationToken(userID string) (string, error) {
-	token := generateToken()
+	token, err := generateToken()
+	if err != nil {
+		return "", err
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	_, err := s.db.Exec(`
+	_, err = s.db.Exec(`
 		UPDATE auth_users SET confirmation_token = ?, confirmation_sent_at = ?
 		WHERE id = ?
 	`, token, now, userID)
@@ -196,12 +201,23 @@ func (s *Service) GenerateConfirmationToken(userID string) (string, error) {
 
 func (s *Service) VerifyEmail(token string) (*User, error) {
 	var userID string
+	var confirmationSentAt sql.NullString
+
 	err := s.db.QueryRow(`
-		SELECT id FROM auth_users WHERE confirmation_token = ? AND deleted_at IS NULL
-	`, token).Scan(&userID)
+		SELECT id, confirmation_sent_at FROM auth_users
+		WHERE confirmation_token = ? AND deleted_at IS NULL
+	`, token).Scan(&userID, &confirmationSentAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired token")
+	}
+
+	// Check token age (24 hours expiration)
+	if confirmationSentAt.Valid {
+		sentAt, err := time.Parse(time.RFC3339, confirmationSentAt.String)
+		if err == nil && time.Since(sentAt) > 24*time.Hour {
+			return nil, fmt.Errorf("invalid or expired token")
+		}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
