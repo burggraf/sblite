@@ -60,6 +60,8 @@ var reservedParams = map[string]bool{
 	"order":  true,
 	"limit":  true,
 	"offset": true,
+	"or":     true, // handled separately as logical filter
+	"and":    true, // handled separately as logical filter
 }
 
 func (h *Handler) parseQueryParams(r *http.Request) Query {
@@ -86,6 +88,18 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 			if filter, err := ParseFilter(filterStr); err == nil {
 				q.Filters = append(q.Filters, filter)
 			}
+		}
+	}
+
+	// Parse logical filters (or/and)
+	for _, orValue := range r.URL.Query()["or"] {
+		if lf, err := ParseLogicalFilter("or", orValue); err == nil {
+			q.LogicalFilters = append(q.LogicalFilters, lf)
+		}
+	}
+	for _, andValue := range r.URL.Query()["and"] {
+		if lf, err := ParseLogicalFilter("and", andValue); err == nil {
+			q.LogicalFilters = append(q.LogicalFilters, lf)
 		}
 	}
 
@@ -291,7 +305,7 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(q.Filters) == 0 {
+	if len(q.Filters) == 0 && len(q.LogicalFilters) == 0 {
 		h.writeError(w, http.StatusBadRequest, "missing_filter", "DELETE requires at least one filter")
 		return
 	}
@@ -426,7 +440,7 @@ func (h *Handler) selectMatching(table string, selectCols []string, filters []Fi
 
 // getMatchingIDsWithRLS returns IDs of rows matching the query (including RLS condition)
 func (h *Handler) getMatchingIDsWithRLS(q Query) []int64 {
-	selectQ := Query{Table: q.Table, Select: []string{"id"}, Filters: q.Filters, RLSCondition: q.RLSCondition}
+	selectQ := Query{Table: q.Table, Select: []string{"id"}, Filters: q.Filters, LogicalFilters: q.LogicalFilters, RLSCondition: q.RLSCondition}
 	sqlStr, args := BuildSelectQuery(selectQ)
 
 	rows, err := h.db.Query(sqlStr, args...)
@@ -447,7 +461,7 @@ func (h *Handler) getMatchingIDsWithRLS(q Query) []int64 {
 
 // selectMatchingWithRLS retrieves rows matching the query (including RLS condition)
 func (h *Handler) selectMatchingWithRLS(q Query) []map[string]any {
-	selectQ := Query{Table: q.Table, Select: q.Select, Filters: q.Filters, RLSCondition: q.RLSCondition}
+	selectQ := Query{Table: q.Table, Select: q.Select, Filters: q.Filters, LogicalFilters: q.LogicalFilters, RLSCondition: q.RLSCondition}
 	sqlStr, args := BuildSelectQuery(selectQ)
 
 	rows, err := h.db.Query(sqlStr, args...)

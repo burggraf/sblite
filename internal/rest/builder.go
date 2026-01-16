@@ -7,6 +7,29 @@ import (
 	"strings"
 )
 
+// ToSQL converts a LogicalFilter to SQL with grouped conditions
+func (lf LogicalFilter) ToSQL() (string, []any) {
+	if len(lf.Filters) == 0 {
+		return "", nil
+	}
+
+	var conditions []string
+	var args []any
+
+	for _, f := range lf.Filters {
+		sql, filterArgs := f.ToSQL()
+		conditions = append(conditions, sql)
+		args = append(args, filterArgs...)
+	}
+
+	joiner := " AND "
+	if lf.Operator == "or" {
+		joiner = " OR "
+	}
+
+	return "(" + strings.Join(conditions, joiner) + ")", args
+}
+
 func BuildSelectQuery(q Query) (string, []any) {
 	var args []any
 	var sb strings.Builder
@@ -26,21 +49,34 @@ func BuildSelectQuery(q Query) (string, []any) {
 	// FROM clause
 	sb.WriteString(fmt.Sprintf(" FROM \"%s\"", q.Table))
 
-	// WHERE clause
-	if len(q.Filters) > 0 {
+	// WHERE clause (regular filters and logical filters)
+	hasConditions := len(q.Filters) > 0 || len(q.LogicalFilters) > 0
+	if hasConditions {
 		sb.WriteString(" WHERE ")
 		var conditions []string
+
+		// Regular filters
 		for _, f := range q.Filters {
 			sql, filterArgs := f.ToSQL()
 			conditions = append(conditions, sql)
 			args = append(args, filterArgs...)
 		}
+
+		// Logical filters (or/and groups)
+		for _, lf := range q.LogicalFilters {
+			sql, filterArgs := lf.ToSQL()
+			if sql != "" {
+				conditions = append(conditions, sql)
+				args = append(args, filterArgs...)
+			}
+		}
+
 		sb.WriteString(strings.Join(conditions, " AND "))
 	}
 
 	// RLS condition (added after filters)
 	if q.RLSCondition != "" {
-		if len(q.Filters) > 0 {
+		if hasConditions {
 			sb.WriteString(" AND ")
 		} else {
 			sb.WriteString(" WHERE ")
@@ -117,21 +153,34 @@ func BuildUpdateQuery(q Query, data map[string]any) (string, []any) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf(`UPDATE "%s" SET %s`, q.Table, strings.Join(setClauses, ", ")))
 
-	// WHERE clause from filters
-	if len(q.Filters) > 0 {
+	// WHERE clause from filters (regular and logical)
+	hasConditions := len(q.Filters) > 0 || len(q.LogicalFilters) > 0
+	if hasConditions {
 		sb.WriteString(" WHERE ")
 		var conditions []string
+
+		// Regular filters
 		for _, f := range q.Filters {
 			condSQL, filterArgs := f.ToSQL()
 			conditions = append(conditions, condSQL)
 			args = append(args, filterArgs...)
 		}
+
+		// Logical filters (or/and groups)
+		for _, lf := range q.LogicalFilters {
+			sql, filterArgs := lf.ToSQL()
+			if sql != "" {
+				conditions = append(conditions, sql)
+				args = append(args, filterArgs...)
+			}
+		}
+
 		sb.WriteString(strings.Join(conditions, " AND "))
 	}
 
 	// RLS condition (added after filters)
 	if q.RLSCondition != "" {
-		if len(q.Filters) > 0 {
+		if hasConditions {
 			sb.WriteString(" AND ")
 		} else {
 			sb.WriteString(" WHERE ")
@@ -148,21 +197,34 @@ func BuildDeleteQuery(q Query) (string, []any) {
 
 	sb.WriteString(fmt.Sprintf(`DELETE FROM "%s"`, q.Table))
 
-	// WHERE clause from filters
-	if len(q.Filters) > 0 {
+	// WHERE clause from filters (regular and logical)
+	hasConditions := len(q.Filters) > 0 || len(q.LogicalFilters) > 0
+	if hasConditions {
 		sb.WriteString(" WHERE ")
 		var conditions []string
+
+		// Regular filters
 		for _, f := range q.Filters {
 			condSQL, filterArgs := f.ToSQL()
 			conditions = append(conditions, condSQL)
 			args = append(args, filterArgs...)
 		}
+
+		// Logical filters (or/and groups)
+		for _, lf := range q.LogicalFilters {
+			sql, filterArgs := lf.ToSQL()
+			if sql != "" {
+				conditions = append(conditions, sql)
+				args = append(args, filterArgs...)
+			}
+		}
+
 		sb.WriteString(strings.Join(conditions, " AND "))
 	}
 
 	// RLS condition (added after filters)
 	if q.RLSCondition != "" {
-		if len(q.Filters) > 0 {
+		if hasConditions {
 			sb.WriteString(" AND ")
 		} else {
 			sb.WriteString(" WHERE ")
