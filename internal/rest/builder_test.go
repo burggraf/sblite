@@ -186,3 +186,96 @@ func TestBuildDeleteQueryWithRLSNoFilters(t *testing.T) {
 		t.Errorf("expected 0 args, got %d", len(args))
 	}
 }
+
+func TestBuildCountQuery(t *testing.T) {
+	query := Query{
+		Table: "todos",
+	}
+
+	sql, args := BuildCountQuery(query)
+
+	expectedSQL := `SELECT COUNT(*) FROM "todos"`
+	if sql != expectedSQL {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedSQL, sql)
+	}
+	if len(args) != 0 {
+		t.Errorf("expected 0 args, got %d", len(args))
+	}
+}
+
+func TestBuildCountQueryWithFilter(t *testing.T) {
+	query := Query{
+		Table:   "todos",
+		Filters: []Filter{{Column: "completed", Operator: "eq", Value: "true"}},
+	}
+
+	sql, args := BuildCountQuery(query)
+
+	expectedSQL := `SELECT COUNT(*) FROM "todos" WHERE "completed" = ?`
+	if sql != expectedSQL {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedSQL, sql)
+	}
+	if len(args) != 1 || args[0] != "true" {
+		t.Errorf("expected args [true], got %v", args)
+	}
+}
+
+func TestBuildCountQueryWithRLS(t *testing.T) {
+	query := Query{
+		Table:        "todos",
+		RLSCondition: `"user_id" = 'user-123'`,
+	}
+
+	sql, args := BuildCountQuery(query)
+
+	expectedSQL := `SELECT COUNT(*) FROM "todos" WHERE "user_id" = 'user-123'`
+	if sql != expectedSQL {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedSQL, sql)
+	}
+	if len(args) != 0 {
+		t.Errorf("expected 0 args, got %d", len(args))
+	}
+}
+
+func TestBuildCountQueryWithFilterAndRLS(t *testing.T) {
+	query := Query{
+		Table:        "todos",
+		Filters:      []Filter{{Column: "completed", Operator: "eq", Value: "true"}},
+		RLSCondition: `"user_id" = 'user-123'`,
+	}
+
+	sql, args := BuildCountQuery(query)
+
+	expectedSQL := `SELECT COUNT(*) FROM "todos" WHERE "completed" = ? AND "user_id" = 'user-123'`
+	if sql != expectedSQL {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedSQL, sql)
+	}
+	if len(args) != 1 || args[0] != "true" {
+		t.Errorf("expected args [true], got %v", args)
+	}
+}
+
+func TestBuildCountQueryWithLogicalFilter(t *testing.T) {
+	query := Query{
+		Table: "todos",
+		LogicalFilters: []LogicalFilter{
+			{
+				Operator: "or",
+				Filters: []Filter{
+					{Column: "status", Operator: "eq", Value: "active"},
+					{Column: "status", Operator: "eq", Value: "pending"},
+				},
+			},
+		},
+	}
+
+	sql, args := BuildCountQuery(query)
+
+	expectedSQL := `SELECT COUNT(*) FROM "todos" WHERE ("status" = ? OR "status" = ?)`
+	if sql != expectedSQL {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedSQL, sql)
+	}
+	if len(args) != 2 {
+		t.Errorf("expected 2 args, got %d", len(args))
+	}
+}

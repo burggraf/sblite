@@ -235,6 +235,51 @@ func BuildDeleteQuery(q Query) (string, []any) {
 	return sb.String(), args
 }
 
+// BuildCountQuery builds a COUNT(*) query with filters and RLS conditions
+func BuildCountQuery(q Query) (string, []any) {
+	var args []any
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, q.Table))
+
+	// WHERE clause (regular filters and logical filters)
+	hasConditions := len(q.Filters) > 0 || len(q.LogicalFilters) > 0
+	if hasConditions {
+		sb.WriteString(" WHERE ")
+		var conditions []string
+
+		// Regular filters
+		for _, f := range q.Filters {
+			sql, filterArgs := f.ToSQL()
+			conditions = append(conditions, sql)
+			args = append(args, filterArgs...)
+		}
+
+		// Logical filters (or/and groups)
+		for _, lf := range q.LogicalFilters {
+			sql, filterArgs := lf.ToSQL()
+			if sql != "" {
+				conditions = append(conditions, sql)
+				args = append(args, filterArgs...)
+			}
+		}
+
+		sb.WriteString(strings.Join(conditions, " AND "))
+	}
+
+	// RLS condition (added after filters)
+	if q.RLSCondition != "" {
+		if hasConditions {
+			sb.WriteString(" AND ")
+		} else {
+			sb.WriteString(" WHERE ")
+		}
+		sb.WriteString(q.RLSCondition)
+	}
+
+	return sb.String(), args
+}
+
 // BuildUpsertQuery builds an INSERT ... ON CONFLICT DO UPDATE query
 func BuildUpsertQuery(table string, data map[string]any) (string, []any) {
 	// Sort keys for deterministic output

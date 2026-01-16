@@ -54,6 +54,19 @@ func GetAuthContextFromRequest(r *http.Request) *rls.AuthContext {
 	return ctx
 }
 
+// parsePreferHeader parses the Prefer header for count option
+func parsePreferHeader(prefer string) (count string, head bool) {
+	if strings.Contains(prefer, "count=exact") {
+		count = "exact"
+	} else if strings.Contains(prefer, "count=planned") {
+		count = "planned"
+	} else if strings.Contains(prefer, "count=estimated") {
+		count = "estimated"
+	}
+	// head is determined by request method (HEAD) not Prefer
+	return
+}
+
 // Reserved query params that are not filters
 var reservedParams = map[string]bool{
 	"select": true,
@@ -132,6 +145,29 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Parse Prefer header for count option
+	prefer := r.Header.Get("Prefer")
+	countType, _ := parsePreferHeader(prefer)
+
+	// Execute count query if requested
+	var totalCount int64 = -1
+	if countType != "" {
+		countSQL, countArgs := BuildCountQuery(q)
+		if err := h.db.QueryRow(countSQL, countArgs...).Scan(&totalCount); err != nil {
+			h.writeError(w, http.StatusInternalServerError, "count_error", err.Error())
+			return
+		}
+	}
+
+	// Handle HEAD requests - return only headers, no body
+	if r.Method == "HEAD" {
+		w.Header().Set("Content-Type", "application/json")
+		if totalCount >= 0 {
+			w.Header().Set("Content-Range", fmt.Sprintf("0-0/%d", totalCount))
+		}
+		return
+	}
+
 	// Check for single() modifier via Accept header
 	accept := r.Header.Get("Accept")
 	wantSingle := strings.Contains(accept, "application/vnd.pgrst.object+json")
@@ -151,6 +187,16 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+
+	// Set Content-Range header if count was requested
+	if totalCount >= 0 {
+		start := q.Offset
+		end := start + len(results) - 1
+		if len(results) == 0 {
+			end = start
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("%d-%d/%d", start, end, totalCount))
+	}
 
 	// Handle single() modifier
 	if wantSingle {
