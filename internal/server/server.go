@@ -52,6 +52,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/recover", s.handleRecover)
 		r.Post("/verify", s.handleVerify)
 		r.Get("/verify", s.handleVerify)
+		r.Get("/settings", s.handleSettings)
 
 		// Protected routes
 		r.Group(func(r chi.Router) {

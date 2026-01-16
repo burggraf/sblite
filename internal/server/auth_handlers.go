@@ -396,3 +396,26 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid verification type")
 	}
 }
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	settings := map[string]any{
+		"external": map[string]any{
+			"email":    true,
+			"phone":    false,
+			"google":   false,
+			"github":   false,
+			"facebook": false,
+			"twitter":  false,
+			"apple":    false,
+			"discord":  false,
+			"twitch":   false,
+		},
+		"disable_signup":     false,
+		"mailer_autoconfirm": true, // sblite doesn't require email confirmation by default
+		"phone_autoconfirm":  false,
+		"sms_provider":       "",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(settings)
+}
