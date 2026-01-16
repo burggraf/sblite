@@ -63,3 +63,119 @@ func (s *Server) writeError(w http.ResponseWriter, status int, errCode, message 
 		Message: message,
 	})
 }
+
+type LoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+type TokenResponse struct {
+	AccessToken  string         `json:"access_token"`
+	TokenType    string         `json:"token_type"`
+	ExpiresIn    int            `json:"expires_in"`
+	RefreshToken string         `json:"refresh_token"`
+	User         map[string]any `json:"user"`
+}
+
+func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
+	grantType := r.URL.Query().Get("grant_type")
+
+	switch grantType {
+	case "password":
+		s.handlePasswordGrant(w, r)
+	case "refresh_token":
+		s.handleRefreshGrant(w, r)
+	default:
+		s.writeError(w, http.StatusBadRequest, "invalid_grant", "Unsupported grant type")
+	}
+}
+
+func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request) {
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	user, err := s.authService.GetUserByEmail(req.Email)
+	if err != nil {
+		s.writeError(w, http.StatusUnauthorized, "invalid_credentials", "Invalid email or password")
+		return
+	}
+
+	if !s.authService.ValidatePassword(user, req.Password) {
+		s.writeError(w, http.StatusUnauthorized, "invalid_credentials", "Invalid email or password")
+		return
+	}
+
+	session, refreshToken, err := s.authService.CreateSession(user)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to create session")
+		return
+	}
+
+	accessToken, err := s.authService.GenerateAccessToken(user, session.ID)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to generate token")
+		return
+	}
+
+	// Update last sign in
+	s.authService.UpdateLastSignIn(user.ID)
+
+	response := TokenResponse{
+		AccessToken:  accessToken,
+		TokenType:    "bearer",
+		ExpiresIn:    3600,
+		RefreshToken: refreshToken,
+		User: map[string]any{
+			"id":            user.ID,
+			"email":         user.Email,
+			"role":          user.Role,
+			"app_metadata":  user.AppMetadata,
+			"user_metadata": user.UserMetadata,
+		},
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
+	var req RefreshRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	user, session, refreshToken, err := s.authService.RefreshSession(req.RefreshToken)
+	if err != nil {
+		s.writeError(w, http.StatusUnauthorized, "invalid_grant", "Invalid refresh token")
+		return
+	}
+
+	accessToken, err := s.authService.GenerateAccessToken(user, session.ID)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to generate token")
+		return
+	}
+
+	response := TokenResponse{
+		AccessToken:  accessToken,
+		TokenType:    "bearer",
+		ExpiresIn:    3600,
+		RefreshToken: refreshToken,
+		User: map[string]any{
+			"id":            user.ID,
+			"email":         user.Email,
+			"role":          user.Role,
+			"app_metadata":  user.AppMetadata,
+			"user_metadata": user.UserMetadata,
+		},
+	}
+
+	json.NewEncoder(w).Encode(response)
+}

@@ -37,6 +37,7 @@ func (s *Server) setupRoutes() {
 	// Auth routes
 	s.router.Route("/auth/v1", func(r chi.Router) {
 		r.Post("/signup", s.handleSignup)
+		r.Post("/token", s.handleToken)
 	})
 }
 

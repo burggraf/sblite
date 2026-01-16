@@ -121,3 +121,9 @@ func (s *Service) ValidatePassword(user *User, password string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(user.EncryptedPassword), []byte(password))
 	return err == nil
 }
+
+func (s *Service) UpdateLastSignIn(userID string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec("UPDATE auth_users SET last_sign_in_at = ? WHERE id = ?", now, userID)
+	return err
+}
