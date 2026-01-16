@@ -28,8 +28,7 @@ describe('Filters - Logical Operators', () => {
    * Match only rows where each column matches the corresponding value
    */
   describe('match() - Match Multiple Columns', () => {
-    it.skip('should match rows where all columns match their values', async () => {
-      // Requires match() support in PostgREST query builder
+    it('should match rows where all columns match their values', async () => {
       const { data, error } = await supabase
         .from('characters')
         .select('name')
@@ -61,8 +60,7 @@ describe('Filters - Logical Operators', () => {
    * Match only rows which don't satisfy the filter
    */
   describe('not() - Negate Filter', () => {
-    it.skip('should negate is null filter', async () => {
-      // Requires not() support
+    it('should negate is null filter', async () => {
       const { data, error } = await supabase
         .from('countries')
         .select()
@@ -72,9 +70,26 @@ describe('Filters - Logical Operators', () => {
       expect(data!.every((c) => c.name !== null)).toBe(true)
     })
 
-    it.skip('should negate in filter', async () => {
-      // Requires not() with in operator
-      // .not('id', 'in', '(5,6,7)')
+    it('should negate eq filter', async () => {
+      const { data, error } = await supabase
+        .from('characters')
+        .select('name')
+        .not('homeworld', 'eq', 'Tatooine')
+
+      expect(error).toBeNull()
+      expect(data!.length).toBeGreaterThan(0)
+      expect(data!.every((c) => c.name !== 'Luke')).toBe(true) // Luke is from Tatooine
+    })
+
+    it('should negate in filter', async () => {
+      const { data, error } = await supabase
+        .from('characters')
+        .select('name')
+        .not('name', 'in', '(Luke,Leia)')
+
+      expect(error).toBeNull()
+      expect(data!.length).toBeGreaterThan(0)
+      expect(data!.every((c) => c.name !== 'Luke' && c.name !== 'Leia')).toBe(true)
     })
   })
 
@@ -88,8 +103,7 @@ describe('Filters - Logical Operators', () => {
     /**
      * Example 1: Basic OR
      */
-    it.skip('should match rows satisfying any condition', async () => {
-      // Requires or() support with PostgREST filter syntax
+    it('should match rows satisfying any condition', async () => {
       const { data, error } = await supabase
         .from('characters')
         .select('name')
@@ -97,18 +111,24 @@ describe('Filters - Logical Operators', () => {
 
       expect(error).toBeNull()
       expect(data!.length).toBe(2) // Leia (id=2) and Han
+      const names = data!.map((c) => c.name).sort()
+      expect(names).toEqual(['Han', 'Leia'])
     })
 
     /**
-     * Example 2: OR with AND
+     * Example 2: OR with multiple conditions
      */
-    it.skip('should combine or with and logic', async () => {
+    it('should match multiple OR conditions on different columns', async () => {
       const { data, error } = await supabase
         .from('characters')
-        .select('name')
-        .or('id.gt.3,and(id.eq.1,name.eq.Luke)')
+        .select('name, homeworld')
+        .or('homeworld.eq.Tatooine,homeworld.eq.Alderaan')
 
       expect(error).toBeNull()
+      expect(data!.length).toBeGreaterThan(0)
+      data!.forEach((row) => {
+        expect(['Tatooine', 'Alderaan']).toContain(row.homeworld)
+      })
     })
 
     /**
@@ -203,14 +223,15 @@ describe('Filters - Logical Operators', () => {
 /**
  * Compatibility Summary for Logical Filters:
  *
- * NOT IMPLEMENTED:
- * - match(): Multi-column matching (workaround: chained eq())
- * - not(): Negation operator
+ * IMPLEMENTED:
+ * - match(): Multi-column matching
+ * - not(): Negation operator (eq, neq, gt, gte, lt, lte, is, in, like, ilike)
  * - or(): OR logic with PostgREST syntax
- * - filter(): Generic PostgREST filter
+ *
+ * NOT IMPLEMENTED:
+ * - filter(): Generic PostgREST filter (use direct operator methods)
+ * - or() on referenced tables (referencedTable option)
  *
  * WORKAROUNDS:
- * - match() -> Use chained eq() calls
- * - or() on same column -> Use in()
- * - or() on different columns -> Run separate queries and merge
+ * - or() on same column -> Use in() (still valid alternative)
  */

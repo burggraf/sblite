@@ -78,13 +78,10 @@ describe('REST API - SELECT Operations', () => {
    *   .from('orchestral_sections')
    *   .select(`name, instruments (name)`)
    *
-   * Note: This requires foreign key relationships to be set up.
-   * sblite Phase 1 does not support embedded resources yet.
+   * Foreign key relationships are auto-detected from SQLite foreign key pragma.
    */
   describe('3. Query referenced tables', () => {
-    it.skip('should fetch related data from referenced tables', async () => {
-      // This feature requires foreign key relationships and embedded resources
-      // which are not implemented in Phase 1
+    it('should fetch related data from referenced tables', async () => {
       const { data, error } = await supabase
         .from('orchestral_sections')
         .select(`
@@ -98,6 +95,7 @@ describe('REST API - SELECT Operations', () => {
       expect(data).toBeDefined()
       expect(data![0]).toHaveProperty('name')
       expect(data![0]).toHaveProperty('instruments')
+      expect(Array.isArray(data![0].instruments)).toBe(true)
     })
   })
 
@@ -182,17 +180,17 @@ describe('REST API - SELECT Operations', () => {
    *   .select('*', { count: 'exact', head: true })
    */
   describe('10. Querying with count option', () => {
-    it.skip('should return only count without data when head: true', async () => {
-      // Requires Prefer header support for count
-      const { count, error } = await supabase
+    it('should return only count without data when head: true', async () => {
+      const { data, count, error } = await supabase
         .from('characters')
         .select('*', { count: 'exact', head: true })
 
       expect(error).toBeNull()
-      expect(count).toBeGreaterThan(0)
+      expect(data).toBeNull()
+      expect(count).toBe(5) // 5 characters in test data
     })
 
-    it.skip('should return both count and data', async () => {
+    it('should return both count and data', async () => {
       const { data, count, error } = await supabase
         .from('characters')
         .select('*', { count: 'exact' })
@@ -231,11 +229,22 @@ describe('REST API - SELECT Operations', () => {
    * Example 12: Querying referenced table with inner join
    * Docs: https://supabase.com/docs/reference/javascript/select#querying-referenced-table-with-inner-join
    *
-   * Note: Not implemented in Phase 1 - requires !inner syntax for embedded resources
+   * Inner join filters out parent rows without matching children.
    */
   describe('12. Querying with inner join', () => {
-    it.skip('should perform inner join on referenced tables', async () => {
-      // Not implemented in Phase 1
+    it('should perform inner join on referenced tables', async () => {
+      // Using !inner should only return countries that have cities
+      const { data, error } = await supabase
+        .from('countries')
+        .select('name, cities!inner(name)')
+
+      expect(error).toBeNull()
+      expect(data).toBeDefined()
+      // All returned countries should have at least one city
+      data!.forEach((country) => {
+        expect(Array.isArray(country.cities)).toBe(true)
+        expect(country.cities.length).toBeGreaterThan(0)
+      })
     })
   })
 
@@ -292,12 +301,12 @@ describe('REST API - SELECT Operations', () => {
  * - Basic select all: .select()
  * - Select specific columns: .select('col1, col2')
  * - Select with wildcard: .select('*')
- *
- * NOT IMPLEMENTED (Phase 2+):
  * - Referenced tables (embedded resources)
- * - Join table queries
- * - Count options
- * - JSON path extraction
+ * - Count options (exact, planned, estimated)
  * - Inner join syntax (!inner)
- * - Schema switching
+ *
+ * NOT IMPLEMENTED:
+ * - Many-to-many join table queries
+ * - JSON path extraction
+ * - Schema switching (N/A for SQLite)
  */

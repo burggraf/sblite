@@ -318,13 +318,15 @@ describe('Modifiers', () => {
    * Docs: https://supabase.com/docs/reference/javascript/db-csv
    */
   describe('csv() - Return as CSV', () => {
-    it.skip('should return data as CSV string', async () => {
-      // Requires Accept: text/csv header support
+    it('should return data as CSV string', async () => {
       const { data, error } = await supabase.from('characters').select().csv()
 
       expect(error).toBeNull()
       expect(typeof data).toBe('string')
       expect(data).toContain(',') // CSV has commas
+      // Should have header row
+      expect(data).toContain('id')
+      expect(data).toContain('name')
     })
   })
 
@@ -395,10 +397,10 @@ describe('Modifiers', () => {
  * - range(): Pagination (offset + limit)
  * - single(): Return single object (errors on 0 or >1 results)
  * - maybeSingle(): Return object or null (errors on >1 results)
+ * - csv(): Return as CSV format
  *
  * NOT IMPLEMENTED:
  * - order() on referenced tables
  * - limit() on referenced tables
- * - csv(): Return as CSV format
  * - explain(): Query execution plan
  */
