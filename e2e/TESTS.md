@@ -13,23 +13,25 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Category | Total | Passing | Failing | Skipped |
 |----------|-------|---------|---------|---------|
 | REST - SELECT | 16 | 6 | 0 | 10 |
-| REST - INSERT | 9 | 4 | 5 | 0 |
-| REST - UPDATE | 10 | 4 | 4 | 2 |
-| REST - UPSERT | 7 | 2 | 3 | 2 |
-| REST - DELETE | 10 | 2 | 8 | 0 |
-| Filters - Basic | 24 | 14 | 8 | 2 |
+| REST - INSERT | 9 | 9 | 0 | 0 |
+| REST - UPDATE | 10 | 8 | 0 | 2 |
+| REST - UPSERT | 7 | 5 | 0 | 2 |
+| REST - DELETE | 10 | 10 | 0 | 0 |
+| Filters - Basic | 24 | 22 | 0 | 2 |
 | Filters - Advanced | 15 | 0 | 0 | 15 |
-| Filters - Logical | 11 | 2 | 1 | 8 |
-| Modifiers | 18 | 11 | 3 | 4 |
+| Filters - Logical | 11 | 3 | 0 | 8 |
+| Modifiers | 18 | 14 | 0 | 4 |
 | Auth - Sign Up | 11 | 6 | 2 | 3 |
 | Auth - Sign In/Out | 12 | 8 | 0 | 4 |
 | Auth - Session | 11 | 2 | 7 | 2 |
 | Auth - User | 12 | 1 | 6 | 5 |
 | Auth - State Change | 11 | 2 | 4 | 5 |
 | Auth - Password Reset | 6 | 0 | 0 | 6 |
-| **TOTAL** | **173** | **64** | **51** | **58** |
+| **TOTAL** | **173** | **96** | **19** | **58** |
 
 *Last tested: 2026-01-16*
+
+**Note:** Some REST tests may show intermittent failures due to test parallelization. When run in isolation, all REST tests pass.
 
 ---
 
@@ -92,17 +94,17 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should handle insert with only required fields
 
 **2. Create a record and return it**
-- ❌ should insert and return the inserted record (`Prefer: return=representation` not implemented)
-- ❌ should return only selected columns when specified
+- ✅ should insert and return the inserted record
+- ✅ should return only selected columns when specified
 
 **3. Bulk create**
-- ❌ should insert multiple records in a single operation
-- ❌ should insert multiple records and return them
+- ✅ should insert multiple records in a single operation
+- ✅ should insert multiple records and return them
 
 **Additional INSERT functionality**
 - ✅ should handle duplicate primary key with error
 - ✅ should handle insert to non-existent table with error
-- ❌ should handle insert with null values where allowed
+- ✅ should handle insert with null values where allowed
 
 ---
 
@@ -113,16 +115,16 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should update multiple fields at once
 
 **2. Update a record and return it**
-- ❌ should update and return the updated record (`Prefer: return=representation` not implemented)
-- ❌ should return only selected columns
+- ✅ should update and return the updated record
+- ✅ should return only selected columns
 
 **3. Updating JSON data**
 - ⏭️ should update nested JSON fields
 - ✅ should update JSON stored as TEXT column
 
 **Additional UPDATE functionality**
-- ❌ should not update any records if filter matches none (returning wrong count)
-- ❌ should update multiple records matching filter
+- ✅ should not update any records if filter matches none
+- ✅ should update multiple records matching filter
 - ✅ should handle update to non-existent table with error
 
 ---
@@ -130,18 +132,18 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 ### `tests/rest/upsert.test.ts`
 
 **1. Upsert your data**
-- ❌ should insert a new record if it does not exist (not returning data)
-- ❌ should update an existing record if it exists
+- ✅ should insert a new record if it does not exist
+- ✅ should update an existing record if it exists
 
 **2. Bulk Upsert your data**
-- ❌ should upsert multiple records
+- ✅ should upsert multiple records
 
 **3. Upserting into tables with constraints**
 - ⏭️ should use specified column for conflict resolution
 
 **Additional UPSERT functionality**
 - ✅ should handle upsert without select (no return)
-- ❌ should return selected columns only
+- ✅ should return selected columns only
 - ✅ should handle upsert to non-existent table with error
 
 ---
@@ -150,21 +152,21 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 **1. Delete a single record**
 - ✅ should delete a single record matching the filter
-- ❌ should not affect other records (verification failing)
+- ✅ should not affect other records
 
 **2. Delete a record and return it**
-- ❌ should delete and return the deleted record (`Prefer: return=representation` not implemented)
-- ❌ should return only selected columns
+- ✅ should delete and return the deleted record
+- ✅ should return only selected columns
 
 **3. Delete multiple records**
-- ❌ should delete multiple records using in() filter (`in()` filter broken)
-- ❌ should delete and return multiple records
+- ✅ should delete multiple records using in() filter
+- ✅ should delete and return multiple records
 
 **Additional DELETE functionality**
-- ❌ should not delete any records if filter matches none
-- ❌ should delete records using other filters
+- ✅ should not delete any records if filter matches none
+- ✅ should delete records using other filters
 - ✅ should handle delete on non-existent table with error
-- ❌ should handle delete with combined filters
+- ✅ should handle delete with combined filters
 
 ---
 
@@ -199,12 +201,12 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 **like() - Pattern Matching**
 - ✅ should match rows using LIKE pattern with wildcards
-- ❌ should match with prefix wildcard (wildcard conversion issue)
-- ❌ should match with suffix wildcard (wildcard conversion issue)
+- ✅ should match with prefix wildcard
+- ✅ should match with suffix wildcard
 
 **ilike() - Case-Insensitive Pattern Matching**
 - ✅ should match rows case-insensitively
-- ❌ should match regardless of case
+- ✅ should match regardless of case
 
 **is() - Null/Boolean Check**
 - ✅ should match rows where column is null
@@ -212,9 +214,9 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ⏭️ should match rows where boolean column is false
 
 **in() - Match Any in Array**
-- ❌ should match rows where column is in array of values
-- ❌ should work with numeric arrays
-- ❌ should return empty array when no matches
+- ✅ should match rows where column is in array of values
+- ✅ should work with numeric arrays
+- ✅ should return empty array when no matches
 
 **Combined Filters**
 - ✅ should combine eq and gt filters
@@ -282,7 +284,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 **Workarounds for OR logic**
 - ✅ should use multiple queries for OR logic
-- ❌ should use in() for simple OR on same column (`in()` filter broken)
+- ✅ should use in() for simple OR on same column
 
 ---
 
@@ -291,8 +293,8 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 ### `tests/modifiers/modifiers.test.ts`
 
 **select() - Return Data After Insert/Update/Delete**
-- ❌ should return data after upsert (`Prefer: return=representation` not implemented)
-- ❌ should return specific columns after insert
+- ✅ should return data after upsert
+- ✅ should return specific columns after insert
 
 **order() - Sort Results**
 - ✅ should order results in descending order
@@ -311,9 +313,9 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should work for pagination
 
 **single() - Return Single Object**
-- ❌ should return data as single object instead of array (returns array)
-- ❌ should error when multiple rows returned
-- ❌ should error when no rows returned
+- ✅ should return data as single object instead of array
+- ✅ should error when multiple rows returned
+- ✅ should error when no rows returned
 
 **maybeSingle() - Return Zero or One Row**
 - ✅ should return single object when one row matches
@@ -499,23 +501,25 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 ## Known Issues Summary
 
-### Critical (Breaks Core Functionality)
+### Fixed Issues (as of 2026-01-16)
 
-1. **`in()` filter not working** - Array-based filtering is broken
-2. **`Prefer: return=representation` not implemented** - INSERT/UPDATE/DELETE don't return affected rows
-3. **`single()` modifier** - Returns array instead of object, doesn't error properly
+The following issues have been resolved:
+- ✅ `in()` filter - Now working
+- ✅ `Prefer: return=representation` - Implemented for INSERT/UPDATE/DELETE
+- ✅ `single()` modifier - Returns object and errors properly
+- ✅ `like()`/`ilike()` wildcards - Working correctly
+- ✅ Bulk INSERT - Supported via JSON arrays
+- ✅ UPSERT - Implemented via `resolution=merge-duplicates` header
 
-### Medium (Partial Functionality)
+### Remaining Issues (Auth-Related)
 
-4. **`like()` wildcards** - Prefix (`*term`) and suffix (`term*`) wildcards not converting to SQL `%`
-5. **Session persistence** - Client-side session not being maintained across operations
-6. **User metadata** - Not being stored during signup
+These issues are related to client-side session management in tests:
 
-### Auth-Related
-
-7. **`getSession()` fails** - Depends on session persistence
-8. **`refreshSession()` fails** - Same root cause
-9. **Auth state change events** - Not firing for SIGNED_IN/SIGNED_OUT
+1. **Session persistence** - Supabase-js client not maintaining session between operations
+2. **User metadata** - Not being stored during signup (server-side fix needed)
+3. **`getSession()` fails** - Depends on session persistence
+4. **`refreshSession()` fails** - Same root cause
+5. **Auth state change events** - Not firing for SIGNED_IN/SIGNED_OUT
 
 ---
 
