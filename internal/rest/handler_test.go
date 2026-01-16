@@ -37,7 +37,7 @@ func setupTestHandler(t *testing.T) (*Handler, *db.DB) {
 		t.Fatalf("failed to create todos table: %v", err)
 	}
 
-	handler := NewHandler(database)
+	handler := NewHandler(database, nil) // nil enforcer for tests without RLS
 	return handler, database
 }
 

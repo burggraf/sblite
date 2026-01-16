@@ -10,21 +10,29 @@ import (
 	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/db"
 	"github.com/markb/sblite/internal/rest"
+	"github.com/markb/sblite/internal/rls"
 )
 
 type Server struct {
 	db          *db.DB
 	router      *chi.Mux
 	authService *auth.Service
+	rlsService  *rls.Service
+	rlsEnforcer *rls.Enforcer
 	restHandler *rest.Handler
 }
 
 func New(database *db.DB, jwtSecret string) *Server {
+	rlsService := rls.NewService(database)
+	rlsEnforcer := rls.NewEnforcer(rlsService)
+
 	s := &Server{
 		db:          database,
 		router:      chi.NewRouter(),
 		authService: auth.NewService(database, jwtSecret),
-		restHandler: rest.NewHandler(database),
+		rlsService:  rlsService,
+		rlsEnforcer: rlsEnforcer,
+		restHandler: rest.NewHandler(database, rlsEnforcer),
 	}
 	s.setupRoutes()
 	return s

@@ -11,14 +11,45 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/rls"
 )
 
 type Handler struct {
-	db *db.DB
+	db       *db.DB
+	enforcer *rls.Enforcer
 }
 
-func NewHandler(database *db.DB) *Handler {
-	return &Handler{db: database}
+func NewHandler(database *db.DB, enforcer *rls.Enforcer) *Handler {
+	return &Handler{db: database, enforcer: enforcer}
+}
+
+// GetAuthContextFromRequest extracts auth context from request for RLS
+func GetAuthContextFromRequest(r *http.Request) *rls.AuthContext {
+	claims := r.Context().Value("claims")
+	if claims == nil {
+		return nil
+	}
+
+	claimsMap, ok := claims.(*map[string]any)
+	if !ok {
+		return nil
+	}
+
+	ctx := &rls.AuthContext{
+		Claims: *claimsMap,
+	}
+
+	if sub, ok := (*claimsMap)["sub"].(string); ok {
+		ctx.UserID = sub
+	}
+	if email, ok := (*claimsMap)["email"].(string); ok {
+		ctx.Email = email
+	}
+	if role, ok := (*claimsMap)["role"].(string); ok {
+		ctx.Role = role
+	}
+
+	return ctx
 }
 
 // Reserved query params that are not filters
@@ -61,6 +92,19 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 
 func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	q := h.parseQueryParams(r)
+
+	// Apply RLS conditions if enforcer is configured
+	if h.enforcer != nil {
+		authCtx := GetAuthContextFromRequest(r)
+		rlsCondition, err := h.enforcer.GetSelectConditions(q.Table, authCtx)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "rls_error", "Failed to apply RLS")
+			return
+		}
+		if rlsCondition != "" {
+			q.RLSCondition = rlsCondition
+		}
+	}
 
 	// Check for single() modifier via Accept header
 	accept := r.Header.Get("Accept")

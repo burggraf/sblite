@@ -13,12 +13,13 @@ type Filter struct {
 }
 
 type Query struct {
-	Table   string
-	Select  []string
-	Filters []Filter
-	Order   []OrderBy
-	Limit   int
-	Offset  int
+	Table        string
+	Select       []string
+	Filters      []Filter
+	Order        []OrderBy
+	Limit        int
+	Offset       int
+	RLSCondition string // RLS WHERE condition to apply
 }
 
 type OrderBy struct {

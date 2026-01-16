@@ -38,6 +38,16 @@ func BuildSelectQuery(q Query) (string, []any) {
 		sb.WriteString(strings.Join(conditions, " AND "))
 	}
 
+	// RLS condition (added after filters)
+	if q.RLSCondition != "" {
+		if len(q.Filters) > 0 {
+			sb.WriteString(" AND ")
+		} else {
+			sb.WriteString(" WHERE ")
+		}
+		sb.WriteString(q.RLSCondition)
+	}
+
 	// ORDER BY clause
 	if len(q.Order) > 0 {
 		sb.WriteString(" ORDER BY ")
