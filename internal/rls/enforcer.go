@@ -2,6 +2,7 @@
 package rls
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -19,7 +20,7 @@ func NewEnforcer(policyService *Service) *Enforcer {
 func (e *Enforcer) GetSelectConditions(tableName string, ctx *AuthContext) (string, error) {
 	policies, err := e.policyService.GetPoliciesForTable(tableName)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get policies for %s: %w", tableName, err)
 	}
 
 	var conditions []string
@@ -44,7 +45,7 @@ func (e *Enforcer) GetSelectConditions(tableName string, ctx *AuthContext) (stri
 func (e *Enforcer) GetInsertConditions(tableName string, ctx *AuthContext) (string, error) {
 	policies, err := e.policyService.GetPoliciesForTable(tableName)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get policies for %s: %w", tableName, err)
 	}
 
 	var conditions []string
@@ -68,7 +69,7 @@ func (e *Enforcer) GetInsertConditions(tableName string, ctx *AuthContext) (stri
 func (e *Enforcer) GetUpdateConditions(tableName string, ctx *AuthContext) (string, error) {
 	policies, err := e.policyService.GetPoliciesForTable(tableName)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get policies for %s: %w", tableName, err)
 	}
 
 	var conditions []string
@@ -92,7 +93,7 @@ func (e *Enforcer) GetUpdateConditions(tableName string, ctx *AuthContext) (stri
 func (e *Enforcer) GetDeleteConditions(tableName string, ctx *AuthContext) (string, error) {
 	policies, err := e.policyService.GetPoliciesForTable(tableName)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get policies for %s: %w", tableName, err)
 	}
 
 	var conditions []string
