@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -79,6 +80,25 @@ func parsePreferHeader(prefer string) (count string, head bool, explain bool) {
 	if strings.Contains(prefer, "explain") {
 		explain = true
 	}
+	return
+}
+
+// onConflictRegex matches "on-conflict=col1,col2" in Prefer header
+var onConflictRegex = regexp.MustCompile(`on-conflict=([a-zA-Z0-9_,]+)`)
+
+// parseUpsertOptions parses upsert-related options from Prefer header
+// Returns onConflict columns and whether to ignore duplicates (DO NOTHING)
+func parseUpsertOptions(prefer string) (onConflict []string, ignoreDuplicates bool) {
+	// Check for resolution=ignore-duplicates (DO NOTHING)
+	if strings.Contains(prefer, "resolution=ignore-duplicates") {
+		ignoreDuplicates = true
+	}
+
+	// Parse on-conflict columns
+	if match := onConflictRegex.FindStringSubmatch(prefer); match != nil {
+		onConflict = strings.Split(match[1], ",")
+	}
+
 	return
 }
 
@@ -335,7 +355,10 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 	selectCols := ParseSelect(r.URL.Query().Get("select"))
 	prefer := r.Header.Get("Prefer")
 	returnRepresentation := strings.Contains(prefer, "return=representation")
-	isUpsert := strings.Contains(prefer, "resolution=merge-duplicates")
+	isUpsert := strings.Contains(prefer, "resolution=merge-duplicates") || strings.Contains(prefer, "resolution=ignore-duplicates")
+
+	// Parse upsert options (on-conflict columns and ignore-duplicates flag)
+	onConflict, ignoreDuplicates := parseUpsertOptions(prefer)
 
 	// Try to decode as array first (bulk insert), then as single object
 	var records []map[string]any
@@ -364,7 +387,7 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 		var sqlStr string
 		var args []any
 		if isUpsert {
-			sqlStr, args = BuildUpsertQuery(table, data)
+			sqlStr, args = BuildUpsertQuery(table, data, onConflict, ignoreDuplicates)
 		} else {
 			sqlStr, args = BuildInsertQuery(table, data)
 		}

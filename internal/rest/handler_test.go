@@ -1188,3 +1188,299 @@ func TestExplainModifierWithRelatedFilter(t *testing.T) {
 		t.Errorf("expected sql to contain EXISTS or JOIN for related table filter, got: %s", sql)
 	}
 }
+
+func TestParseUpsertOptions(t *testing.T) {
+	tests := []struct {
+		name                    string
+		prefer                  string
+		expectedOnConflict      []string
+		expectedIgnoreDuplicates bool
+	}{
+		{
+			name:                    "merge-duplicates only",
+			prefer:                  "resolution=merge-duplicates",
+			expectedOnConflict:      nil,
+			expectedIgnoreDuplicates: false,
+		},
+		{
+			name:                    "ignore-duplicates",
+			prefer:                  "resolution=ignore-duplicates",
+			expectedOnConflict:      nil,
+			expectedIgnoreDuplicates: true,
+		},
+		{
+			name:                    "merge-duplicates with on-conflict single column",
+			prefer:                  "resolution=merge-duplicates,on-conflict=email",
+			expectedOnConflict:      []string{"email"},
+			expectedIgnoreDuplicates: false,
+		},
+		{
+			name:                    "merge-duplicates with on-conflict multiple columns",
+			prefer:                  "resolution=merge-duplicates,on-conflict=user_id,date",
+			expectedOnConflict:      []string{"user_id", "date"},
+			expectedIgnoreDuplicates: false,
+		},
+		{
+			name:                    "ignore-duplicates with on-conflict",
+			prefer:                  "resolution=ignore-duplicates,on-conflict=email",
+			expectedOnConflict:      []string{"email"},
+			expectedIgnoreDuplicates: true,
+		},
+		{
+			name:                    "with return=representation",
+			prefer:                  "return=representation,resolution=merge-duplicates,on-conflict=id",
+			expectedOnConflict:      []string{"id"},
+			expectedIgnoreDuplicates: false,
+		},
+		{
+			name:                    "empty prefer",
+			prefer:                  "",
+			expectedOnConflict:      nil,
+			expectedIgnoreDuplicates: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			onConflict, ignoreDuplicates := parseUpsertOptions(tt.prefer)
+
+			if ignoreDuplicates != tt.expectedIgnoreDuplicates {
+				t.Errorf("parseUpsertOptions(%q) ignoreDuplicates = %v, want %v",
+					tt.prefer, ignoreDuplicates, tt.expectedIgnoreDuplicates)
+			}
+
+			if len(onConflict) != len(tt.expectedOnConflict) {
+				t.Errorf("parseUpsertOptions(%q) onConflict = %v, want %v",
+					tt.prefer, onConflict, tt.expectedOnConflict)
+				return
+			}
+
+			for i, col := range onConflict {
+				if col != tt.expectedOnConflict[i] {
+					t.Errorf("parseUpsertOptions(%q) onConflict[%d] = %q, want %q",
+						tt.prefer, i, col, tt.expectedOnConflict[i])
+				}
+			}
+		})
+	}
+}
+
+// setupTestHandlerWithUpsertTable creates a handler with a users table for upsert testing
+func setupTestHandlerWithUpsertTable(t *testing.T) (*Handler, *db.DB) {
+	t.Helper()
+	path := t.TempDir() + "/test.db"
+	database, err := db.New(path)
+	if err != nil {
+		t.Fatalf("failed to create db: %v", err)
+	}
+	if err := database.RunMigrations(); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+
+	// Create users table with unique constraint on email
+	_, err = database.Exec(`
+		CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			email TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			status TEXT DEFAULT 'active'
+		)
+	`)
+	if err != nil {
+		t.Fatalf("failed to create users table: %v", err)
+	}
+
+	handler := NewHandler(database, nil)
+	return handler, database
+}
+
+func TestUpsertMergeDuplicates(t *testing.T) {
+	handler, database := setupTestHandlerWithUpsertTable(t)
+	defer database.Close()
+
+	// Insert initial user
+	database.Exec(`INSERT INTO users (id, email, name, status) VALUES (1, 'test@example.com', 'Original Name', 'active')`)
+
+	r := chi.NewRouter()
+	r.Post("/rest/v1/{table}", handler.HandleInsert)
+
+	// Upsert with resolution=merge-duplicates (should update existing row)
+	body := `{"id": 1, "email": "test@example.com", "name": "Updated Name", "status": "active"}`
+	req := httptest.NewRequest("POST", "/rest/v1/users", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Prefer", "resolution=merge-duplicates,return=representation")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the row was updated
+	var name string
+	err := database.QueryRow(`SELECT name FROM users WHERE id = 1`).Scan(&name)
+	if err != nil {
+		t.Fatalf("failed to query user: %v", err)
+	}
+	if name != "Updated Name" {
+		t.Errorf("expected name 'Updated Name', got %q", name)
+	}
+
+	// Verify only one row exists
+	var count int
+	database.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 user, got %d", count)
+	}
+}
+
+func TestUpsertOnConflictEmail(t *testing.T) {
+	handler, database := setupTestHandlerWithUpsertTable(t)
+	defer database.Close()
+
+	// Insert initial user
+	database.Exec(`INSERT INTO users (id, email, name, status) VALUES (1, 'test@example.com', 'Original Name', 'active')`)
+
+	r := chi.NewRouter()
+	r.Post("/rest/v1/{table}", handler.HandleInsert)
+
+	// Upsert with on-conflict=email (should match by email and update)
+	body := `{"email": "test@example.com", "name": "Updated via Email", "status": "inactive"}`
+	req := httptest.NewRequest("POST", "/rest/v1/users", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Prefer", "resolution=merge-duplicates,on-conflict=email")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the row was updated
+	var name, status string
+	err := database.QueryRow(`SELECT name, status FROM users WHERE email = 'test@example.com'`).Scan(&name, &status)
+	if err != nil {
+		t.Fatalf("failed to query user: %v", err)
+	}
+	if name != "Updated via Email" {
+		t.Errorf("expected name 'Updated via Email', got %q", name)
+	}
+	if status != "inactive" {
+		t.Errorf("expected status 'inactive', got %q", status)
+	}
+
+	// Verify only one row exists
+	var count int
+	database.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 user, got %d", count)
+	}
+}
+
+func TestUpsertIgnoreDuplicates(t *testing.T) {
+	handler, database := setupTestHandlerWithUpsertTable(t)
+	defer database.Close()
+
+	// Insert initial user
+	database.Exec(`INSERT INTO users (id, email, name, status) VALUES (1, 'test@example.com', 'Original Name', 'active')`)
+
+	r := chi.NewRouter()
+	r.Post("/rest/v1/{table}", handler.HandleInsert)
+
+	// Upsert with resolution=ignore-duplicates (should NOT update existing row)
+	body := `{"id": 1, "email": "test@example.com", "name": "This Should Not Update", "status": "inactive"}`
+	req := httptest.NewRequest("POST", "/rest/v1/users", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Prefer", "resolution=ignore-duplicates")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the row was NOT updated (original values preserved)
+	var name, status string
+	err := database.QueryRow(`SELECT name, status FROM users WHERE id = 1`).Scan(&name, &status)
+	if err != nil {
+		t.Fatalf("failed to query user: %v", err)
+	}
+	if name != "Original Name" {
+		t.Errorf("expected name 'Original Name', got %q (row should not have been updated)", name)
+	}
+	if status != "active" {
+		t.Errorf("expected status 'active', got %q (row should not have been updated)", status)
+	}
+
+	// Verify only one row exists
+	var count int
+	database.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 user, got %d", count)
+	}
+}
+
+func TestUpsertIgnoreDuplicatesWithOnConflict(t *testing.T) {
+	handler, database := setupTestHandlerWithUpsertTable(t)
+	defer database.Close()
+
+	// Insert initial user
+	database.Exec(`INSERT INTO users (id, email, name, status) VALUES (1, 'test@example.com', 'Original Name', 'active')`)
+
+	r := chi.NewRouter()
+	r.Post("/rest/v1/{table}", handler.HandleInsert)
+
+	// Upsert with resolution=ignore-duplicates and on-conflict=email
+	body := `{"email": "test@example.com", "name": "This Should Not Update", "status": "inactive"}`
+	req := httptest.NewRequest("POST", "/rest/v1/users", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Prefer", "resolution=ignore-duplicates,on-conflict=email")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the row was NOT updated
+	var name string
+	err := database.QueryRow(`SELECT name FROM users WHERE email = 'test@example.com'`).Scan(&name)
+	if err != nil {
+		t.Fatalf("failed to query user: %v", err)
+	}
+	if name != "Original Name" {
+		t.Errorf("expected name 'Original Name', got %q", name)
+	}
+}
+
+func TestUpsertNewRowWithIgnoreDuplicates(t *testing.T) {
+	handler, database := setupTestHandlerWithUpsertTable(t)
+	defer database.Close()
+
+	// No existing users
+
+	r := chi.NewRouter()
+	r.Post("/rest/v1/{table}", handler.HandleInsert)
+
+	// Insert new user with ignore-duplicates (should insert since no conflict)
+	body := `{"email": "new@example.com", "name": "New User", "status": "active"}`
+	req := httptest.NewRequest("POST", "/rest/v1/users", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Prefer", "resolution=ignore-duplicates,on-conflict=email")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the row was inserted
+	var name string
+	err := database.QueryRow(`SELECT name FROM users WHERE email = 'new@example.com'`).Scan(&name)
+	if err != nil {
+		t.Fatalf("failed to query user: %v", err)
+	}
+	if name != "New User" {
+		t.Errorf("expected name 'New User', got %q", name)
+	}
+}

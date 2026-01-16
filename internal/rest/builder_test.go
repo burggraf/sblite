@@ -279,3 +279,96 @@ func TestBuildCountQueryWithLogicalFilter(t *testing.T) {
 		t.Errorf("expected 2 args, got %d", len(args))
 	}
 }
+
+func TestBuildUpsertQueryDefaultConflict(t *testing.T) {
+	data := map[string]any{
+		"id":    1,
+		"name":  "Test",
+		"email": "test@example.com",
+	}
+
+	sql, args := BuildUpsertQuery("users", data, nil, false)
+
+	// Default conflict column is "id"
+	expectedSQL := `INSERT INTO "users" ("email", "id", "name") VALUES (?, ?, ?) ON CONFLICT ("id") DO UPDATE SET "email" = excluded."email", "name" = excluded."name"`
+	if sql != expectedSQL {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedSQL, sql)
+	}
+	if len(args) != 3 {
+		t.Errorf("expected 3 args, got %d", len(args))
+	}
+}
+
+func TestBuildUpsertQueryCustomConflictColumn(t *testing.T) {
+	data := map[string]any{
+		"email": "test@example.com",
+		"name":  "Test",
+	}
+
+	sql, args := BuildUpsertQuery("users", data, []string{"email"}, false)
+
+	// Custom conflict column is "email"
+	expectedSQL := `INSERT INTO "users" ("email", "name") VALUES (?, ?) ON CONFLICT ("email") DO UPDATE SET "name" = excluded."name"`
+	if sql != expectedSQL {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedSQL, sql)
+	}
+	if len(args) != 2 {
+		t.Errorf("expected 2 args, got %d", len(args))
+	}
+}
+
+func TestBuildUpsertQueryMultipleConflictColumns(t *testing.T) {
+	data := map[string]any{
+		"user_id": 1,
+		"date":    "2024-01-15",
+		"value":   100,
+	}
+
+	sql, args := BuildUpsertQuery("metrics", data, []string{"user_id", "date"}, false)
+
+	// Multiple conflict columns
+	expectedSQL := `INSERT INTO "metrics" ("date", "user_id", "value") VALUES (?, ?, ?) ON CONFLICT ("user_id", "date") DO UPDATE SET "value" = excluded."value"`
+	if sql != expectedSQL {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedSQL, sql)
+	}
+	if len(args) != 3 {
+		t.Errorf("expected 3 args, got %d", len(args))
+	}
+}
+
+func TestBuildUpsertQueryIgnoreDuplicates(t *testing.T) {
+	data := map[string]any{
+		"id":    1,
+		"name":  "Test",
+		"email": "test@example.com",
+	}
+
+	sql, args := BuildUpsertQuery("users", data, nil, true)
+
+	// Should use DO NOTHING instead of DO UPDATE
+	expectedSQL := `INSERT INTO "users" ("email", "id", "name") VALUES (?, ?, ?) ON CONFLICT ("id") DO NOTHING`
+	if sql != expectedSQL {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedSQL, sql)
+	}
+	if len(args) != 3 {
+		t.Errorf("expected 3 args, got %d", len(args))
+	}
+}
+
+func TestBuildUpsertQueryIgnoreDuplicatesWithCustomConflict(t *testing.T) {
+	data := map[string]any{
+		"email": "test@example.com",
+		"name":  "Test",
+	}
+
+	sql, args := BuildUpsertQuery("users", data, []string{"email"}, true)
+
+	// Should use DO NOTHING with custom conflict column
+	expectedSQL := `INSERT INTO "users" ("email", "name") VALUES (?, ?) ON CONFLICT ("email") DO NOTHING`
+	if sql != expectedSQL {
+		t.Errorf("expected SQL:\n%s\ngot:\n%s", expectedSQL, sql)
+	}
+	if len(args) != 2 {
+		t.Errorf("expected 2 args, got %d", len(args))
+	}
+}

@@ -547,8 +547,10 @@ func BuildCountQuery(q Query) (string, []any) {
 	return sb.String(), args
 }
 
-// BuildUpsertQuery builds an INSERT ... ON CONFLICT DO UPDATE query
-func BuildUpsertQuery(table string, data map[string]any) (string, []any) {
+// BuildUpsertQuery builds an INSERT ... ON CONFLICT query
+// onConflict specifies which columns to use for conflict detection (defaults to ["id"])
+// ignoreDuplicates: if true, uses DO NOTHING; if false, uses DO UPDATE SET
+func BuildUpsertQuery(table string, data map[string]any, onConflict []string, ignoreDuplicates bool) (string, []any) {
 	// Sort keys for deterministic output
 	keys := make([]string, 0, len(data))
 	for k := range data {
@@ -558,25 +560,69 @@ func BuildUpsertQuery(table string, data map[string]any) (string, []any) {
 
 	quotedCols := make([]string, len(keys))
 	placeholders := make([]string, len(keys))
-	updateClauses := make([]string, 0, len(keys))
 	args := make([]any, len(keys))
 
 	for i, k := range keys {
 		quotedCols[i] = fmt.Sprintf("\"%s\"", k)
 		placeholders[i] = "?"
 		args[i] = data[k]
-		// Don't update the id column
-		if k != "id" {
+	}
+
+	// Default conflict columns to "id" if not specified
+	conflictCols := onConflict
+	if len(conflictCols) == 0 {
+		conflictCols = []string{"id"}
+	}
+
+	// Quote conflict columns
+	quotedConflictCols := make([]string, len(conflictCols))
+	for i, col := range conflictCols {
+		quotedConflictCols[i] = fmt.Sprintf("\"%s\"", col)
+	}
+
+	// Build conflict column set for excluding from update
+	conflictColSet := make(map[string]bool)
+	for _, col := range conflictCols {
+		conflictColSet[col] = true
+	}
+
+	if ignoreDuplicates {
+		// DO NOTHING - skip rows that conflict
+		sql := fmt.Sprintf(
+			`INSERT INTO "%s" (%s) VALUES (%s) ON CONFLICT (%s) DO NOTHING`,
+			table,
+			strings.Join(quotedCols, ", "),
+			strings.Join(placeholders, ", "),
+			strings.Join(quotedConflictCols, ", "),
+		)
+		return sql, args
+	}
+
+	// DO UPDATE SET - build update clauses excluding conflict columns
+	updateClauses := make([]string, 0, len(keys))
+	for _, k := range keys {
+		// Don't update conflict columns (they're used for matching)
+		if !conflictColSet[k] {
 			updateClauses = append(updateClauses, fmt.Sprintf("\"%s\" = excluded.\"%s\"", k, k))
 		}
 	}
 
-	// Default to id as conflict column
+	// If all columns are conflict columns, we need at least one update clause
+	// In this case, we'll do a no-op update (set first non-conflict column to itself)
+	if len(updateClauses) == 0 {
+		// Use a dummy update that doesn't change anything
+		// This handles the edge case where all columns are conflict columns
+		if len(keys) > 0 {
+			updateClauses = append(updateClauses, fmt.Sprintf("\"%s\" = excluded.\"%s\"", keys[0], keys[0]))
+		}
+	}
+
 	sql := fmt.Sprintf(
-		`INSERT INTO "%s" (%s) VALUES (%s) ON CONFLICT ("id") DO UPDATE SET %s`,
+		`INSERT INTO "%s" (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s`,
 		table,
 		strings.Join(quotedCols, ", "),
 		strings.Join(placeholders, ", "),
+		strings.Join(quotedConflictCols, ", "),
 		strings.Join(updateClauses, ", "),
 	)
 
