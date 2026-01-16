@@ -33,6 +33,11 @@ func (s *Server) setupRoutes() {
 	s.router.Use(middleware.SetHeader("Content-Type", "application/json"))
 
 	s.router.Get("/health", s.handleHealth)
+
+	// Auth routes
+	s.router.Route("/auth/v1", func(r chi.Router) {
+		r.Post("/signup", s.handleSignup)
+	})
 }
 
 func (s *Server) Router() *chi.Mux {
