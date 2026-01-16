@@ -63,9 +63,10 @@ func (s *Server) setupRoutes() {
 		})
 	})
 
-	// REST routes (with optional auth for RLS)
+	// REST routes (with API key validation and optional auth for RLS)
 	s.router.Route("/rest/v1", func(r chi.Router) {
-		r.Use(s.optionalAuthMiddleware)
+		r.Use(s.apiKeyMiddleware)       // Validates apikey header, extracts role
+		r.Use(s.optionalAuthMiddleware) // Extracts user JWT if present
 		// OpenAPI schema endpoint (must be before /{table} to avoid conflict)
 		r.Get("/", s.handleOpenAPI)
 		r.Get("/{table}", s.restHandler.HandleSelect)

@@ -5,9 +5,25 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/markb/sblite/internal/db"
 )
+
+const testJWTSecret = "test-secret-key-min-32-characters"
+
+// generateTestAPIKey creates an API key for testing
+func generateTestAPIKey(role string) string {
+	claims := jwt.MapClaims{
+		"role": role,
+		"iss":  "sblite",
+		"iat":  time.Now().Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	key, _ := token.SignedString([]byte(testJWTSecret))
+	return key
+}
 
 func setupTestServer(t *testing.T) *Server {
 	t.Helper()
@@ -21,7 +37,7 @@ func setupTestServer(t *testing.T) *Server {
 	}
 	t.Cleanup(func() { database.Close() })
 
-	return New(database, "test-secret-key-min-32-characters")
+	return New(database, testJWTSecret)
 }
 
 func TestHealthEndpoint(t *testing.T) {
@@ -51,6 +67,7 @@ func TestRESTSelect(t *testing.T) {
 	srv.db.Exec(`INSERT INTO todos (title, completed) VALUES ('Test', 0)`)
 
 	req := httptest.NewRequest("GET", "/rest/v1/todos", nil)
+	req.Header.Set("apikey", generateTestAPIKey("anon"))
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 

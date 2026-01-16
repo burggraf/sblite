@@ -9,10 +9,11 @@ import (
 
 // AuthContext holds JWT claims for auth function substitution
 type AuthContext struct {
-	UserID string
-	Email  string
-	Role   string
-	Claims map[string]any
+	UserID    string
+	Email     string
+	Role      string
+	Claims    map[string]any
+	BypassRLS bool // true for service_role API key
 }
 
 // SubstituteAuthFunctions replaces auth.uid(), auth.role(), etc. with actual values

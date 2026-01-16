@@ -18,6 +18,11 @@ func NewEnforcer(policyService *Service) *Enforcer {
 
 // GetSelectConditions returns WHERE conditions for SELECT queries
 func (e *Enforcer) GetSelectConditions(tableName string, ctx *AuthContext) (string, error) {
+	// service_role bypasses RLS
+	if ctx != nil && ctx.BypassRLS {
+		return "", nil
+	}
+
 	policies, err := e.policyService.GetPoliciesForTable(tableName)
 	if err != nil {
 		return "", fmt.Errorf("failed to get policies for %s: %w", tableName, err)
@@ -43,6 +48,11 @@ func (e *Enforcer) GetSelectConditions(tableName string, ctx *AuthContext) (stri
 
 // GetInsertConditions returns CHECK conditions for INSERT queries
 func (e *Enforcer) GetInsertConditions(tableName string, ctx *AuthContext) (string, error) {
+	// service_role bypasses RLS
+	if ctx != nil && ctx.BypassRLS {
+		return "", nil
+	}
+
 	policies, err := e.policyService.GetPoliciesForTable(tableName)
 	if err != nil {
 		return "", fmt.Errorf("failed to get policies for %s: %w", tableName, err)
@@ -67,6 +77,11 @@ func (e *Enforcer) GetInsertConditions(tableName string, ctx *AuthContext) (stri
 
 // GetUpdateConditions returns WHERE conditions for UPDATE queries
 func (e *Enforcer) GetUpdateConditions(tableName string, ctx *AuthContext) (string, error) {
+	// service_role bypasses RLS
+	if ctx != nil && ctx.BypassRLS {
+		return "", nil
+	}
+
 	policies, err := e.policyService.GetPoliciesForTable(tableName)
 	if err != nil {
 		return "", fmt.Errorf("failed to get policies for %s: %w", tableName, err)
@@ -91,6 +106,11 @@ func (e *Enforcer) GetUpdateConditions(tableName string, ctx *AuthContext) (stri
 
 // GetDeleteConditions returns WHERE conditions for DELETE queries
 func (e *Enforcer) GetDeleteConditions(tableName string, ctx *AuthContext) (string, error) {
+	// service_role bypasses RLS
+	if ctx != nil && ctx.BypassRLS {
+		return "", nil
+	}
+
 	policies, err := e.policyService.GetPoliciesForTable(tableName)
 	if err != nil {
 		return "", fmt.Errorf("failed to get policies for %s: %w", tableName, err)

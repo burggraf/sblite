@@ -38,32 +38,43 @@ func NewHandler(database *db.DB, enforcer *rls.Enforcer) *Handler {
 
 // GetAuthContextFromRequest extracts auth context from request for RLS
 // The server middleware stores claims in context with string key "claims"
+// and API key role with string key "apikey_role"
 func GetAuthContextFromRequest(r *http.Request) *rls.AuthContext {
+	ctx := &rls.AuthContext{}
+
+	// Check for service_role API key - bypasses RLS
+	apiKeyRole, _ := r.Context().Value("apikey_role").(string)
+	if apiKeyRole == "service_role" {
+		ctx.BypassRLS = true
+		ctx.Role = "service_role"
+		return ctx
+	}
+
+	// Extract user claims from Bearer token
 	claimsValue := r.Context().Value("claims")
-	if claimsValue == nil {
-		return nil
+	if claimsValue != nil {
+		if claims, ok := claimsValue.(*jwt.MapClaims); ok {
+			ctx.Claims = *claims
+			if sub, ok := (*claims)["sub"].(string); ok {
+				ctx.UserID = sub
+			}
+			if email, ok := (*claims)["email"].(string); ok {
+				ctx.Email = email
+			}
+			if role, ok := (*claims)["role"].(string); ok {
+				ctx.Role = role
+			}
+			return ctx
+		}
 	}
 
-	claims, ok := claimsValue.(*jwt.MapClaims)
-	if !ok {
-		return nil
+	// Fall back to API key role (anon) if no user JWT
+	if apiKeyRole != "" {
+		ctx.Role = apiKeyRole
+		return ctx
 	}
 
-	ctx := &rls.AuthContext{
-		Claims: *claims,
-	}
-
-	if sub, ok := (*claims)["sub"].(string); ok {
-		ctx.UserID = sub
-	}
-	if email, ok := (*claims)["email"].(string); ok {
-		ctx.Email = email
-	}
-	if role, ok := (*claims)["role"].(string); ok {
-		ctx.Role = role
-	}
-
-	return ctx
+	return nil
 }
 
 // parsePreferHeader parses the Prefer header for count and explain options

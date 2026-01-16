@@ -7,10 +7,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/markb/sblite/internal/db"
 	"github.com/markb/sblite/internal/server"
 )
+
+// generateTestAPIKey creates an API key for testing
+func generateTestAPIKey(jwtSecret, role string) string {
+	claims := jwt.MapClaims{
+		"role": role,
+		"iss":  "sblite",
+		"iat":  time.Now().Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	key, _ := token.SignedString([]byte(jwtSecret))
+	return key
+}
 
 func TestFullAuthFlow(t *testing.T) {
 	// Setup
@@ -116,13 +130,16 @@ func TestFullRESTFlow(t *testing.T) {
 		)
 	`)
 
-	srv := server.New(database, "test-secret-key-min-32-characters")
+	jwtSecret := "test-secret-key-min-32-characters"
+	srv := server.New(database, jwtSecret)
+	apiKey := generateTestAPIKey(jwtSecret, "anon")
 
 	// 1. Create todo
 	createBody := `{"title": "Test Todo", "completed": 0}`
 	req := httptest.NewRequest("POST", "/rest/v1/todos", bytes.NewBufferString(createBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
+	req.Header.Set("apikey", apiKey)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -132,6 +149,7 @@ func TestFullRESTFlow(t *testing.T) {
 
 	// 2. Read todos
 	req = httptest.NewRequest("GET", "/rest/v1/todos", nil)
+	req.Header.Set("apikey", apiKey)
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -149,6 +167,7 @@ func TestFullRESTFlow(t *testing.T) {
 	updateBody := `{"completed": 1}`
 	req = httptest.NewRequest("PATCH", "/rest/v1/todos?id=eq.1", bytes.NewBufferString(updateBody))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", apiKey)
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -158,6 +177,7 @@ func TestFullRESTFlow(t *testing.T) {
 
 	// 4. Read with filter
 	req = httptest.NewRequest("GET", "/rest/v1/todos?completed=eq.1", nil)
+	req.Header.Set("apikey", apiKey)
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -172,6 +192,7 @@ func TestFullRESTFlow(t *testing.T) {
 
 	// 5. Delete todo
 	req = httptest.NewRequest("DELETE", "/rest/v1/todos?id=eq.1", nil)
+	req.Header.Set("apikey", apiKey)
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -181,6 +202,7 @@ func TestFullRESTFlow(t *testing.T) {
 
 	// 6. Verify deletion
 	req = httptest.NewRequest("GET", "/rest/v1/todos", nil)
+	req.Header.Set("apikey", apiKey)
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 

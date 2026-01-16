@@ -21,6 +21,10 @@ const (
 // Using a package-level string avoids type mismatch issues between packages
 const contextKeyStr = "claims"
 
+// apiKeyRoleContextKey is used for storing API key role in context
+// Using a string key allows access from rest package without circular imports
+const apiKeyRoleContextKey = "apikey_role"
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -82,4 +86,33 @@ func (s *Server) optionalAuthMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// apiKeyMiddleware validates the apikey header and extracts the role.
+// This middleware must be applied before optionalAuthMiddleware.
+func (s *Server) apiKeyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiKey := r.Header.Get("apikey")
+		if apiKey == "" {
+			s.writeError(w, http.StatusUnauthorized, "no_api_key", "API key is required")
+			return
+		}
+
+		role, err := s.authService.ValidateAPIKey(apiKey)
+		if err != nil {
+			s.writeError(w, http.StatusUnauthorized, "invalid_api_key", "Invalid API key")
+			return
+		}
+
+		// Store role in context for use by rest handler
+		ctx := context.WithValue(r.Context(), apiKeyRoleContextKey, role)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// GetAPIKeyRoleFromContext returns the API key role from the request context.
+// Returns empty string if no API key role is present.
+func GetAPIKeyRoleFromContext(r *http.Request) string {
+	role, _ := r.Context().Value(apiKeyRoleContextKey).(string)
+	return role
 }

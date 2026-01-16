@@ -921,3 +921,17 @@ func TestJSONPathFilter(t *testing.T) {
 	f, err := ParseFilter("address->postcode=eq.90210")
 	if err != nil {
 		t.Fatalf("ParseFilter error: %v", err)
+	}
+	if f.Column != "address" {
+		t.Errorf("expected Column 'address', got %q", f.Column)
+	}
+	if f.JSONPath != "$.postcode" {
+		t.Errorf("expected JSONPath '$.postcode', got %q", f.JSONPath)
+	}
+	if f.Operator != "eq" {
+		t.Errorf("expected Operator 'eq', got %q", f.Operator)
+	}
+	if f.Value != "90210" {
+		t.Errorf("expected Value '90210', got %q", f.Value)
+	}
+}

@@ -134,6 +134,16 @@ export const testData = {
   ],
 }
 
+// Create a service role client (bypasses RLS)
+export function createServiceRoleClient(): SupabaseClient {
+  return createClient(TEST_CONFIG.SBLITE_URL, TEST_CONFIG.SBLITE_SERVICE_KEY, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  })
+}
+
 // Auth test helpers
 export async function signUpTestUser(
   client: SupabaseClient,
