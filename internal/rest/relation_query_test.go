@@ -852,3 +852,349 @@ func TestContainsColumn(t *testing.T) {
 		t.Error("empty list should not contain anything")
 	}
 }
+
+// TestInnerJoinManyToOne tests that !inner filters out rows without matching relations
+func TestInnerJoinManyToOne(t *testing.T) {
+	db := setupRelationTestDB(t)
+	defer db.Close()
+
+	setupCountryCitySchema(t, db)
+
+	// Insert countries
+	_, _ = db.Exec(`INSERT INTO countries (id, name, code) VALUES (1, 'United States', 'US')`)
+	_, _ = db.Exec(`INSERT INTO countries (id, name, code) VALUES (2, 'Canada', 'CA')`)
+
+	// Insert cities - some with country, some without (NULL FK)
+	_, _ = db.Exec(`INSERT INTO cities (id, name, population, country_id) VALUES (1, 'New York', 8336817, 1)`)
+	_, _ = db.Exec(`INSERT INTO cities (id, name, population, country_id) VALUES (2, 'Toronto', 2731571, 2)`)
+	_, _ = db.Exec(`INSERT INTO cities (id, name, population, country_id) VALUES (3, 'Atlantis', 0, NULL)`)       // No country
+	_, _ = db.Exec(`INSERT INTO cities (id, name, population, country_id) VALUES (4, 'Unknown City', 100, 999)`) // Invalid FK
+
+	cache := NewRelationshipCache(db)
+	exec := NewRelationQueryExecutor(db, cache)
+
+	// Query with inner join - should only return cities WITH valid countries
+	q := Query{Table: "cities", Select: []string{"*"}}
+	parsed, err := ParseSelectString("id, name, countries!inner(name)")
+	if err != nil {
+		t.Fatalf("failed to parse select: %v", err)
+	}
+
+	results, err := exec.ExecuteWithRelations(q, parsed)
+	if err != nil {
+		t.Fatalf("failed to execute query: %v", err)
+	}
+
+	// Should only have 2 cities (New York and Toronto) - not Atlantis or Unknown City
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results with inner join, got %d", len(results))
+	}
+
+	// Verify the correct cities are returned
+	names := make(map[string]bool)
+	for _, city := range results {
+		names[city["name"].(string)] = true
+		// Each city should have a non-nil country
+		if city["countries"] == nil {
+			t.Errorf("city %v should have a country with inner join", city["name"])
+		}
+	}
+
+	if !names["New York"] {
+		t.Error("expected New York in results")
+	}
+	if !names["Toronto"] {
+		t.Error("expected Toronto in results")
+	}
+	if names["Atlantis"] {
+		t.Error("Atlantis should not be in results (no country)")
+	}
+	if names["Unknown City"] {
+		t.Error("Unknown City should not be in results (invalid FK)")
+	}
+}
+
+// TestInnerJoinOneToMany tests that !inner filters out rows without matching child relations
+func TestInnerJoinOneToMany(t *testing.T) {
+	db := setupRelationTestDB(t)
+	defer db.Close()
+
+	setupCountryCitySchema(t, db)
+
+	// Insert countries
+	_, _ = db.Exec(`INSERT INTO countries (id, name, code) VALUES (1, 'United States', 'US')`)
+	_, _ = db.Exec(`INSERT INTO countries (id, name, code) VALUES (2, 'Empty Country', 'EC')`) // No cities
+	_, _ = db.Exec(`INSERT INTO countries (id, name, code) VALUES (3, 'Germany', 'DE')`)
+
+	// Insert cities - only for some countries
+	_, _ = db.Exec(`INSERT INTO cities (id, name, population, country_id) VALUES (1, 'New York', 8336817, 1)`)
+	_, _ = db.Exec(`INSERT INTO cities (id, name, population, country_id) VALUES (2, 'Berlin', 3644826, 3)`)
+
+	cache := NewRelationshipCache(db)
+	exec := NewRelationQueryExecutor(db, cache)
+
+	// Query with inner join - should only return countries WITH cities
+	q := Query{Table: "countries", Select: []string{"*"}}
+	parsed, err := ParseSelectString("id, name, cities!inner(name)")
+	if err != nil {
+		t.Fatalf("failed to parse select: %v", err)
+	}
+
+	results, err := exec.ExecuteWithRelations(q, parsed)
+	if err != nil {
+		t.Fatalf("failed to execute query: %v", err)
+	}
+
+	// Should only have 2 countries (United States and Germany) - not Empty Country
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results with inner join, got %d", len(results))
+	}
+
+	// Verify the correct countries are returned
+	names := make(map[string]bool)
+	for _, country := range results {
+		names[country["name"].(string)] = true
+		// Each country should have non-empty cities array
+		cities, ok := country["cities"].([]map[string]any)
+		if !ok || len(cities) == 0 {
+			t.Errorf("country %v should have cities with inner join", country["name"])
+		}
+	}
+
+	if !names["United States"] {
+		t.Error("expected United States in results")
+	}
+	if !names["Germany"] {
+		t.Error("expected Germany in results")
+	}
+	if names["Empty Country"] {
+		t.Error("Empty Country should not be in results (no cities)")
+	}
+}
+
+// TestInnerJoinWithAlias tests !inner with an alias
+func TestInnerJoinWithAlias(t *testing.T) {
+	db := setupRelationTestDB(t)
+	defer db.Close()
+
+	setupCountryCitySchema(t, db)
+
+	// Insert data
+	_, _ = db.Exec(`INSERT INTO countries (id, name, code) VALUES (1, 'United States', 'US')`)
+	_, _ = db.Exec(`INSERT INTO cities (id, name, population, country_id) VALUES (1, 'New York', 8336817, 1)`)
+	_, _ = db.Exec(`INSERT INTO cities (id, name, population, country_id) VALUES (2, 'Atlantis', 0, NULL)`)
+
+	cache := NewRelationshipCache(db)
+	exec := NewRelationQueryExecutor(db, cache)
+
+	// Query with aliased inner join
+	q := Query{Table: "cities", Select: []string{"*"}}
+	parsed, err := ParseSelectString("id, name, homeland:countries!inner(name)")
+	if err != nil {
+		t.Fatalf("failed to parse select: %v", err)
+	}
+
+	results, err := exec.ExecuteWithRelations(q, parsed)
+	if err != nil {
+		t.Fatalf("failed to execute query: %v", err)
+	}
+
+	// Should only have 1 city (New York)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result with inner join, got %d", len(results))
+	}
+
+	// Verify alias is used
+	if _, hasHomeland := results[0]["homeland"]; !hasHomeland {
+		t.Error("expected 'homeland' alias in result")
+	}
+	if _, hasCountries := results[0]["countries"]; hasCountries {
+		t.Error("should not have 'countries' field when alias is used")
+	}
+}
+
+// TestMultipleRefsToSameTable tests support for multiple FK columns pointing to the same table
+func TestMultipleRefsToSameTable(t *testing.T) {
+	db := setupRelationTestDB(t)
+	defer db.Close()
+
+	// Create users table
+	_, err := db.Exec(`CREATE TABLE users (
+		id INTEGER PRIMARY KEY,
+		name TEXT NOT NULL
+	)`)
+	if err != nil {
+		t.Fatalf("failed to create users table: %v", err)
+	}
+
+	// Create messages table with two FKs to users
+	_, err = db.Exec(`CREATE TABLE messages (
+		id INTEGER PRIMARY KEY,
+		content TEXT NOT NULL,
+		sender_id INTEGER REFERENCES users(id),
+		receiver_id INTEGER REFERENCES users(id)
+	)`)
+	if err != nil {
+		t.Fatalf("failed to create messages table: %v", err)
+	}
+
+	// Insert test data
+	_, _ = db.Exec(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)
+	_, _ = db.Exec(`INSERT INTO users (id, name) VALUES (2, 'Bob')`)
+	_, _ = db.Exec(`INSERT INTO users (id, name) VALUES (3, 'Charlie')`)
+	_, _ = db.Exec(`INSERT INTO messages (id, content, sender_id, receiver_id) VALUES (1, 'Hello Bob!', 1, 2)`)
+	_, _ = db.Exec(`INSERT INTO messages (id, content, sender_id, receiver_id) VALUES (2, 'Hi Alice!', 2, 1)`)
+	_, _ = db.Exec(`INSERT INTO messages (id, content, sender_id, receiver_id) VALUES (3, 'Hey Charlie!', 1, 3)`)
+
+	cache := NewRelationshipCache(db)
+	exec := NewRelationQueryExecutor(db, cache)
+
+	// Query messages with both sender and receiver using FK column names
+	q := Query{Table: "messages", Select: []string{"*"}}
+	parsed, err := ParseSelectString("id, content, from:sender_id(name), to:receiver_id(name)")
+	if err != nil {
+		t.Fatalf("failed to parse select: %v", err)
+	}
+
+	results, err := exec.ExecuteWithRelations(q, parsed)
+	if err != nil {
+		t.Fatalf("failed to execute query: %v", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	// Find the "Hello Bob!" message
+	var helloBob map[string]any
+	for _, msg := range results {
+		if msg["content"] == "Hello Bob!" {
+			helloBob = msg
+			break
+		}
+	}
+	if helloBob == nil {
+		t.Fatal("could not find 'Hello Bob!' message")
+	}
+
+	// Check "from" (sender) is Alice
+	from, ok := helloBob["from"].(map[string]any)
+	if !ok {
+		t.Fatal("'from' field should be a map")
+	}
+	if from["name"] != "Alice" {
+		t.Errorf("expected sender 'Alice', got %v", from["name"])
+	}
+
+	// Check "to" (receiver) is Bob
+	to, ok := helloBob["to"].(map[string]any)
+	if !ok {
+		t.Fatal("'to' field should be a map")
+	}
+	if to["name"] != "Bob" {
+		t.Errorf("expected receiver 'Bob', got %v", to["name"])
+	}
+}
+
+// TestMultipleRefsWithInner tests multi-reference with !inner
+func TestMultipleRefsWithInner(t *testing.T) {
+	db := setupRelationTestDB(t)
+	defer db.Close()
+
+	// Create users and messages tables
+	_, _ = db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`)
+	_, _ = db.Exec(`CREATE TABLE messages (
+		id INTEGER PRIMARY KEY,
+		content TEXT NOT NULL,
+		sender_id INTEGER REFERENCES users(id),
+		receiver_id INTEGER REFERENCES users(id)
+	)`)
+
+	// Insert test data
+	_, _ = db.Exec(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)
+	_, _ = db.Exec(`INSERT INTO users (id, name) VALUES (2, 'Bob')`)
+	_, _ = db.Exec(`INSERT INTO messages (id, content, sender_id, receiver_id) VALUES (1, 'Hello!', 1, 2)`)
+	_, _ = db.Exec(`INSERT INTO messages (id, content, sender_id, receiver_id) VALUES (2, 'No sender', NULL, 2)`)
+	_, _ = db.Exec(`INSERT INTO messages (id, content, sender_id, receiver_id) VALUES (3, 'No receiver', 1, NULL)`)
+
+	cache := NewRelationshipCache(db)
+	exec := NewRelationQueryExecutor(db, cache)
+
+	// Query with inner join on sender - should filter out messages without sender
+	q := Query{Table: "messages", Select: []string{"*"}}
+	parsed, err := ParseSelectString("id, content, from:sender_id!inner(name), to:receiver_id(name)")
+	if err != nil {
+		t.Fatalf("failed to parse select: %v", err)
+	}
+
+	results, err := exec.ExecuteWithRelations(q, parsed)
+	if err != nil {
+		t.Fatalf("failed to execute query: %v", err)
+	}
+
+	// Should only have 2 messages (those with sender)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	// Verify correct messages
+	for _, msg := range results {
+		content := msg["content"].(string)
+		if content == "No sender" {
+			t.Error("'No sender' message should have been filtered out")
+		}
+	}
+}
+
+// TestFindRelationByNameOrColumn tests the relation lookup function
+func TestFindRelationByNameOrColumn(t *testing.T) {
+	db := setupRelationTestDB(t)
+	defer db.Close()
+
+	// Create tables with multiple FKs to same table
+	_, _ = db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)`)
+	_, _ = db.Exec(`CREATE TABLE messages (
+		id INTEGER PRIMARY KEY,
+		sender_id INTEGER REFERENCES users(id),
+		receiver_id INTEGER REFERENCES users(id)
+	)`)
+
+	cache := NewRelationshipCache(db)
+	exec := NewRelationQueryExecutor(db, cache)
+
+	// Test lookup by FK column name
+	rel, err := exec.findRelationByNameOrColumn("messages", "sender_id")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel == nil {
+		t.Fatal("expected to find relation by column name 'sender_id'")
+	}
+	if rel.LocalColumn != "sender_id" {
+		t.Errorf("expected LocalColumn 'sender_id', got '%s'", rel.LocalColumn)
+	}
+	if rel.ForeignTable != "users" {
+		t.Errorf("expected ForeignTable 'users', got '%s'", rel.ForeignTable)
+	}
+
+	// Test lookup by table name
+	rel, err = exec.findRelationByNameOrColumn("messages", "users")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel == nil {
+		t.Fatal("expected to find relation by table name 'users'")
+	}
+	if rel.ForeignTable != "users" {
+		t.Errorf("expected ForeignTable 'users', got '%s'", rel.ForeignTable)
+	}
+
+	// Test non-existent relation
+	rel, err = exec.findRelationByNameOrColumn("messages", "nonexistent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel != nil {
+		t.Error("expected nil for non-existent relation")
+	}
+}

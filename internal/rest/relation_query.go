@@ -41,7 +41,7 @@ func (rqe *RelationQueryExecutor) ExecuteWithRelations(q Query, parsed *ParsedSe
 	neededColumns := make(map[string]bool)
 	for _, col := range parsed.Columns {
 		if col.Relation != nil {
-			relDef, err := rqe.relCache.FindRelationship(q.Table, col.Relation.Name)
+			relDef, err := rqe.findRelationByNameOrColumn(q.Table, col.Relation.Name)
 			if err != nil {
 				return nil, fmt.Errorf("failed to find relationship %s: %w", col.Relation.Name, err)
 			}
@@ -85,9 +85,10 @@ func (rqe *RelationQueryExecutor) ExecuteWithRelations(q Query, parsed *ParsedSe
 	}
 
 	// 4. For each relation in the parsed select, execute sub-query and embed
+	// Process inner joins which may filter results
 	for _, col := range parsed.Columns {
 		if col.Relation != nil {
-			if err := rqe.embedRelation(results, q.Table, col.Relation); err != nil {
+			if err := rqe.embedRelation(&results, q.Table, col.Relation); err != nil {
 				return nil, fmt.Errorf("failed to embed relation %s: %w", col.Relation.Name, err)
 			}
 		}
@@ -109,13 +110,14 @@ func (rqe *RelationQueryExecutor) ExecuteWithRelations(q Query, parsed *ParsedSe
 }
 
 // embedRelation embeds related data into the results based on the relationship type.
-func (rqe *RelationQueryExecutor) embedRelation(results []map[string]any, table string, rel *SelectRelation) error {
-	if len(results) == 0 {
+// The results pointer allows inner joins to filter out rows without matching relations.
+func (rqe *RelationQueryExecutor) embedRelation(results *[]map[string]any, table string, rel *SelectRelation) error {
+	if len(*results) == 0 {
 		return nil
 	}
 
-	// Look up the relationship definition
-	relDef, err := rqe.relCache.FindRelationship(table, rel.Name)
+	// Look up the relationship definition (supports both table name and FK column name)
+	relDef, err := rqe.findRelationByNameOrColumn(table, rel.Name)
 	if err != nil {
 		return fmt.Errorf("failed to find relationship: %w", err)
 	}
@@ -126,7 +128,7 @@ func (rqe *RelationQueryExecutor) embedRelation(results []map[string]any, table 
 		if embedName == "" {
 			embedName = rel.Name
 		}
-		for _, row := range results {
+		for _, row := range *results {
 			row[embedName] = nil
 		}
 		return nil
@@ -144,12 +146,13 @@ func (rqe *RelationQueryExecutor) embedRelation(results []map[string]any, table 
 
 // embedManyToOne handles many-to-one relationships (e.g., city -> country).
 // Each result row gets a single related object (or null).
-func (rqe *RelationQueryExecutor) embedManyToOne(results []map[string]any, relDef *Relationship, rel *SelectRelation) error {
+// If rel.Inner is true, rows without matching relations are filtered out.
+func (rqe *RelationQueryExecutor) embedManyToOne(results *[]map[string]any, relDef *Relationship, rel *SelectRelation) error {
 	// Collect all foreign key values from the results
 	fkValues := make([]any, 0)
 	fkSet := make(map[any]bool)
 
-	for _, row := range results {
+	for _, row := range *results {
 		if fk, ok := row[relDef.LocalColumn]; ok && fk != nil {
 			// Deduplicate FK values
 			if !fkSet[fk] {
@@ -159,14 +162,19 @@ func (rqe *RelationQueryExecutor) embedManyToOne(results []map[string]any, relDe
 		}
 	}
 
+	embedName := rel.Alias
+	if embedName == "" {
+		embedName = rel.Name
+	}
+
 	if len(fkValues) == 0 {
 		// No foreign keys to look up - set all to null
-		embedName := rel.Alias
-		if embedName == "" {
-			embedName = rel.Name
-		}
-		for _, row := range results {
+		for _, row := range *results {
 			row[embedName] = nil
+		}
+		// If inner join, filter out all rows (none have matching relations)
+		if rel.Inner {
+			*results = (*results)[:0]
 		}
 		return nil
 	}
@@ -180,7 +188,7 @@ func (rqe *RelationQueryExecutor) embedManyToOne(results []map[string]any, relDe
 	nestedFKCols := make(map[string]bool)
 	for _, relCol := range rel.Columns {
 		if relCol.Relation != nil {
-			nestedRelDef, err := rqe.relCache.FindRelationship(relDef.ForeignTable, relCol.Relation.Name)
+			nestedRelDef, err := rqe.findRelationByNameOrColumn(relDef.ForeignTable, relCol.Relation.Name)
 			if err == nil && nestedRelDef != nil {
 				nestedFKCols[nestedRelDef.LocalColumn] = true
 				colsWithFK = ensureColumnIncluded(colsWithFK, nestedRelDef.LocalColumn)
@@ -223,7 +231,7 @@ func (rqe *RelationQueryExecutor) embedManyToOne(results []map[string]any, relDe
 	// Handle nested relations in the related results
 	for _, relCol := range rel.Columns {
 		if relCol.Relation != nil {
-			if err := rqe.embedRelation(relResults, relDef.ForeignTable, relCol.Relation); err != nil {
+			if err := rqe.embedRelation(&relResults, relDef.ForeignTable, relCol.Relation); err != nil {
 				return fmt.Errorf("failed to embed nested relation %s: %w", relCol.Relation.Name, err)
 			}
 		}
@@ -247,12 +255,7 @@ func (rqe *RelationQueryExecutor) embedManyToOne(results []map[string]any, relDe
 	}
 
 	// Embed into results
-	embedName := rel.Alias
-	if embedName == "" {
-		embedName = rel.Name
-	}
-
-	for _, row := range results {
+	for _, row := range *results {
 		fk := row[relDef.LocalColumn]
 		if relData, ok := relIndex[fk]; ok {
 			row[embedName] = relData
@@ -261,12 +264,24 @@ func (rqe *RelationQueryExecutor) embedManyToOne(results []map[string]any, relDe
 		}
 	}
 
+	// If inner join, filter out rows without matching relation
+	if rel.Inner {
+		filtered := make([]map[string]any, 0, len(*results))
+		for _, row := range *results {
+			if row[embedName] != nil {
+				filtered = append(filtered, row)
+			}
+		}
+		*results = filtered
+	}
+
 	return nil
 }
 
 // embedOneToMany handles one-to-many relationships (e.g., country -> cities).
 // Each result row gets an array of related objects (possibly empty).
-func (rqe *RelationQueryExecutor) embedOneToMany(results []map[string]any, relDef *Relationship, rel *SelectRelation) error {
+// If rel.Inner is true, rows without matching relations are filtered out.
+func (rqe *RelationQueryExecutor) embedOneToMany(results *[]map[string]any, relDef *Relationship, rel *SelectRelation) error {
 	// For one-to-many: LocalColumn is the column in our table being referenced (e.g., "id")
 	// ForeignColumn is the FK column in the child table (e.g., "country_id")
 
@@ -274,7 +289,7 @@ func (rqe *RelationQueryExecutor) embedOneToMany(results []map[string]any, relDe
 	pkValues := make([]any, 0)
 	pkSet := make(map[any]bool)
 
-	for _, row := range results {
+	for _, row := range *results {
 		if pk, ok := row[relDef.LocalColumn]; ok && pk != nil {
 			if !pkSet[pk] {
 				pkValues = append(pkValues, pk)
@@ -289,11 +304,15 @@ func (rqe *RelationQueryExecutor) embedOneToMany(results []map[string]any, relDe
 		embedName = rel.Name
 	}
 
-	for _, row := range results {
+	for _, row := range *results {
 		row[embedName] = []map[string]any{}
 	}
 
 	if len(pkValues) == 0 {
+		// If inner join, filter out all rows (none have matching relations)
+		if rel.Inner {
+			*results = (*results)[:0]
+		}
 		return nil
 	}
 
@@ -306,7 +325,7 @@ func (rqe *RelationQueryExecutor) embedOneToMany(results []map[string]any, relDe
 	nestedFKCols := make(map[string]bool)
 	for _, relCol := range rel.Columns {
 		if relCol.Relation != nil {
-			nestedRelDef, err := rqe.relCache.FindRelationship(relDef.ForeignTable, relCol.Relation.Name)
+			nestedRelDef, err := rqe.findRelationByNameOrColumn(relDef.ForeignTable, relCol.Relation.Name)
 			if err == nil && nestedRelDef != nil {
 				nestedFKCols[nestedRelDef.LocalColumn] = true
 				colsWithFK = ensureColumnIncluded(colsWithFK, nestedRelDef.LocalColumn)
@@ -349,7 +368,7 @@ func (rqe *RelationQueryExecutor) embedOneToMany(results []map[string]any, relDe
 	// Handle nested relations in the related results
 	for _, relCol := range rel.Columns {
 		if relCol.Relation != nil {
-			if err := rqe.embedRelation(relResults, relDef.ForeignTable, relCol.Relation); err != nil {
+			if err := rqe.embedRelation(&relResults, relDef.ForeignTable, relCol.Relation); err != nil {
 				return fmt.Errorf("failed to embed nested relation %s: %w", relCol.Relation.Name, err)
 			}
 		}
@@ -373,12 +392,23 @@ func (rqe *RelationQueryExecutor) embedOneToMany(results []map[string]any, relDe
 	}
 
 	// Embed into results
-	for _, row := range results {
+	for _, row := range *results {
 		pk := row[relDef.LocalColumn]
 		if relData, ok := relIndex[pk]; ok {
 			row[embedName] = relData
 		}
 		// If no matches, the empty array was already set
+	}
+
+	// If inner join, filter out rows without matching relations (empty arrays)
+	if rel.Inner {
+		filtered := make([]map[string]any, 0, len(*results))
+		for _, row := range *results {
+			if arr, ok := row[embedName].([]map[string]any); ok && len(arr) > 0 {
+				filtered = append(filtered, row)
+			}
+		}
+		*results = filtered
 	}
 
 	return nil
@@ -460,4 +490,34 @@ func containsColumn(cols []string, col string) bool {
 		}
 	}
 	return false
+}
+
+// findRelationByNameOrColumn looks up a relationship by either table name or FK column name.
+// This supports multi-reference scenarios like "from:sender_id(name), to:receiver_id(name)"
+// where sender_id and receiver_id are FK column names pointing to the same table.
+//
+// Lookup priority:
+// 1. Match by FK column name (LocalColumn) - for multi-reference support
+// 2. Match by relation name (table name) - traditional lookup
+func (rqe *RelationQueryExecutor) findRelationByNameOrColumn(table, relationName string) (*Relationship, error) {
+	rels, err := rqe.relCache.GetRelationships(table)
+	if err != nil {
+		return nil, err
+	}
+
+	// First try: match by FK column name (for multi-reference support)
+	for _, r := range rels {
+		if r.LocalColumn == relationName {
+			return &r, nil
+		}
+	}
+
+	// Second try: match by table/relation name (traditional lookup)
+	for _, r := range rels {
+		if r.Name == relationName || r.ForeignTable == relationName {
+			return &r, nil
+		}
+	}
+
+	return nil, nil
 }
