@@ -60,8 +60,9 @@ var reservedParams = map[string]bool{
 	"order":  true,
 	"limit":  true,
 	"offset": true,
-	"or":     true, // handled separately as logical filter
-	"and":    true, // handled separately as logical filter
+	"or":     true,    // handled separately as logical filter
+	"and":    true,    // handled separately as logical filter
+	"match":  true,    // handled separately as match filter (expands to multiple eq filters)
 }
 
 func (h *Handler) parseQueryParams(r *http.Request) Query {
@@ -100,6 +101,15 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 	for _, andValue := range r.URL.Query()["and"] {
 		if lf, err := ParseLogicalFilter("and", andValue); err == nil {
 			q.LogicalFilters = append(q.LogicalFilters, lf)
+		}
+	}
+
+	// Parse match filter (expands JSON object to multiple eq filters)
+	// Example: ?match={"status":"active","priority":"high"}
+	// Note: filter() is raw PostgREST syntax (?column=operator.value) which we already support
+	for _, matchValue := range r.URL.Query()["match"] {
+		if matchFilters, err := ParseMatchFilter(matchValue); err == nil {
+			q.Filters = append(q.Filters, matchFilters...)
 		}
 	}
 

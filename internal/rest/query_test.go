@@ -516,3 +516,152 @@ func TestBuildSelectQueryWithMixedFilters(t *testing.T) {
 		t.Errorf("expected 3 args, got %d", len(args))
 	}
 }
+
+func TestParseMatchFilter(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantFilters int
+		wantErr     bool
+	}{
+		{
+			name:        "two fields",
+			input:       `{"status":"active","priority":"high"}`,
+			wantFilters: 2,
+		},
+		{
+			name:        "single field",
+			input:       `{"status":"active"}`,
+			wantFilters: 1,
+		},
+		{
+			name:        "empty object",
+			input:       `{}`,
+			wantFilters: 0,
+		},
+		{
+			name:        "numeric value",
+			input:       `{"age":25}`,
+			wantFilters: 1,
+		},
+		{
+			name:        "boolean value",
+			input:       `{"active":true}`,
+			wantFilters: 1,
+		},
+		{
+			name:        "multiple fields mixed types",
+			input:       `{"status":"active","count":10,"enabled":true}`,
+			wantFilters: 3,
+		},
+		{
+			name:    "invalid json",
+			input:   `{invalid}`,
+			wantErr: true,
+		},
+		{
+			name:    "not an object",
+			input:   `["array"]`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filters, err := ParseMatchFilter(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(filters) != tt.wantFilters {
+				t.Errorf("expected %d filters, got %d", tt.wantFilters, len(filters))
+			}
+
+			// Verify all filters use eq operator
+			for _, f := range filters {
+				if f.Operator != "eq" {
+					t.Errorf("expected operator 'eq', got %q", f.Operator)
+				}
+			}
+		})
+	}
+}
+
+func TestParseMatchFilterContent(t *testing.T) {
+	// Test specific filter content
+	filters, err := ParseMatchFilter(`{"status":"active","priority":"high"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(filters) != 2 {
+		t.Fatalf("expected 2 filters, got %d", len(filters))
+	}
+
+	// Build a map for easier testing (order is not guaranteed)
+	filterMap := make(map[string]Filter)
+	for _, f := range filters {
+		filterMap[f.Column] = f
+	}
+
+	// Check status filter
+	if statusFilter, ok := filterMap["status"]; ok {
+		if statusFilter.Operator != "eq" {
+			t.Errorf("expected operator 'eq' for status, got %q", statusFilter.Operator)
+		}
+		if statusFilter.Value != "active" {
+			t.Errorf("expected value 'active' for status, got %q", statusFilter.Value)
+		}
+	} else {
+		t.Error("expected 'status' filter not found")
+	}
+
+	// Check priority filter
+	if priorityFilter, ok := filterMap["priority"]; ok {
+		if priorityFilter.Operator != "eq" {
+			t.Errorf("expected operator 'eq' for priority, got %q", priorityFilter.Operator)
+		}
+		if priorityFilter.Value != "high" {
+			t.Errorf("expected value 'high' for priority, got %q", priorityFilter.Value)
+		}
+	} else {
+		t.Error("expected 'priority' filter not found")
+	}
+}
+
+func TestParseMatchFilterNumericValue(t *testing.T) {
+	filters, err := ParseMatchFilter(`{"count":42}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(filters) != 1 {
+		t.Fatalf("expected 1 filter, got %d", len(filters))
+	}
+
+	// Numeric values should be converted to string
+	if filters[0].Value != "42" {
+		t.Errorf("expected value '42', got %q", filters[0].Value)
+	}
+}
+
+func TestParseMatchFilterBooleanValue(t *testing.T) {
+	filters, err := ParseMatchFilter(`{"active":true}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(filters) != 1 {
+		t.Fatalf("expected 1 filter, got %d", len(filters))
+	}
+
+	// Boolean values should be converted to string
+	if filters[0].Value != "true" {
+		t.Errorf("expected value 'true', got %q", filters[0].Value)
+	}
+}

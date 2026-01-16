@@ -2,6 +2,7 @@
 package rest
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -339,4 +340,25 @@ func parseLogicalPart(part string) (Filter, error) {
 		Operator: operator,
 		Value:    value,
 	}, nil
+}
+
+// ParseMatchFilter parses a match query parameter (JSON object) into multiple eq filters.
+// match() is shorthand for multiple .eq() filters.
+// Example: ?match={"status":"active","priority":"high"}
+// becomes equivalent to ?status=eq.active&priority=eq.high
+func ParseMatchFilter(jsonValue string) ([]Filter, error) {
+	var matches map[string]any
+	if err := json.Unmarshal([]byte(jsonValue), &matches); err != nil {
+		return nil, fmt.Errorf("invalid match JSON: %w", err)
+	}
+
+	var filters []Filter
+	for col, val := range matches {
+		filters = append(filters, Filter{
+			Column:   col,
+			Operator: "eq",
+			Value:    fmt.Sprintf("%v", val),
+		})
+	}
+	return filters, nil
 }
