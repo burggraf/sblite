@@ -19,15 +19,16 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 |---------|--------|-------|
 | Getting your data | ✅ | `.select()` |
 | Selecting specific columns | ✅ | `.select('col1, col2')` |
-| Query referenced tables | ❌ | Requires embedded resources |
-| Query with spaces in names | ❌ | Requires embedded resources |
-| Query through join table | ❌ | Requires embedded resources |
-| Query same table multiple times | ❌ | Requires embedded resources |
-| Query nested foreign tables | ❌ | Requires embedded resources |
-| Filter through referenced tables | ❌ | Requires embedded resources |
-| Query with count | 🔸 | Count header pending |
+| Column renaming | ✅ | `.select('alias:column')` |
+| Query referenced tables | ✅ | Many-to-one via `table(columns)` |
+| Query with spaces in names | ❌ | Requires quoted identifiers |
+| Query through join table | ❌ | Requires many-to-many support |
+| Query same table multiple times | ❌ | Requires aliased joins |
+| Query nested foreign tables | ✅ | One-to-many via `table(columns)` |
+| Filter through referenced tables | ✅ | `table.column` filter syntax |
+| Query with count | ✅ | `count: 'exact' | 'planned' | 'estimated'` |
 | Query JSON data | ❌ | Requires `->` operator |
-| Query with inner join | ❌ | Requires `!inner` syntax |
+| Query with inner join | ✅ | `table!inner(columns)` syntax |
 | Switching schemas | 🚫 | SQLite doesn't have schemas |
 
 ### Insert (`from().insert()`)
@@ -52,7 +53,8 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 |---------|--------|-------|
 | Upsert data | ✅ | `.upsert({...})` |
 | Bulk upsert | ✅ | `.upsert([{...}])` |
-| Upsert with constraints | ❌ | `onConflict` option pending |
+| Upsert with onConflict | ✅ | `onConflict: 'column'` option |
+| Upsert ignoreDuplicates | ✅ | `ignoreDuplicates: true` option |
 
 ### Delete (`from().delete()`)
 
@@ -114,10 +116,10 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 
 | Filter | Status | Notes |
 |--------|--------|-------|
-| `match()` | ❌ | Use chained `.eq()` instead |
-| `not()` | ❌ | Negation operator |
-| `or()` | ❌ | PostgREST OR syntax |
-| `filter()` | ❌ | Raw filter syntax |
+| `match()` | ✅ | Matches all key-value pairs |
+| `not()` | ✅ | Negation operator |
+| `or()` | ✅ | PostgREST OR syntax |
+| `filter()` | ✅ | Raw filter syntax |
 
 ---
 
@@ -128,11 +130,23 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 | `select()` (after insert/update) | ✅ | Return modified rows |
 | `order()` | ✅ | Sort results |
 | `limit()` | ✅ | Limit row count |
-| `range()` | ✅ | Pagination |
+| `range()` | ✅ | Pagination with Range header |
 | `single()` | ✅ | Return single object |
 | `maybeSingle()` | ✅ | Return object or null |
-| `csv()` | ❌ | CSV response format |
-| `explain()` | ❌ | Query execution plan |
+| `csv()` | ✅ | CSV response format |
+| `explain()` | ✅ | Query execution plan |
+
+---
+
+## Response Headers
+
+| Header | Status | Notes |
+|--------|--------|-------|
+| `Content-Range` | ✅ | Pagination info |
+| `Range` (request) | ✅ | Range header pagination |
+| `Prefer: count=exact` | ✅ | Exact row count |
+| `Prefer: count=planned` | ✅ | Estimated count (uses exact) |
+| `Prefer: count=estimated` | ✅ | Estimated count (uses exact) |
 
 ---
 
@@ -246,26 +260,31 @@ These Supabase features are not applicable to sblite:
 
 ---
 
+## Additional Features
+
+### OpenAPI / Schema Introspection
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| OpenAPI spec generation | ✅ | `GET /rest/v1/` returns OpenAPI 3.0 spec |
+| Table schema introspection | ✅ | Via OpenAPI paths and schemas |
+
+---
+
 ## Future Compatibility Roadmap
 
-### Phase 2 (Planned)
-
-- [ ] Row Level Security simulation
-- [ ] JSON path extraction (`->`, `->>`)
-- [ ] `or()` filter support
-- [ ] `not()` filter support
-
-### Phase 3 (Planned)
+### Phase 4 (Planned)
 
 - [ ] Full-text search with SQLite FTS5
-- [ ] Count header support
-- [ ] CSV response format
+- [ ] JSON path extraction (`->`, `->>`)
+- [ ] Many-to-many relationship queries
+- [ ] Aliased joins for self-referential queries
 
 ### Future Consideration
 
-- [ ] Embedded resources (relationships)
 - [ ] Realtime simulation
 - [ ] OAuth providers
+- [ ] Storage API
 
 ---
 
