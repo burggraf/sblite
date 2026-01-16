@@ -65,8 +65,8 @@ func GetAuthContextFromRequest(r *http.Request) *rls.AuthContext {
 	return ctx
 }
 
-// parsePreferHeader parses the Prefer header for count option
-func parsePreferHeader(prefer string) (count string, head bool) {
+// parsePreferHeader parses the Prefer header for count and explain options
+func parsePreferHeader(prefer string) (count string, head bool, explain bool) {
 	if strings.Contains(prefer, "count=exact") {
 		count = "exact"
 	} else if strings.Contains(prefer, "count=planned") {
@@ -75,6 +75,10 @@ func parsePreferHeader(prefer string) (count string, head bool) {
 		count = "estimated"
 	}
 	// head is determined by request method (HEAD) not Prefer
+	// Check for explain option (either "explain" or "explain=true")
+	if strings.Contains(prefer, "explain") {
+		explain = true
+	}
 	return
 }
 
@@ -201,9 +205,15 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse Prefer header for count option
+	// Parse Prefer header for count and explain options
 	prefer := r.Header.Get("Prefer")
-	countType, _ := parsePreferHeader(prefer)
+	countType, _, explainMode := parsePreferHeader(prefer)
+
+	// Handle explain mode - return query plan instead of results
+	if explainMode {
+		h.handleExplain(w, r, q)
+		return
+	}
 
 	// Execute count query if requested
 	var totalCount int64 = -1
@@ -633,4 +643,68 @@ func (h *Handler) selectMatchingWithRLS(q Query) []map[string]any {
 
 	results, _ := h.scanRows(rows)
 	return results
+}
+
+// handleExplain returns the query plan for the given query instead of results.
+// This is triggered by the Prefer: explain header.
+func (h *Handler) handleExplain(w http.ResponseWriter, r *http.Request, q Query) {
+	var sqlStr string
+	var args []any
+
+	// Check if this query involves relations
+	selectParam := r.URL.Query().Get("select")
+	parsedSelect, parseErr := ParseSelectString(selectParam)
+
+	if parseErr == nil && parsedSelect.HasRelations() {
+		// For queries with embedded relations, we explain the main query only
+		// (the relation queries are separate queries)
+		sqlStr, args = BuildSelectQuery(q)
+	} else if q.HasRelatedFilters() || q.HasRelatedOrdering() {
+		// Use BuildSelectQueryWithRelations for related filters/ordering
+		var err error
+		sqlStr, args, err = BuildSelectQueryWithRelations(q, h.relCache)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "relation_error", err.Error())
+			return
+		}
+	} else {
+		// Standard query without relations
+		sqlStr, args = BuildSelectQuery(q)
+	}
+
+	explainSQL := "EXPLAIN QUERY PLAN " + sqlStr
+
+	rows, err := h.db.Query(explainSQL, args...)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "explain_error", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var plan []map[string]any
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			h.writeError(w, http.StatusInternalServerError, "explain_scan_error", err.Error())
+			return
+		}
+		plan = append(plan, map[string]any{
+			"id":     id,
+			"parent": parent,
+			"detail": detail,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "explain_error", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"sql":  sqlStr,
+		"args": args,
+		"plan": plan,
+	})
 }

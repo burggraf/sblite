@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -440,23 +441,30 @@ func TestCountEmptyTable(t *testing.T) {
 
 func TestParsePreferHeader(t *testing.T) {
 	tests := []struct {
-		name          string
-		prefer        string
-		expectedCount string
+		name            string
+		prefer          string
+		expectedCount   string
+		expectedExplain bool
 	}{
-		{"count=exact", "count=exact", "exact"},
-		{"count=planned", "count=planned", "planned"},
-		{"count=estimated", "count=estimated", "estimated"},
-		{"no count", "return=representation", ""},
-		{"empty", "", ""},
-		{"count=exact with other options", "return=representation, count=exact", "exact"},
+		{"count=exact", "count=exact", "exact", false},
+		{"count=planned", "count=planned", "planned", false},
+		{"count=estimated", "count=estimated", "estimated", false},
+		{"no count", "return=representation", "", false},
+		{"empty", "", "", false},
+		{"count=exact with other options", "return=representation, count=exact", "exact", false},
+		{"explain only", "explain", "", true},
+		{"explain=true", "explain=true", "", true},
+		{"explain with count", "count=exact, explain", "exact", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			count, _ := parsePreferHeader(tt.prefer)
+			count, _, explain := parsePreferHeader(tt.prefer)
 			if count != tt.expectedCount {
-				t.Errorf("parsePreferHeader(%q) = %q, want %q", tt.prefer, count, tt.expectedCount)
+				t.Errorf("parsePreferHeader(%q) count = %q, want %q", tt.prefer, count, tt.expectedCount)
+			}
+			if explain != tt.expectedExplain {
+				t.Errorf("parsePreferHeader(%q) explain = %v, want %v", tt.prefer, explain, tt.expectedExplain)
 			}
 		})
 	}
@@ -983,5 +991,200 @@ func TestFilterAndOrderOnRelatedTable(t *testing.T) {
 		if name != expectedOrder[i] {
 			t.Errorf("position %d: expected %s, got %s", i, expectedOrder[i], name)
 		}
+	}
+}
+
+func TestExplainModifier(t *testing.T) {
+	handler, database := setupTestHandler(t)
+	defer database.Close()
+
+	// Insert test data
+	database.Exec(`INSERT INTO todos (title, completed) VALUES ('Test 1', 0), ('Test 2', 1)`)
+
+	r := chi.NewRouter()
+	r.Get("/rest/v1/{table}", handler.HandleSelect)
+
+	req := httptest.NewRequest("GET", "/rest/v1/todos", nil)
+	req.Header.Set("Prefer", "explain")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Check that response contains sql, args, and plan
+	if _, ok := response["sql"]; !ok {
+		t.Error("expected response to contain 'sql' field")
+	}
+	if _, ok := response["args"]; !ok {
+		t.Error("expected response to contain 'args' field")
+	}
+	if _, ok := response["plan"]; !ok {
+		t.Error("expected response to contain 'plan' field")
+	}
+
+	// Verify sql field contains SELECT statement
+	sql, ok := response["sql"].(string)
+	if !ok {
+		t.Fatal("sql field is not a string")
+	}
+	if !strings.Contains(sql, "SELECT") {
+		t.Errorf("expected sql to contain SELECT, got: %s", sql)
+	}
+	if !strings.Contains(sql, "todos") {
+		t.Errorf("expected sql to contain table name 'todos', got: %s", sql)
+	}
+
+	// Verify plan is an array
+	plan, ok := response["plan"].([]any)
+	if !ok {
+		t.Fatal("plan field is not an array")
+	}
+	if len(plan) == 0 {
+		t.Error("expected plan to have at least one entry")
+	}
+
+	// Verify plan entries have expected fields
+	if len(plan) > 0 {
+		entry, ok := plan[0].(map[string]any)
+		if !ok {
+			t.Fatal("plan entry is not a map")
+		}
+		if _, ok := entry["id"]; !ok {
+			t.Error("expected plan entry to have 'id' field")
+		}
+		if _, ok := entry["parent"]; !ok {
+			t.Error("expected plan entry to have 'parent' field")
+		}
+		if _, ok := entry["detail"]; !ok {
+			t.Error("expected plan entry to have 'detail' field")
+		}
+	}
+}
+
+func TestExplainModifierWithFilter(t *testing.T) {
+	handler, database := setupTestHandler(t)
+	defer database.Close()
+
+	// Insert test data
+	database.Exec(`INSERT INTO todos (title, completed) VALUES ('Test 1', 0), ('Test 2', 1)`)
+
+	r := chi.NewRouter()
+	r.Get("/rest/v1/{table}", handler.HandleSelect)
+
+	req := httptest.NewRequest("GET", "/rest/v1/todos?completed=eq.0", nil)
+	req.Header.Set("Prefer", "explain")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Verify sql contains the filter
+	sql, ok := response["sql"].(string)
+	if !ok {
+		t.Fatal("sql field is not a string")
+	}
+	if !strings.Contains(sql, "WHERE") {
+		t.Errorf("expected sql to contain WHERE clause, got: %s", sql)
+	}
+
+	// Verify args contains the filter value
+	args, ok := response["args"].([]any)
+	if !ok {
+		t.Fatal("args field is not an array")
+	}
+	if len(args) == 0 {
+		t.Error("expected args to contain filter value")
+	}
+}
+
+func TestExplainModifierWithOrderAndLimit(t *testing.T) {
+	handler, database := setupTestHandler(t)
+	defer database.Close()
+
+	// Insert test data
+	database.Exec(`INSERT INTO todos (title, completed) VALUES ('Test 1', 0), ('Test 2', 1), ('Test 3', 0)`)
+
+	r := chi.NewRouter()
+	r.Get("/rest/v1/{table}", handler.HandleSelect)
+
+	req := httptest.NewRequest("GET", "/rest/v1/todos?order=title.desc&limit=2", nil)
+	req.Header.Set("Prefer", "explain=true")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Verify sql contains ORDER BY and LIMIT
+	sql, ok := response["sql"].(string)
+	if !ok {
+		t.Fatal("sql field is not a string")
+	}
+	if !strings.Contains(sql, "ORDER BY") {
+		t.Errorf("expected sql to contain ORDER BY, got: %s", sql)
+	}
+	if !strings.Contains(sql, "LIMIT") {
+		t.Errorf("expected sql to contain LIMIT, got: %s", sql)
+	}
+}
+
+func TestExplainModifierWithRelatedFilter(t *testing.T) {
+	handler, database := setupTestHandlerWithRelations(t)
+	defer database.Close()
+
+	// Insert test data
+	database.Exec(`INSERT INTO countries (id, name, code) VALUES (1, 'Canada', 'CA'), (2, 'USA', 'US')`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Toronto', 2731571, 1)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('New York', 8336817, 2)`)
+
+	r := chi.NewRouter()
+	r.Get("/rest/v1/{table}", handler.HandleSelect)
+
+	// Filter by related table
+	req := httptest.NewRequest("GET", "/rest/v1/cities?countries.name=eq.Canada", nil)
+	req.Header.Set("Prefer", "explain")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Verify sql references the related table (could be via JOIN or EXISTS subquery)
+	sql, ok := response["sql"].(string)
+	if !ok {
+		t.Fatal("sql field is not a string")
+	}
+	if !strings.Contains(sql, "countries") {
+		t.Errorf("expected sql to reference countries table, got: %s", sql)
+	}
+	// The implementation uses EXISTS with a subquery for related filters
+	if !strings.Contains(sql, "EXISTS") && !strings.Contains(sql, "JOIN") {
+		t.Errorf("expected sql to contain EXISTS or JOIN for related table filter, got: %s", sql)
 	}
 }
