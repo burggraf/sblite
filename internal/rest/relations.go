@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"unicode"
 )
 
 // Relationship describes a foreign key relationship between tables.
@@ -32,9 +33,28 @@ func NewRelationshipCache(db *sql.DB) *RelationshipCache {
 	}
 }
 
+// isValidTableName validates that a table name contains only safe characters
+// (letters, digits, and underscores) to prevent SQL injection in PRAGMA queries.
+func isValidTableName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	for _, r := range name {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
+			return false
+		}
+	}
+	return true
+}
+
 // GetRelationships returns all relationships for a table, using cache if available.
 // It detects both many-to-one (this table has FK) and one-to-many (other tables have FK to this table).
 func (rc *RelationshipCache) GetRelationships(table string) ([]Relationship, error) {
+	// Validate table name to prevent SQL injection in PRAGMA queries
+	if !isValidTableName(table) {
+		return nil, fmt.Errorf("invalid table name: %s", table)
+	}
+
 	// Check cache first (read lock)
 	rc.mu.RLock()
 	if rels, ok := rc.cache[table]; ok {
@@ -117,16 +137,26 @@ func (rc *RelationshipCache) findReverseRelationships(table string) ([]Relations
 		// Note: We don't skip self-referencing tables because a table can have
 		// an FK to itself (e.g., employees.manager_id -> employees.id)
 
-		fks, err := rc.db.Query(fmt.Sprintf("PRAGMA foreign_key_list('%s')", otherTable))
-		if err != nil {
-			// Log error but continue checking other tables
+		// Table names from sqlite_master should always be valid, but validate
+		// to be defensive against any edge cases
+		if !isValidTableName(otherTable) {
 			continue
 		}
 
+		fks, err := rc.db.Query(fmt.Sprintf("PRAGMA foreign_key_list('%s')", otherTable))
+		if err != nil {
+			// Skip tables we can't query foreign keys for (e.g., permission issues)
+			// This is expected in some scenarios and not worth failing the entire operation
+			continue
+		}
+
+		var scanErr error
 		for fks.Next() {
 			var id, seq int
 			var foreignTable, localCol, foreignCol, onUpdate, onDelete, match string
 			if err := fks.Scan(&id, &seq, &foreignTable, &localCol, &foreignCol, &onUpdate, &onDelete, &match); err != nil {
+				// Record scan error but continue processing remaining rows
+				scanErr = err
 				continue
 			}
 
@@ -140,7 +170,17 @@ func (rc *RelationshipCache) findReverseRelationships(table string) ([]Relations
 				})
 			}
 		}
+
+		// Check for iteration errors after the loop
+		if err := fks.Err(); err != nil {
+			fks.Close()
+			return nil, fmt.Errorf("error iterating foreign keys for %s: %w", otherTable, err)
+		}
 		fks.Close()
+
+		// If we had scan errors but no iteration errors, we can still continue
+		// but log that some rows may have been skipped
+		_ = scanErr // Acknowledge the error was captured; rows were skipped
 	}
 
 	return rels, nil

@@ -546,3 +546,83 @@ func TestGetRelationships_ThreadSafety(t *testing.T) {
 		<-done
 	}
 }
+
+func TestIsValidTableName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"valid simple name", "users", true},
+		{"valid with underscore", "user_accounts", true},
+		{"valid with numbers", "users2", true},
+		{"valid mixed", "user_accounts_v2", true},
+		{"valid uppercase", "Users", true},
+		{"valid mixed case", "UserAccounts", true},
+		{"empty string", "", false},
+		{"SQL injection with quotes", "users'; DROP TABLE users; --", false},
+		{"SQL injection with parentheses", "users())", false},
+		{"contains space", "user accounts", false},
+		{"contains hyphen", "user-accounts", false},
+		{"contains dot", "schema.users", false},
+		{"contains semicolon", "users;", false},
+		{"contains single quote", "users'", false},
+		{"contains double quote", "users\"", false},
+		{"starts with number", "2users", true}, // valid identifier in SQLite
+		{"unicode letters", "utilisateurs", true},
+		{"unicode accents", "usersé", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isValidTableName(tt.input)
+			if result != tt.expected {
+				t.Errorf("isValidTableName(%q) = %v, expected %v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetRelationships_SQLInjectionPrevention(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	cache := NewRelationshipCache(db)
+
+	// Test various SQL injection attempts
+	injectionAttempts := []string{
+		"users'); DROP TABLE users; --",
+		"users' OR '1'='1",
+		"users; DELETE FROM users",
+		"users); SELECT * FROM sqlite_master; --",
+		"users' UNION SELECT * FROM sqlite_master --",
+	}
+
+	for _, attempt := range injectionAttempts {
+		t.Run(attempt, func(t *testing.T) {
+			_, err := cache.GetRelationships(attempt)
+			if err == nil {
+				t.Errorf("expected error for SQL injection attempt %q, got nil", attempt)
+			}
+			// Verify the error message indicates invalid table name
+			expectedErr := "invalid table name"
+			if err != nil && !contains(err.Error(), expectedErr) {
+				t.Errorf("expected error containing %q, got %q", expectedErr, err.Error())
+			}
+		})
+	}
+}
+
+// contains checks if s contains substr
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
