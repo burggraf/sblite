@@ -305,17 +305,46 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type RecoverRequest struct {
+	Email string `json:"email"`
+}
+
+func (s *Server) handleRecover(w http.ResponseWriter, r *http.Request) {
+	var req RecoverRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.Email == "" {
+		s.writeError(w, http.StatusBadRequest, "validation_failed", "Email is required")
+		return
+	}
+
+	// Generate token (don't reveal if user exists)
+	_, _ = s.authService.GenerateRecoveryToken(req.Email)
+
+	// Always return success to prevent email enumeration
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "If the email exists, a recovery link has been sent",
+	})
+}
+
 type VerifyRequest struct {
-	Type  string `json:"type"`  // "signup" or "recovery"
-	Token string `json:"token"`
+	Type     string `json:"type"`     // "signup" or "recovery"
+	Token    string `json:"token"`
+	Password string `json:"password"` // Required for recovery type
 }
 
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
-	var token, verifyType string
+	var token, verifyType, password string
 
 	if r.Method == "GET" {
 		token = r.URL.Query().Get("token")
 		verifyType = r.URL.Query().Get("type")
+		password = r.URL.Query().Get("password")
 	} else {
 		var req VerifyRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -324,6 +353,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		}
 		token = req.Token
 		verifyType = req.Type
+		password = req.Password
 	}
 
 	if token == "" {
@@ -341,6 +371,25 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"message": "Email verified successfully",
+			"user":    user,
+		})
+	case "recovery":
+		if password == "" {
+			s.writeError(w, http.StatusBadRequest, "validation_failed", "Password is required")
+			return
+		}
+		if len(password) < 6 {
+			s.writeError(w, http.StatusBadRequest, "validation_failed", "Password must be at least 6 characters")
+			return
+		}
+		user, err := s.authService.ResetPassword(token, password)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid_token", "Invalid or expired token")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"message": "Password reset successfully",
 			"user":    user,
 		})
 	default:

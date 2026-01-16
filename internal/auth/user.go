@@ -231,3 +231,68 @@ func (s *Service) VerifyEmail(token string) (*User, error) {
 
 	return s.GetUserByID(userID)
 }
+
+func (s *Service) GenerateRecoveryToken(email string) (string, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+
+	var userID string
+	err := s.db.QueryRow("SELECT id FROM auth_users WHERE email = ? AND deleted_at IS NULL", email).Scan(&userID)
+	if err != nil {
+		return "", fmt.Errorf("user not found")
+	}
+
+	token, err := generateToken()
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	_, err = s.db.Exec(`
+		UPDATE auth_users SET recovery_token = ?, recovery_sent_at = ?
+		WHERE id = ?
+	`, token, now, userID)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery token: %w", err)
+	}
+	return token, nil
+}
+
+func (s *Service) ResetPassword(token, newPassword string) (*User, error) {
+	var userID string
+	var recoverySentAt sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT id, recovery_sent_at FROM auth_users WHERE recovery_token = ? AND deleted_at IS NULL
+	`, token).Scan(&userID, &recoverySentAt)
+
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired token")
+	}
+
+	// Check token age (24 hours expiration)
+	if recoverySentAt.Valid {
+		sentAt, err := time.Parse(time.RFC3339, recoverySentAt.String)
+		if err == nil && time.Since(sentAt) > 24*time.Hour {
+			return nil, fmt.Errorf("invalid or expired token")
+		}
+	}
+
+	// Hash new password
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.Exec(`
+		UPDATE auth_users SET encrypted_password = ?, recovery_token = NULL, updated_at = ?
+		WHERE id = ?
+	`, string(hash), now, userID)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to reset password: %w", err)
+	}
+
+	return s.GetUserByID(userID)
+}
