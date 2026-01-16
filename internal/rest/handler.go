@@ -67,6 +67,36 @@ func parsePreferHeader(prefer string) (count string, head bool) {
 	return
 }
 
+// parseRangeHeader parses the Range header for pagination
+// Format: "0-24" or "items=0-24"
+// Returns start, end, and whether parsing was successful
+func parseRangeHeader(rangeHeader string) (start, end int, ok bool) {
+	if rangeHeader == "" {
+		return 0, 0, false
+	}
+
+	// Strip optional "items=" prefix
+	rangeHeader = strings.TrimPrefix(rangeHeader, "items=")
+
+	parts := strings.Split(rangeHeader, "-")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+
+	start, err1 := strconv.Atoi(parts[0])
+	end, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+
+	// Validate range: start must not be negative, end must be >= start
+	if start < 0 || end < start {
+		return 0, 0, false
+	}
+
+	return start, end, true
+}
+
 // Reserved query params that are not filters
 var reservedParams = map[string]bool{
 	"select": true,
@@ -131,6 +161,21 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 
 func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	q := h.parseQueryParams(r)
+
+	// Track if limit/offset were explicitly set via query params
+	hasExplicitLimit := r.URL.Query().Get("limit") != ""
+	hasExplicitOffset := r.URL.Query().Get("offset") != ""
+
+	// Apply Range header pagination only if limit/offset are not explicitly set
+	rangeHeader := r.Header.Get("Range")
+	rangeApplied := false
+	if rangeHeader != "" && !hasExplicitLimit && !hasExplicitOffset {
+		if start, end, ok := parseRangeHeader(rangeHeader); ok {
+			q.Offset = start
+			q.Limit = end - start + 1
+			rangeApplied = true
+		}
+	}
 
 	// Apply RLS conditions if enforcer is configured
 	if h.enforcer != nil {
@@ -210,6 +255,12 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(results[0])
 		return
+	}
+
+	// Return 206 Partial Content if Range header was applied and results were limited
+	// We return 206 if we got exactly the requested limit (indicating there may be more)
+	if rangeApplied && q.Limit > 0 && len(results) == q.Limit {
+		w.WriteHeader(http.StatusPartialContent)
 	}
 
 	json.NewEncoder(w).Encode(results)
