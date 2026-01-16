@@ -738,3 +738,250 @@ func TestRangeHeaderWithCount(t *testing.T) {
 		t.Errorf("expected 10 rows, got %d", len(response))
 	}
 }
+
+// setupTestHandlerWithRelations creates a handler with related tables (countries and cities)
+func setupTestHandlerWithRelations(t *testing.T) (*Handler, *db.DB) {
+	t.Helper()
+	path := t.TempDir() + "/test.db"
+	database, err := db.New(path)
+	if err != nil {
+		t.Fatalf("failed to create db: %v", err)
+	}
+	if err := database.RunMigrations(); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+
+	// Create countries table
+	_, err = database.Exec(`
+		CREATE TABLE IF NOT EXISTS countries (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			code TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		t.Fatalf("failed to create countries table: %v", err)
+	}
+
+	// Create cities table with foreign key to countries
+	_, err = database.Exec(`
+		CREATE TABLE IF NOT EXISTS cities (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			population INTEGER,
+			country_id INTEGER REFERENCES countries(id)
+		)
+	`)
+	if err != nil {
+		t.Fatalf("failed to create cities table: %v", err)
+	}
+
+	handler := NewHandler(database, nil)
+	return handler, database
+}
+
+func TestFilterOnRelatedTable(t *testing.T) {
+	handler, database := setupTestHandlerWithRelations(t)
+	defer database.Close()
+
+	// Insert test data
+	database.Exec(`INSERT INTO countries (id, name, code) VALUES (1, 'Canada', 'CA'), (2, 'USA', 'US'), (3, 'Mexico', 'MX')`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Toronto', 2731571, 1)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Vancouver', 631486, 1)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('New York', 8336817, 2)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Los Angeles', 3979576, 2)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Mexico City', 8918653, 3)`)
+
+	r := chi.NewRouter()
+	r.Get("/rest/v1/{table}", handler.HandleSelect)
+
+	// GET /cities?countries.name=eq.Canada should return only Toronto and Vancouver
+	req := httptest.NewRequest("GET", "/rest/v1/cities?countries.name=eq.Canada", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(response) != 2 {
+		t.Errorf("expected 2 cities (Canadian cities), got %d", len(response))
+	}
+
+	// Verify the cities are Canadian
+	for _, city := range response {
+		name := city["name"].(string)
+		if name != "Toronto" && name != "Vancouver" {
+			t.Errorf("unexpected city: %s", name)
+		}
+	}
+}
+
+func TestFilterOnRelatedTableWithMultipleFilters(t *testing.T) {
+	handler, database := setupTestHandlerWithRelations(t)
+	defer database.Close()
+
+	// Insert test data
+	database.Exec(`INSERT INTO countries (id, name, code) VALUES (1, 'Canada', 'CA'), (2, 'USA', 'US')`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Toronto', 2731571, 1)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Vancouver', 631486, 1)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('New York', 8336817, 2)`)
+
+	r := chi.NewRouter()
+	r.Get("/rest/v1/{table}", handler.HandleSelect)
+
+	// Filter by related country AND local population
+	req := httptest.NewRequest("GET", "/rest/v1/cities?countries.name=eq.Canada&population=gt.1000000", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Only Toronto has population > 1M and is in Canada
+	if len(response) != 1 {
+		t.Errorf("expected 1 city, got %d", len(response))
+	}
+
+	if len(response) > 0 {
+		name := response[0]["name"].(string)
+		if name != "Toronto" {
+			t.Errorf("expected Toronto, got %s", name)
+		}
+	}
+}
+
+func TestOrderByRelatedColumn(t *testing.T) {
+	handler, database := setupTestHandlerWithRelations(t)
+	defer database.Close()
+
+	// Insert test data
+	database.Exec(`INSERT INTO countries (id, name, code) VALUES (1, 'Canada', 'CA'), (2, 'USA', 'US'), (3, 'Mexico', 'MX')`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Toronto', 2731571, 1)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('New York', 8336817, 2)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Mexico City', 8918653, 3)`)
+
+	r := chi.NewRouter()
+	r.Get("/rest/v1/{table}", handler.HandleSelect)
+
+	// Order cities by country name ascending
+	req := httptest.NewRequest("GET", "/rest/v1/cities?order=countries(name)", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(response) != 3 {
+		t.Fatalf("expected 3 cities, got %d", len(response))
+	}
+
+	// Order should be: Canada (Toronto), Mexico (Mexico City), USA (New York)
+	expectedOrder := []string{"Toronto", "Mexico City", "New York"}
+	for i, city := range response {
+		name := city["name"].(string)
+		if name != expectedOrder[i] {
+			t.Errorf("position %d: expected %s, got %s", i, expectedOrder[i], name)
+		}
+	}
+}
+
+func TestOrderByRelatedColumnDesc(t *testing.T) {
+	handler, database := setupTestHandlerWithRelations(t)
+	defer database.Close()
+
+	// Insert test data
+	database.Exec(`INSERT INTO countries (id, name, code) VALUES (1, 'Canada', 'CA'), (2, 'USA', 'US'), (3, 'Mexico', 'MX')`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Toronto', 2731571, 1)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('New York', 8336817, 2)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Mexico City', 8918653, 3)`)
+
+	r := chi.NewRouter()
+	r.Get("/rest/v1/{table}", handler.HandleSelect)
+
+	// Order cities by country name descending
+	req := httptest.NewRequest("GET", "/rest/v1/cities?order=countries(name).desc", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(response) != 3 {
+		t.Fatalf("expected 3 cities, got %d", len(response))
+	}
+
+	// Order should be: USA (New York), Mexico (Mexico City), Canada (Toronto)
+	expectedOrder := []string{"New York", "Mexico City", "Toronto"}
+	for i, city := range response {
+		name := city["name"].(string)
+		if name != expectedOrder[i] {
+			t.Errorf("position %d: expected %s, got %s", i, expectedOrder[i], name)
+		}
+	}
+}
+
+func TestFilterAndOrderOnRelatedTable(t *testing.T) {
+	handler, database := setupTestHandlerWithRelations(t)
+	defer database.Close()
+
+	// Insert test data
+	database.Exec(`INSERT INTO countries (id, name, code) VALUES (1, 'Canada', 'CA'), (2, 'USA', 'US'), (3, 'Mexico', 'MX')`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Toronto', 2731571, 1)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Vancouver', 631486, 1)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('New York', 8336817, 2)`)
+	database.Exec(`INSERT INTO cities (name, population, country_id) VALUES ('Mexico City', 8918653, 3)`)
+
+	r := chi.NewRouter()
+	r.Get("/rest/v1/{table}", handler.HandleSelect)
+
+	// Filter by population > 1M and order by country name
+	req := httptest.NewRequest("GET", "/rest/v1/cities?population=gt.1000000&order=countries(name)", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Cities with pop > 1M ordered by country: Toronto (Canada), Mexico City (Mexico), New York (USA)
+	if len(response) != 3 {
+		t.Fatalf("expected 3 cities, got %d", len(response))
+	}
+
+	expectedOrder := []string{"Toronto", "Mexico City", "New York"}
+	for i, city := range response {
+		name := city["name"].(string)
+		if name != expectedOrder[i] {
+			t.Errorf("position %d: expected %s, got %s", i, expectedOrder[i], name)
+		}
+	}
+}

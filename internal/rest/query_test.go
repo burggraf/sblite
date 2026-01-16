@@ -665,3 +665,254 @@ func TestParseMatchFilterBooleanValue(t *testing.T) {
 		t.Errorf("expected value 'true', got %q", filters[0].Value)
 	}
 }
+
+func TestParseFilterRelatedTable(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedTable string
+		expectedCol   string
+		expectedOp    string
+		expectedVal   string
+		wantErr       bool
+	}{
+		{
+			name:          "related table eq filter",
+			input:         "country.name=eq.Canada",
+			expectedTable: "country",
+			expectedCol:   "name",
+			expectedOp:    "eq",
+			expectedVal:   "Canada",
+		},
+		{
+			name:          "related table neq filter",
+			input:         "author.status=neq.banned",
+			expectedTable: "author",
+			expectedCol:   "status",
+			expectedOp:    "neq",
+			expectedVal:   "banned",
+		},
+		{
+			name:          "related table gt filter",
+			input:         "category.priority=gt.5",
+			expectedTable: "category",
+			expectedCol:   "priority",
+			expectedOp:    "gt",
+			expectedVal:   "5",
+		},
+		{
+			name:          "related table like filter",
+			input:         "company.name=like.*Tech*",
+			expectedTable: "company",
+			expectedCol:   "name",
+			expectedOp:    "like",
+			expectedVal:   "*Tech*",
+		},
+		{
+			name:          "related table in filter",
+			input:         "user.role=in.(admin,editor)",
+			expectedTable: "user",
+			expectedCol:   "role",
+			expectedOp:    "in",
+			expectedVal:   "(admin,editor)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter, err := ParseFilter(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if filter.RelatedTable != tt.expectedTable {
+				t.Errorf("expected RelatedTable %q, got %q", tt.expectedTable, filter.RelatedTable)
+			}
+			if filter.RelatedColumn != tt.expectedCol {
+				t.Errorf("expected RelatedColumn %q, got %q", tt.expectedCol, filter.RelatedColumn)
+			}
+			if filter.Operator != tt.expectedOp {
+				t.Errorf("expected Operator %q, got %q", tt.expectedOp, filter.Operator)
+			}
+			if filter.Value != tt.expectedVal {
+				t.Errorf("expected Value %q, got %q", tt.expectedVal, filter.Value)
+			}
+		})
+	}
+}
+
+func TestParseFilterRelatedTableIsRelated(t *testing.T) {
+	// Test IsRelatedFilter method
+	relatedFilter, _ := ParseFilter("country.name=eq.Canada")
+	if !relatedFilter.IsRelatedFilter() {
+		t.Error("expected IsRelatedFilter() to return true for related filter")
+	}
+
+	regularFilter, _ := ParseFilter("name=eq.Canada")
+	if regularFilter.IsRelatedFilter() {
+		t.Error("expected IsRelatedFilter() to return false for regular filter")
+	}
+}
+
+func TestFilterToRelatedSQL(t *testing.T) {
+	tests := []struct {
+		name        string
+		filter      Filter
+		expectedSQL string
+		expectedLen int // expected number of args
+	}{
+		{
+			name: "eq operator",
+			filter: Filter{
+				Column:        "country.name",
+				Operator:      "eq",
+				Value:         "Canada",
+				RelatedTable:  "country",
+				RelatedColumn: "name",
+			},
+			expectedSQL: `"name" = ?`,
+			expectedLen: 1,
+		},
+		{
+			name: "is null",
+			filter: Filter{
+				Column:        "user.deleted_at",
+				Operator:      "is",
+				Value:         "null",
+				RelatedTable:  "user",
+				RelatedColumn: "deleted_at",
+			},
+			expectedSQL: `"deleted_at" IS NULL`,
+			expectedLen: 0,
+		},
+		{
+			name: "like operator",
+			filter: Filter{
+				Column:        "company.name",
+				Operator:      "like",
+				Value:         "*Tech*",
+				RelatedTable:  "company",
+				RelatedColumn: "name",
+			},
+			expectedSQL: `"name" LIKE ?`,
+			expectedLen: 1,
+		},
+		{
+			name: "in operator",
+			filter: Filter{
+				Column:        "role.name",
+				Operator:      "in",
+				Value:         "(admin,editor)",
+				RelatedTable:  "role",
+				RelatedColumn: "name",
+			},
+			expectedSQL: `"name" IN (?, ?)`,
+			expectedLen: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sql, args := tt.filter.ToRelatedSQL()
+			if sql != tt.expectedSQL {
+				t.Errorf("expected SQL %q, got %q", tt.expectedSQL, sql)
+			}
+			if len(args) != tt.expectedLen {
+				t.Errorf("expected %d args, got %d", tt.expectedLen, len(args))
+			}
+		})
+	}
+}
+
+func TestParseOrderRelatedTable(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedTable string
+		expectedCol   string
+		expectedDesc  bool
+	}{
+		{
+			name:          "simple related order",
+			input:         "country(name)",
+			expectedTable: "country",
+			expectedCol:   "name",
+			expectedDesc:  false,
+		},
+		{
+			name:          "related order with desc",
+			input:         "country(name).desc",
+			expectedTable: "country",
+			expectedCol:   "name",
+			expectedDesc:  true,
+		},
+		{
+			name:          "related order with asc",
+			input:         "author(last_name).asc",
+			expectedTable: "author",
+			expectedCol:   "last_name",
+			expectedDesc:  false,
+		},
+		{
+			name:          "regular column (no relation)",
+			input:         "created_at.desc",
+			expectedTable: "",
+			expectedCol:   "created_at",
+			expectedDesc:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orders := ParseOrder(tt.input)
+			if len(orders) != 1 {
+				t.Fatalf("expected 1 order, got %d", len(orders))
+			}
+			order := orders[0]
+			if order.RelatedTable != tt.expectedTable {
+				t.Errorf("expected RelatedTable %q, got %q", tt.expectedTable, order.RelatedTable)
+			}
+			if order.Column != tt.expectedCol {
+				t.Errorf("expected Column %q, got %q", tt.expectedCol, order.Column)
+			}
+			if order.Desc != tt.expectedDesc {
+				t.Errorf("expected Desc %v, got %v", tt.expectedDesc, order.Desc)
+			}
+		})
+	}
+}
+
+func TestParseOrderMultipleWithRelated(t *testing.T) {
+	// Test parsing multiple order clauses including related
+	orders := ParseOrder("country(name).asc,created_at.desc")
+	if len(orders) != 2 {
+		t.Fatalf("expected 2 orders, got %d", len(orders))
+	}
+
+	// First: country(name).asc
+	if orders[0].RelatedTable != "country" {
+		t.Errorf("expected first RelatedTable 'country', got %q", orders[0].RelatedTable)
+	}
+	if orders[0].Column != "name" {
+		t.Errorf("expected first Column 'name', got %q", orders[0].Column)
+	}
+	if orders[0].Desc {
+		t.Error("expected first Desc to be false")
+	}
+
+	// Second: created_at.desc
+	if orders[1].RelatedTable != "" {
+		t.Errorf("expected second RelatedTable to be empty, got %q", orders[1].RelatedTable)
+	}
+	if orders[1].Column != "created_at" {
+		t.Errorf("expected second Column 'created_at', got %q", orders[1].Column)
+	}
+	if !orders[1].Desc {
+		t.Error("expected second Desc to be true")
+	}
+}

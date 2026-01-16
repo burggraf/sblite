@@ -235,11 +235,30 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	var results []map[string]any
 	var err error
 
-	// Use RelationQueryExecutor if relations are present
+	// Use RelationQueryExecutor if relations are present in SELECT
 	if parseErr == nil && parsedSelect.HasRelations() {
 		results, err = h.relExec.ExecuteWithRelations(q, parsedSelect)
 		if err != nil {
 			h.writeError(w, http.StatusInternalServerError, "query_error", err.Error())
+			return
+		}
+	} else if q.HasRelatedFilters() || q.HasRelatedOrdering() {
+		// Use BuildSelectQueryWithRelations for related filters/ordering
+		sqlStr, args, err := BuildSelectQueryWithRelations(q, h.relCache)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "relation_error", err.Error())
+			return
+		}
+		rows, err := h.db.Query(sqlStr, args...)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "query_error", err.Error())
+			return
+		}
+		defer rows.Close()
+
+		results, err = h.scanRows(rows)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "scan_error", err.Error())
 			return
 		}
 	} else {

@@ -8,9 +8,11 @@ import (
 )
 
 type Filter struct {
-	Column   string
-	Operator string
-	Value    string
+	Column        string
+	Operator      string
+	Value         string
+	RelatedTable  string // If filtering on related table (e.g., "country" in "country.name=eq.Canada")
+	RelatedColumn string // The column in the related table (e.g., "name" in "country.name=eq.Canada")
 }
 
 // LogicalFilter groups multiple filters with OR or AND logic
@@ -31,8 +33,10 @@ type Query struct {
 }
 
 type OrderBy struct {
-	Column string
-	Desc   bool
+	Column       string
+	Desc         bool
+	NullsFirst   bool   // NULLS FIRST option (not yet implemented but reserved)
+	RelatedTable string // If ordering on related table (e.g., "country" in "country(name)")
 }
 
 var validOperators = map[string]string{
@@ -70,6 +74,20 @@ func ParseFilter(input string) (Filter, error) {
 		return Filter{}, fmt.Errorf("unknown operator: %s", operator)
 	}
 
+	// Check for dotted column reference: "table.column" (e.g., "country.name")
+	// This indicates filtering on a related table
+	if dotIdx := strings.Index(column, "."); dotIdx != -1 {
+		relatedTable := column[:dotIdx]
+		relatedColumn := column[dotIdx+1:]
+		return Filter{
+			Column:        column, // Keep full column for reference
+			Operator:      operator,
+			Value:         value,
+			RelatedTable:  relatedTable,
+			RelatedColumn: relatedColumn,
+		}, nil
+	}
+
 	return Filter{
 		Column:   column,
 		Operator: operator,
@@ -78,6 +96,11 @@ func ParseFilter(input string) (Filter, error) {
 }
 
 func (f Filter) ToSQL() (string, []any) {
+	// Related table filters are handled separately via EXISTS subquery
+	if f.RelatedTable != "" {
+		return "", nil
+	}
+
 	quotedColumn := fmt.Sprintf("\"%s\"", f.Column)
 
 	switch f.Operator {
@@ -230,12 +253,24 @@ func ParseOrder(orderParam string) []OrderBy {
 	parts := strings.Split(orderParam, ",")
 	for _, part := range parts {
 		order := OrderBy{Column: part, Desc: false}
+
+		// Check for direction suffix first
 		if strings.HasSuffix(part, ".desc") {
 			order.Column = strings.TrimSuffix(part, ".desc")
 			order.Desc = true
 		} else if strings.HasSuffix(part, ".asc") {
 			order.Column = strings.TrimSuffix(part, ".asc")
 		}
+
+		// Check for relation(column) format: e.g., "country(name)" or "country(name).desc"
+		// Format: relation(column) or relation(column).asc or relation(column).desc
+		if openIdx := strings.Index(order.Column, "("); openIdx != -1 {
+			if closeIdx := strings.Index(order.Column, ")"); closeIdx > openIdx {
+				order.RelatedTable = order.Column[:openIdx]
+				order.Column = order.Column[openIdx+1 : closeIdx]
+			}
+		}
+
 		orders = append(orders, order)
 	}
 	return orders
@@ -361,4 +396,59 @@ func ParseMatchFilter(jsonValue string) ([]Filter, error) {
 		})
 	}
 	return filters, nil
+}
+
+// IsRelatedFilter returns true if this filter is on a related table
+func (f Filter) IsRelatedFilter() bool {
+	return f.RelatedTable != ""
+}
+
+// ToRelatedSQL generates the SQL condition for the related column
+// This is used inside EXISTS subqueries for related table filtering.
+// Returns the condition for the related table's column and arguments.
+func (f Filter) ToRelatedSQL() (string, []any) {
+	if f.RelatedTable == "" {
+		return "", nil
+	}
+
+	quotedColumn := fmt.Sprintf("\"%s\"", f.RelatedColumn)
+
+	switch f.Operator {
+	case "is":
+		if f.Value == "null" {
+			return fmt.Sprintf("%s IS NULL", quotedColumn), nil
+		}
+		if f.Value == "not.null" {
+			return fmt.Sprintf("%s IS NOT NULL", quotedColumn), nil
+		}
+		return fmt.Sprintf("%s IS ?", quotedColumn), []any{f.Value}
+
+	case "in":
+		values := parseInValues(f.Value)
+		if len(values) == 0 {
+			return "1 = 0", nil
+		}
+		placeholders := make([]string, len(values))
+		args := make([]any, len(values))
+		for i, v := range values {
+			placeholders[i] = "?"
+			args[i] = v
+		}
+		return fmt.Sprintf("%s IN (%s)", quotedColumn, strings.Join(placeholders, ", ")), args
+
+	case "like":
+		pattern := convertWildcards(f.Value)
+		return fmt.Sprintf("%s LIKE ?", quotedColumn), []any{pattern}
+
+	case "ilike":
+		pattern := convertWildcards(f.Value)
+		return fmt.Sprintf("LOWER(%s) LIKE LOWER(?)", quotedColumn), []any{pattern}
+
+	case "not":
+		return parseNotFilter(quotedColumn, f.Value)
+
+	default:
+		sqlOp := validOperators[f.Operator]
+		return fmt.Sprintf("%s %s ?", quotedColumn, sqlOp), []any{f.Value}
+	}
 }
