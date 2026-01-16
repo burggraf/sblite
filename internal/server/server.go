@@ -59,8 +59,9 @@ func (s *Server) setupRoutes() {
 		})
 	})
 
-	// REST routes
+	// REST routes (with optional auth for RLS)
 	s.router.Route("/rest/v1", func(r chi.Router) {
+		r.Use(s.optionalAuthMiddleware)
 		r.Get("/{table}", s.restHandler.HandleSelect)
 		r.Post("/{table}", s.restHandler.HandleInsert)
 		r.Patch("/{table}", s.restHandler.HandleUpdate)

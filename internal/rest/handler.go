@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/markb/sblite/internal/db"
 	"github.com/markb/sblite/internal/rls"
 )
@@ -24,28 +25,29 @@ func NewHandler(database *db.DB, enforcer *rls.Enforcer) *Handler {
 }
 
 // GetAuthContextFromRequest extracts auth context from request for RLS
+// The server middleware stores claims in context with string key "claims"
 func GetAuthContextFromRequest(r *http.Request) *rls.AuthContext {
-	claims := r.Context().Value("claims")
-	if claims == nil {
+	claimsValue := r.Context().Value("claims")
+	if claimsValue == nil {
 		return nil
 	}
 
-	claimsMap, ok := claims.(*map[string]any)
+	claims, ok := claimsValue.(*jwt.MapClaims)
 	if !ok {
 		return nil
 	}
 
 	ctx := &rls.AuthContext{
-		Claims: *claimsMap,
+		Claims: *claims,
 	}
 
-	if sub, ok := (*claimsMap)["sub"].(string); ok {
+	if sub, ok := (*claims)["sub"].(string); ok {
 		ctx.UserID = sub
 	}
-	if email, ok := (*claimsMap)["email"].(string); ok {
+	if email, ok := (*claims)["email"].(string); ok {
 		ctx.Email = email
 	}
-	if role, ok := (*claimsMap)["role"].(string); ok {
+	if role, ok := (*claims)["role"].(string); ok {
 		ctx.Role = role
 	}
 
@@ -223,6 +225,19 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	prefer := r.Header.Get("Prefer")
 	returnRepresentation := strings.Contains(prefer, "return=representation")
 
+	// Apply RLS
+	if h.enforcer != nil {
+		authCtx := GetAuthContextFromRequest(r)
+		rlsCondition, err := h.enforcer.GetUpdateConditions(q.Table, authCtx)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "rls_error", "Failed to apply RLS")
+			return
+		}
+		if rlsCondition != "" {
+			q.RLSCondition = rlsCondition
+		}
+	}
+
 	var data map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON body")
@@ -232,10 +247,10 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	// If returning representation, first get the IDs of rows to be updated
 	var affectedIDs []int64
 	if returnRepresentation {
-		affectedIDs = h.getMatchingIDs(q.Table, q.Filters)
+		affectedIDs = h.getMatchingIDsWithRLS(q)
 	}
 
-	sqlStr, args := BuildUpdateQuery(q.Table, data, q.Filters)
+	sqlStr, args := BuildUpdateQuery(q, data)
 	_, err := h.db.Exec(sqlStr, args...)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "update_error", err.Error())
@@ -263,6 +278,19 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	prefer := r.Header.Get("Prefer")
 	returnRepresentation := strings.Contains(prefer, "return=representation")
 
+	// Apply RLS
+	if h.enforcer != nil {
+		authCtx := GetAuthContextFromRequest(r)
+		rlsCondition, err := h.enforcer.GetDeleteConditions(q.Table, authCtx)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "rls_error", "Failed to apply RLS")
+			return
+		}
+		if rlsCondition != "" {
+			q.RLSCondition = rlsCondition
+		}
+	}
+
 	if len(q.Filters) == 0 {
 		h.writeError(w, http.StatusBadRequest, "missing_filter", "DELETE requires at least one filter")
 		return
@@ -271,10 +299,10 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	// If returning representation, first get the data of rows to be deleted
 	var deletedRows []map[string]any
 	if returnRepresentation {
-		deletedRows = h.selectMatching(q.Table, q.Select, q.Filters)
+		deletedRows = h.selectMatchingWithRLS(q)
 	}
 
-	sqlStr, args := BuildDeleteQuery(q.Table, q.Filters)
+	sqlStr, args := BuildDeleteQuery(q)
 	_, err := h.db.Exec(sqlStr, args...)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "delete_error", err.Error())
@@ -385,6 +413,42 @@ func (h *Handler) getMatchingIDs(table string, filters []Filter) []int64 {
 func (h *Handler) selectMatching(table string, selectCols []string, filters []Filter) []map[string]any {
 	q := Query{Table: table, Select: selectCols, Filters: filters}
 	sqlStr, args := BuildSelectQuery(q)
+
+	rows, err := h.db.Query(sqlStr, args...)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+
+	results, _ := h.scanRows(rows)
+	return results
+}
+
+// getMatchingIDsWithRLS returns IDs of rows matching the query (including RLS condition)
+func (h *Handler) getMatchingIDsWithRLS(q Query) []int64 {
+	selectQ := Query{Table: q.Table, Select: []string{"id"}, Filters: q.Filters, RLSCondition: q.RLSCondition}
+	sqlStr, args := BuildSelectQuery(selectQ)
+
+	rows, err := h.db.Query(sqlStr, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// selectMatchingWithRLS retrieves rows matching the query (including RLS condition)
+func (h *Handler) selectMatchingWithRLS(q Query) []map[string]any {
+	selectQ := Query{Table: q.Table, Select: q.Select, Filters: q.Filters, RLSCondition: q.RLSCondition}
+	sqlStr, args := BuildSelectQuery(selectQ)
 
 	rows, err := h.db.Query(sqlStr, args...)
 	if err != nil {

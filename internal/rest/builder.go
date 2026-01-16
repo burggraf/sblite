@@ -99,7 +99,7 @@ func BuildInsertQuery(table string, data map[string]any) (string, []any) {
 	return sql, args
 }
 
-func BuildUpdateQuery(table string, data map[string]any, filters []Filter) (string, []any) {
+func BuildUpdateQuery(q Query, data map[string]any) (string, []any) {
 	// Sort keys for deterministic output
 	keys := make([]string, 0, len(data))
 	for k := range data {
@@ -114,36 +114,63 @@ func BuildUpdateQuery(table string, data map[string]any, filters []Filter) (stri
 		args = append(args, data[k])
 	}
 
-	sql := fmt.Sprintf(`UPDATE "%s" SET %s`, table, strings.Join(setClauses, ", "))
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`UPDATE "%s" SET %s`, q.Table, strings.Join(setClauses, ", ")))
 
-	if len(filters) > 0 {
+	// WHERE clause from filters
+	if len(q.Filters) > 0 {
+		sb.WriteString(" WHERE ")
 		var conditions []string
-		for _, f := range filters {
+		for _, f := range q.Filters {
 			condSQL, filterArgs := f.ToSQL()
 			conditions = append(conditions, condSQL)
 			args = append(args, filterArgs...)
 		}
-		sql += " WHERE " + strings.Join(conditions, " AND ")
+		sb.WriteString(strings.Join(conditions, " AND "))
 	}
 
-	return sql, args
+	// RLS condition (added after filters)
+	if q.RLSCondition != "" {
+		if len(q.Filters) > 0 {
+			sb.WriteString(" AND ")
+		} else {
+			sb.WriteString(" WHERE ")
+		}
+		sb.WriteString(q.RLSCondition)
+	}
+
+	return sb.String(), args
 }
 
-func BuildDeleteQuery(table string, filters []Filter) (string, []any) {
+func BuildDeleteQuery(q Query) (string, []any) {
 	var args []any
-	sql := fmt.Sprintf(`DELETE FROM "%s"`, table)
+	var sb strings.Builder
 
-	if len(filters) > 0 {
+	sb.WriteString(fmt.Sprintf(`DELETE FROM "%s"`, q.Table))
+
+	// WHERE clause from filters
+	if len(q.Filters) > 0 {
+		sb.WriteString(" WHERE ")
 		var conditions []string
-		for _, f := range filters {
+		for _, f := range q.Filters {
 			condSQL, filterArgs := f.ToSQL()
 			conditions = append(conditions, condSQL)
 			args = append(args, filterArgs...)
 		}
-		sql += " WHERE " + strings.Join(conditions, " AND ")
+		sb.WriteString(strings.Join(conditions, " AND "))
 	}
 
-	return sql, args
+	// RLS condition (added after filters)
+	if q.RLSCondition != "" {
+		if len(q.Filters) > 0 {
+			sb.WriteString(" AND ")
+		} else {
+			sb.WriteString(" WHERE ")
+		}
+		sb.WriteString(q.RLSCondition)
+	}
+
+	return sb.String(), args
 }
 
 // BuildUpsertQuery builds an INSERT ... ON CONFLICT DO UPDATE query
