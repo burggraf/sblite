@@ -62,8 +62,12 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	q := h.parseQueryParams(r)
 
-	sql, args := BuildSelectQuery(q)
-	rows, err := h.db.Query(sql, args...)
+	// Check for single() modifier via Accept header
+	accept := r.Header.Get("Accept")
+	wantSingle := strings.Contains(accept, "application/vnd.pgrst.object+json")
+
+	sqlStr, args := BuildSelectQuery(q)
+	rows, err := h.db.Query(sqlStr, args...)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "query_error", err.Error())
 		return
@@ -77,41 +81,94 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+
+	// Handle single() modifier
+	if wantSingle {
+		if len(results) == 0 {
+			h.writeError(w, http.StatusNotAcceptable, "PGRST116", "JSON object requested, multiple (or no) rows returned")
+			return
+		}
+		if len(results) > 1 {
+			h.writeError(w, http.StatusNotAcceptable, "PGRST116", "JSON object requested, multiple (or no) rows returned")
+			return
+		}
+		json.NewEncoder(w).Encode(results[0])
+		return
+	}
+
 	json.NewEncoder(w).Encode(results)
 }
 
 func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
+	selectCols := ParseSelect(r.URL.Query().Get("select"))
+	prefer := r.Header.Get("Prefer")
+	returnRepresentation := strings.Contains(prefer, "return=representation")
+	isUpsert := strings.Contains(prefer, "resolution=merge-duplicates")
 
-	var data map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+	// Try to decode as array first (bulk insert), then as single object
+	var records []map[string]any
+	decoder := json.NewDecoder(r.Body)
+
+	// Peek at first character to determine if array or object
+	var rawData json.RawMessage
+	if err := decoder.Decode(&rawData); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON body")
 		return
 	}
 
-	sql, args := BuildInsertQuery(table, data)
-	result, err := h.db.Exec(sql, args...)
-	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "insert_error", err.Error())
-		return
+	// Try array first
+	if err := json.Unmarshal(rawData, &records); err != nil {
+		// Try single object
+		var single map[string]any
+		if err := json.Unmarshal(rawData, &single); err != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON body")
+			return
+		}
+		records = []map[string]any{single}
+	}
+
+	var insertedIDs []int64
+	for _, data := range records {
+		var sqlStr string
+		var args []any
+		if isUpsert {
+			sqlStr, args = BuildUpsertQuery(table, data)
+		} else {
+			sqlStr, args = BuildInsertQuery(table, data)
+		}
+		result, err := h.db.Exec(sqlStr, args...)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "insert_error", err.Error())
+			return
+		}
+		if returnRepresentation {
+			// For upsert, we may not get a new ID if it was an update
+			// Try to get the ID from the data itself
+			if id, ok := data["id"]; ok {
+				switch v := id.(type) {
+				case float64:
+					insertedIDs = append(insertedIDs, int64(v))
+				case int64:
+					insertedIDs = append(insertedIDs, v)
+				case int:
+					insertedIDs = append(insertedIDs, int64(v))
+				}
+			} else {
+				lastID, _ := result.LastInsertId()
+				insertedIDs = append(insertedIDs, lastID)
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
 	// Return representation if requested
-	prefer := r.Header.Get("Prefer")
-	if strings.Contains(prefer, "return=representation") {
-		lastID, _ := result.LastInsertId()
-		q := Query{Table: table, Select: []string{"*"}, Filters: []Filter{{Column: "id", Operator: "eq", Value: fmt.Sprintf("%d", lastID)}}}
-		selectSQL, selectArgs := BuildSelectQuery(q)
-		rows, _ := h.db.Query(selectSQL, selectArgs...)
-		defer rows.Close()
-		results, _ := h.scanRows(rows)
-		if len(results) > 0 {
-			json.NewEncoder(w).Encode(results[0])
-			return
-		}
+	if returnRepresentation && len(insertedIDs) > 0 {
+		results := h.selectByIDs(table, selectCols, insertedIDs)
+		json.NewEncoder(w).Encode(results)
+		return
 	}
 
 	json.NewEncoder(w).Encode(map[string]any{"inserted": true})
@@ -119,6 +176,8 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	q := h.parseQueryParams(r)
+	prefer := r.Header.Get("Prefer")
+	returnRepresentation := strings.Contains(prefer, "return=representation")
 
 	var data map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
@@ -126,29 +185,62 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sql, args := BuildUpdateQuery(q.Table, data, q.Filters)
-	_, err := h.db.Exec(sql, args...)
+	// If returning representation, first get the IDs of rows to be updated
+	var affectedIDs []int64
+	if returnRepresentation {
+		affectedIDs = h.getMatchingIDs(q.Table, q.Filters)
+	}
+
+	sqlStr, args := BuildUpdateQuery(q.Table, data, q.Filters)
+	_, err := h.db.Exec(sqlStr, args...)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "update_error", err.Error())
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+
+	// Return representation if requested
+	if returnRepresentation {
+		if len(affectedIDs) > 0 {
+			results := h.selectByIDs(q.Table, q.Select, affectedIDs)
+			json.NewEncoder(w).Encode(results)
+		} else {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		}
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]any{"updated": true})
 }
 
 func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	q := h.parseQueryParams(r)
+	prefer := r.Header.Get("Prefer")
+	returnRepresentation := strings.Contains(prefer, "return=representation")
 
 	if len(q.Filters) == 0 {
 		h.writeError(w, http.StatusBadRequest, "missing_filter", "DELETE requires at least one filter")
 		return
 	}
 
-	sql, args := BuildDeleteQuery(q.Table, q.Filters)
-	_, err := h.db.Exec(sql, args...)
+	// If returning representation, first get the data of rows to be deleted
+	var deletedRows []map[string]any
+	if returnRepresentation {
+		deletedRows = h.selectMatching(q.Table, q.Select, q.Filters)
+	}
+
+	sqlStr, args := BuildDeleteQuery(q.Table, q.Filters)
+	_, err := h.db.Exec(sqlStr, args...)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "delete_error", err.Error())
+		return
+	}
+
+	// Return representation if requested
+	if returnRepresentation {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(deletedRows)
 		return
 	}
 
@@ -194,4 +286,68 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, code, message st
 		"error":   code,
 		"message": message,
 	})
+}
+
+// selectByIDs retrieves rows by their IDs
+func (h *Handler) selectByIDs(table string, selectCols []string, ids []int64) []map[string]any {
+	if len(ids) == 0 {
+		return []map[string]any{}
+	}
+
+	// Build IN clause for IDs
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	q := Query{Table: table, Select: selectCols}
+	sqlStr, _ := BuildSelectQuery(q)
+	sqlStr += fmt.Sprintf(" WHERE \"id\" IN (%s)", strings.Join(placeholders, ", "))
+
+	rows, err := h.db.Query(sqlStr, args...)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+
+	results, _ := h.scanRows(rows)
+	return results
+}
+
+// getMatchingIDs returns IDs of rows matching the filters
+func (h *Handler) getMatchingIDs(table string, filters []Filter) []int64 {
+	q := Query{Table: table, Select: []string{"id"}, Filters: filters}
+	sqlStr, args := BuildSelectQuery(q)
+
+	rows, err := h.db.Query(sqlStr, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// selectMatching retrieves rows matching the filters
+func (h *Handler) selectMatching(table string, selectCols []string, filters []Filter) []map[string]any {
+	q := Query{Table: table, Select: selectCols, Filters: filters}
+	sqlStr, args := BuildSelectQuery(q)
+
+	rows, err := h.db.Query(sqlStr, args...)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+
+	results, _ := h.scanRows(rows)
+	return results
 }

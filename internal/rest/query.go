@@ -27,13 +27,16 @@ type OrderBy struct {
 }
 
 var validOperators = map[string]string{
-	"eq":  "=",
-	"neq": "!=",
-	"gt":  ">",
-	"gte": ">=",
-	"lt":  "<",
-	"lte": "<=",
-	"is":  "IS",
+	"eq":    "=",
+	"neq":   "!=",
+	"gt":    ">",
+	"gte":   ">=",
+	"lt":    "<",
+	"lte":   "<=",
+	"is":    "IS",
+	"in":    "IN",
+	"like":  "LIKE",
+	"ilike": "ILIKE",
 }
 
 func ParseFilter(input string) (Filter, error) {
@@ -76,10 +79,65 @@ func (f Filter) ToSQL() (string, []any) {
 			return fmt.Sprintf("%s IS NOT NULL", quotedColumn), nil
 		}
 		return fmt.Sprintf("%s IS ?", quotedColumn), []any{f.Value}
+
+	case "in":
+		// Parse value format: (val1,val2,val3)
+		values := parseInValues(f.Value)
+		if len(values) == 0 {
+			// Empty IN clause - return a condition that's always false
+			return "1 = 0", nil
+		}
+		placeholders := make([]string, len(values))
+		args := make([]any, len(values))
+		for i, v := range values {
+			placeholders[i] = "?"
+			args[i] = v
+		}
+		return fmt.Sprintf("%s IN (%s)", quotedColumn, strings.Join(placeholders, ", ")), args
+
+	case "like":
+		// Convert PostgREST wildcards (*) to SQL wildcards (%)
+		pattern := convertWildcards(f.Value)
+		return fmt.Sprintf("%s LIKE ?", quotedColumn), []any{pattern}
+
+	case "ilike":
+		// Case-insensitive LIKE for SQLite using LOWER()
+		pattern := convertWildcards(f.Value)
+		return fmt.Sprintf("LOWER(%s) LIKE LOWER(?)", quotedColumn), []any{pattern}
+
 	default:
 		sqlOp := validOperators[f.Operator]
 		return fmt.Sprintf("%s %s ?", quotedColumn, sqlOp), []any{f.Value}
 	}
+}
+
+// parseInValues parses "(val1,val2,val3)" format into slice of values
+func parseInValues(value string) []string {
+	// Remove surrounding parentheses
+	value = strings.TrimPrefix(value, "(")
+	value = strings.TrimSuffix(value, ")")
+
+	if value == "" {
+		return nil
+	}
+
+	// Split by comma, handling potential whitespace
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+// convertWildcards converts PostgREST wildcards (*) to SQL wildcards (%)
+func convertWildcards(pattern string) string {
+	// PostgREST uses * as wildcard, SQL uses %
+	// But supabase-js client sends % directly, so handle both
+	return strings.ReplaceAll(pattern, "*", "%")
 }
 
 func ParseSelect(selectParam string) []string {

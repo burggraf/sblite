@@ -135,3 +135,39 @@ func BuildDeleteQuery(table string, filters []Filter) (string, []any) {
 
 	return sql, args
 }
+
+// BuildUpsertQuery builds an INSERT ... ON CONFLICT DO UPDATE query
+func BuildUpsertQuery(table string, data map[string]any) (string, []any) {
+	// Sort keys for deterministic output
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	quotedCols := make([]string, len(keys))
+	placeholders := make([]string, len(keys))
+	updateClauses := make([]string, 0, len(keys))
+	args := make([]any, len(keys))
+
+	for i, k := range keys {
+		quotedCols[i] = fmt.Sprintf("\"%s\"", k)
+		placeholders[i] = "?"
+		args[i] = data[k]
+		// Don't update the id column
+		if k != "id" {
+			updateClauses = append(updateClauses, fmt.Sprintf("\"%s\" = excluded.\"%s\"", k, k))
+		}
+	}
+
+	// Default to id as conflict column
+	sql := fmt.Sprintf(
+		`INSERT INTO "%s" (%s) VALUES (%s) ON CONFLICT ("id") DO UPDATE SET %s`,
+		table,
+		strings.Join(quotedCols, ", "),
+		strings.Join(placeholders, ", "),
+		strings.Join(updateClauses, ", "),
+	)
+
+	return sql, args
+}
