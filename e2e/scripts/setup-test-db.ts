@@ -8,6 +8,10 @@
 import { execSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 const DB_PATH = process.env.SBLITE_DB_PATH || path.join(__dirname, '../../test.db')
 const SBLITE_BIN = path.join(__dirname, '../../sblite')
@@ -144,6 +148,13 @@ CREATE TABLE IF NOT EXISTS texts (
   content TEXT NOT NULL
 );
 
+-- RLS test table (for Row Level Security tests)
+CREATE TABLE IF NOT EXISTS rls_test (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT,
+  data TEXT
+);
+
 -- Insert test data
 INSERT OR REPLACE INTO characters (id, name, homeworld) VALUES
   (1, 'Luke', 'Tatooine'),
@@ -233,8 +244,20 @@ try {
   fs.unlinkSync(sqlFile)
 }
 
+// Add RLS policy for rls_test table
+console.log('   Adding RLS policies...')
+try {
+  execSync(`./sblite policy add --table rls_test --name user_isolation --using "user_id = auth.uid()" --check "user_id = auth.uid()" --db ${DB_PATH}`, {
+    cwd: path.join(__dirname, '../..'),
+    stdio: 'pipe',
+  })
+} catch (e) {
+  // Policy might already exist or command might fail
+  console.log('   Note: RLS policy may already exist or could not be added')
+}
+
 console.log(`
-📋 Test tables created:
+Test tables created:
    - characters (5 rows)
    - countries (3 rows)
    - orchestral_sections (3 rows)
@@ -249,6 +272,7 @@ console.log(`
    - teams (2 rows)
    - user_teams (3 rows)
    - texts (3 rows)
+   - rls_test (0 rows, with RLS policy)
 
-🚀 Ready to run tests!
+Ready to run tests!
 `)
