@@ -9,12 +9,14 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/rest"
 )
 
 type Server struct {
 	db          *db.DB
 	router      *chi.Mux
 	authService *auth.Service
+	restHandler *rest.Handler
 }
 
 func New(database *db.DB, jwtSecret string) *Server {
@@ -22,6 +24,7 @@ func New(database *db.DB, jwtSecret string) *Server {
 		db:          database,
 		router:      chi.NewRouter(),
 		authService: auth.NewService(database, jwtSecret),
+		restHandler: rest.NewHandler(database),
 	}
 	s.setupRoutes()
 	return s
@@ -46,6 +49,14 @@ func (s *Server) setupRoutes() {
 			r.Put("/user", s.handleUpdateUser)
 			r.Post("/logout", s.handleLogout)
 		})
+	})
+
+	// REST routes
+	s.router.Route("/rest/v1", func(r chi.Router) {
+		r.Get("/{table}", s.restHandler.HandleSelect)
+		r.Post("/{table}", s.restHandler.HandleInsert)
+		r.Patch("/{table}", s.restHandler.HandleUpdate)
+		r.Delete("/{table}", s.restHandler.HandleDelete)
 	})
 }
 

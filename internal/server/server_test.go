@@ -36,3 +36,25 @@ func TestHealthEndpoint(t *testing.T) {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
 }
+
+func TestRESTSelect(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create test table
+	srv.db.Exec(`
+		CREATE TABLE IF NOT EXISTS todos (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			title TEXT NOT NULL,
+			completed INTEGER DEFAULT 0
+		)
+	`)
+	srv.db.Exec(`INSERT INTO todos (title, completed) VALUES ('Test', 0)`)
+
+	req := httptest.NewRequest("GET", "/rest/v1/todos", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
