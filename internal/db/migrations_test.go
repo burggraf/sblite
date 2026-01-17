@@ -168,3 +168,26 @@ func TestSchemaMigrationsTableCreated(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardTableCreated(t *testing.T) {
+	path := t.TempDir() + "/test.db"
+	database, err := New(path)
+	if err != nil {
+		t.Fatalf("failed to create db: %v", err)
+	}
+	defer database.Close()
+
+	if err := database.RunMigrations(); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+
+	// Verify _dashboard table exists
+	var count int
+	err = database.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_dashboard'").Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to query for _dashboard table: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected _dashboard table to exist")
+	}
+}
