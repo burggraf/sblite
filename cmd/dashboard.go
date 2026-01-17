@@ -113,6 +113,9 @@ var dashboardResetPasswordCmd = &cobra.Command{
 	},
 }
 
+// stdinReader is reused for non-terminal input to avoid losing buffered data
+var stdinReader *bufio.Reader
+
 func promptPassword(prompt string) (string, error) {
 	fmt.Print(prompt)
 
@@ -127,8 +130,11 @@ func promptPassword(prompt string) (string, error) {
 	}
 
 	// Fallback for non-terminal (e.g., piped input)
-	reader := bufio.NewReader(os.Stdin)
-	password, err := reader.ReadString('\n')
+	// Reuse reader to avoid losing buffered data
+	if stdinReader == nil {
+		stdinReader = bufio.NewReader(os.Stdin)
+	}
+	password, err := stdinReader.ReadString('\n')
 	if err != nil {
 		return "", err
 	}
