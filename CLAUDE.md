@@ -38,6 +38,12 @@ sblite/
 │   │   ├── handler.go        # HTTP handlers for CRUD
 │   │   ├── query.go          # Query parsing (filters, modifiers)
 │   │   └── builder.go        # SQL query building
+│   ├── log/                  # Logging system
+│   │   ├── logger.go         # Config, initialization
+│   │   ├── console.go        # Console handler
+│   │   ├── file.go           # File handler with rotation
+│   │   ├── database.go       # SQLite handler
+│   │   └── middleware.go     # HTTP request logging
 │   └── server/               # HTTP server
 │       ├── server.go         # Chi router setup, route registration
 │       ├── auth_handlers.go  # /auth/v1/* endpoints
@@ -82,6 +88,33 @@ npm test         # Run all tests (server must be running)
 | `SBLITE_HOST` | `0.0.0.0` | Server bind address |
 | `SBLITE_PORT` | `8080` | Server port |
 | `SBLITE_DB_PATH` | `./data.db` | SQLite database path |
+
+### Logging Configuration
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `--log-mode` | `SBLITE_LOG_MODE` | `console` | Output: console, file, database |
+| `--log-level` | `SBLITE_LOG_LEVEL` | `info` | Level: debug, info, warn, error |
+| `--log-format` | `SBLITE_LOG_FORMAT` | `text` | Format: text, json |
+| `--log-file` | `SBLITE_LOG_FILE` | `sblite.log` | Log file path |
+| `--log-db` | `SBLITE_LOG_DB` | `log.db` | Log database path |
+| `--log-max-size` | `SBLITE_LOG_MAX_SIZE` | `100` | Max file size (MB) |
+| `--log-max-age` | `SBLITE_LOG_MAX_AGE` | `7` | Retention days |
+| `--log-max-backups` | `SBLITE_LOG_MAX_BACKUPS` | `3` | Backup files to keep |
+| `--log-fields` | `SBLITE_LOG_FIELDS` | `` | DB fields (comma-separated) |
+
+**Example usage:**
+```bash
+# JSON console logging
+./sblite serve --log-format=json
+
+# File logging with rotation
+./sblite serve --log-mode=file --log-file=/var/log/sblite.log
+
+# Database logging with full context
+./sblite serve --log-mode=database --log-db=/var/log/sblite-log.db \
+  --log-fields=source,request_id,user_id,extra
+```
 
 ## API Endpoints
 
@@ -172,6 +205,7 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Query filters (eq, neq, gt, gte, lt, lte, like, ilike, is, in)
 - Query modifiers (select, order, limit, offset)
 - single() and maybeSingle() response modifiers
+- Configurable logging (console, file, database backends)
 
 ### Planned
 - Row Level Security (RLS) via query rewriting
