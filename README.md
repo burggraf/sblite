@@ -24,7 +24,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | Magic link authentication | :white_check_mark: |
 | User invitations | :white_check_mark: |
 | Configurable logging (console/file/database) | :white_check_mark: |
-| Row Level Security | :construction: Planned |
+| Row Level Security | :white_check_mark: |
 | Realtime subscriptions | :construction: Planned |
 | File storage | :construction: Planned |
 
