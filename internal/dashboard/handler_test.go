@@ -317,3 +317,37 @@ func TestHandlerListTables(t *testing.T) {
 	require.Len(t, tables, 1)
 	require.Equal(t, "test_items", tables[0]["name"])
 }
+
+func TestHandlerGetTableSchema(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	// Create test table with columns
+	_, err := h.db.Exec(`CREATE TABLE products (id TEXT PRIMARY KEY, name TEXT NOT NULL, price INTEGER)`)
+	require.NoError(t, err)
+	_, err = h.db.Exec(`INSERT INTO _columns (table_name, column_name, pg_type, is_nullable, is_primary) VALUES
+		('products', 'id', 'uuid', false, true),
+		('products', 'name', 'text', false, false),
+		('products', 'price', 'integer', true, false)`)
+	require.NoError(t, err)
+
+	token := setupTestSession(t, h)
+
+	req := httptest.NewRequest("GET", "/api/tables/products", nil)
+	req.AddCookie(&http.Cookie{Name: "_sblite_session", Value: token})
+	w := httptest.NewRecorder()
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var schema map[string]interface{}
+	err = json.Unmarshal(w.Body.Bytes(), &schema)
+	require.NoError(t, err)
+	require.Equal(t, "products", schema["name"])
+
+	columns := schema["columns"].([]interface{})
+	require.Len(t, columns, 3)
+}

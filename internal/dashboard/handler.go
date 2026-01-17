@@ -48,6 +48,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Route("/tables", func(r chi.Router) {
 			r.Use(h.requireAuth)
 			r.Get("/", h.handleListTables)
+			r.Get("/{name}", h.handleGetTableSchema)
 		})
 	})
 
@@ -244,4 +245,57 @@ func (h *Handler) handleListTables(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tables)
+}
+
+func (h *Handler) handleGetTableSchema(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	if tableName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
+		return
+	}
+
+	rows, err := h.db.Query(`SELECT column_name, pg_type, is_nullable, default_value, is_primary
+		FROM _columns WHERE table_name = ? ORDER BY column_name`, tableName)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to get schema"})
+		return
+	}
+	defer rows.Close()
+
+	var columns []map[string]interface{}
+	for rows.Next() {
+		var name, pgType string
+		var nullable, primary bool
+		var defaultVal sql.NullString
+		if err := rows.Scan(&name, &pgType, &nullable, &defaultVal, &primary); err != nil {
+			continue
+		}
+		col := map[string]interface{}{
+			"name":     name,
+			"type":     pgType,
+			"nullable": nullable,
+			"primary":  primary,
+		}
+		if defaultVal.Valid {
+			col["default"] = defaultVal.String
+		}
+		columns = append(columns, col)
+	}
+
+	if len(columns) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table not found"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"name":    tableName,
+		"columns": columns,
+	})
 }
