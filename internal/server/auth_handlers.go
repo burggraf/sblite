@@ -3,7 +3,7 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -457,7 +457,7 @@ func (s *Server) handleMagicLink(w http.ResponseWriter, r *http.Request) {
 	// Send magic link email
 	if err := s.emailService.SendMagicLink(r.Context(), req.Email, token); err != nil {
 		// Log error but don't expose to user
-		fmt.Printf("Failed to send magic link email: %v\n", err)
+		slog.Error("failed to send magic link email", "error", err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -504,7 +504,7 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 
 	// Send invite email
 	if err := s.emailService.SendInvite(r.Context(), req.Email, token); err != nil {
-		fmt.Printf("Failed to send invite email: %v\n", err)
+		slog.Error("failed to send invite email", "error", err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

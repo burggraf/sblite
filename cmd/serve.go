@@ -32,7 +32,7 @@ var serveCmd = &cobra.Command{
 
 		if jwtSecret == "" {
 			jwtSecret = "super-secret-jwt-key-please-change-in-production"
-			fmt.Println("Warning: Using default JWT secret. Set SBLITE_JWT_SECRET in production.")
+			log.Warn("using default JWT secret, set SBLITE_JWT_SECRET in production")
 		}
 
 		// Check if database exists
@@ -56,12 +56,14 @@ var serveCmd = &cobra.Command{
 
 		srv := server.New(database, jwtSecret, mailConfig)
 		addr := fmt.Sprintf("%s:%d", host, port)
-		fmt.Printf("Starting Supabase Lite on %s\n", addr)
-		fmt.Printf("  Auth API: http://%s/auth/v1\n", addr)
-		fmt.Printf("  REST API: http://%s/rest/v1\n", addr)
-		fmt.Printf("  Mail Mode: %s\n", mailConfig.Mode)
+		log.Info("starting server",
+			"addr", addr,
+			"auth_api", "http://"+addr+"/auth/v1",
+			"rest_api", "http://"+addr+"/rest/v1",
+			"mail_mode", mailConfig.Mode,
+		)
 		if mailConfig.Mode == mail.ModeCatch {
-			fmt.Printf("  Mail UI: http://%s/mail\n", addr)
+			log.Info("mail UI available", "url", "http://"+addr+"/mail")
 		}
 
 		return srv.ListenAndServe(addr)
