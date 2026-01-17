@@ -27,11 +27,11 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Auth - User | 12 | 1 | 6 | 5 |
 | Auth - State Change | 11 | 2 | 4 | 5 |
 | Auth - Password Reset | 6 | 0 | 0 | 6 |
-| Email - Mail API | 10 | 10 | 0 | 0 |
-| Email - Flows | 12 | 12 | 0 | 0 |
-| Email - Verification | 11 | 11 | 0 | 0 |
+| Email - Mail API | 13 | 13 | 0 | 0 |
+| Email - Flows | 11 | 8 | 0 | 3 |
+| Email - Verification | 11 | 9 | 0 | 2 |
 | Email - SMTP | 4 | 0 | 0 | 4 |
-| **TOTAL** | **210** | **133** | **19** | **58** |
+| **TOTAL** | **212** | **126** | **19** | **67** |
 
 *Last tested: 2026-01-16*
 
