@@ -3,7 +3,6 @@ package log
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -133,11 +132,4 @@ func With(args ...any) *slog.Logger {
 // Log logs at the given level.
 func Log(ctx context.Context, level slog.Level, msg string, args ...any) {
 	Logger().Log(ctx, level, msg, args...)
-}
-
-// Stub handlers - will be replaced in subsequent tasks
-
-// NewDBHandler creates a database handler (stub - not implemented).
-func NewDBHandler(cfg *Config, level slog.Level) (slog.Handler, error) {
-	return nil, fmt.Errorf("database handler not implemented")
 }
