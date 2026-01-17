@@ -122,3 +122,49 @@ func TestColumnsTableCreated(t *testing.T) {
 		}
 	}
 }
+
+func TestSchemaMigrationsTableCreated(t *testing.T) {
+	path := t.TempDir() + "/test.db"
+	database, err := New(path)
+	if err != nil {
+		t.Fatalf("failed to create db: %v", err)
+	}
+	defer database.Close()
+
+	if err := database.RunMigrations(); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+
+	// Verify _schema_migrations table exists
+	var tableName string
+	err = database.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='_schema_migrations'").Scan(&tableName)
+	if err != nil {
+		t.Fatalf("_schema_migrations table not found: %v", err)
+	}
+
+	// Verify table has correct columns
+	rows, err := database.Query("PRAGMA table_info(_schema_migrations)")
+	if err != nil {
+		t.Fatalf("failed to get table info: %v", err)
+	}
+	defer rows.Close()
+
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("failed to scan row: %v", err)
+		}
+		columns[name] = true
+	}
+
+	expected := []string{"version", "name", "applied_at"}
+	for _, col := range expected {
+		if !columns[col] {
+			t.Errorf("expected column %s not found", col)
+		}
+	}
+}

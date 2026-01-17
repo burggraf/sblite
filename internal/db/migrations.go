@@ -130,6 +130,14 @@ CREATE TABLE IF NOT EXISTS _columns (
 CREATE INDEX IF NOT EXISTS idx_columns_table ON _columns(table_name);
 `
 
+const schemaMigrationsSchema = `
+CREATE TABLE IF NOT EXISTS _schema_migrations (
+    version TEXT PRIMARY KEY,
+    name TEXT,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`
+
 const defaultTemplates = `
 INSERT OR IGNORE INTO auth_email_templates (id, type, subject, body_html, body_text, updated_at) VALUES
 ('tpl-confirmation', 'confirmation', 'Confirm your email',
@@ -207,6 +215,11 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(columnsSchema)
 	if err != nil {
 		return fmt.Errorf("failed to run columns schema migration: %w", err)
+	}
+
+	_, err = db.Exec(schemaMigrationsSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run schema migrations table creation: %w", err)
 	}
 
 	return nil
