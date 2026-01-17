@@ -20,6 +20,10 @@ const App = {
             editingCell: null,
             loading: false,
         },
+        modal: {
+            type: null,  // 'createTable', 'addRow', 'editRow', 'schema', 'addColumn'
+            data: {}
+        },
     },
 
     async init() {
@@ -293,6 +297,7 @@ const App = {
                     ${this.renderContent()}
                 </main>
             </div>
+            ${this.renderModals()}
         `;
     },
 
@@ -552,11 +557,137 @@ const App = {
         }
     },
 
-    // Placeholder methods for modals (to be implemented in later tasks)
+    // Modal methods
     showCreateTableModal() {
-        alert('Create table modal coming soon');
+        this.state.modal = {
+            type: 'createTable',
+            data: {
+                name: '',
+                columns: [{ name: 'id', type: 'uuid', primary: true, nullable: false }]
+            }
+        };
+        this.render();
     },
 
+    closeModal() {
+        this.state.modal = { type: null, data: {} };
+        this.render();
+    },
+
+    updateModalData(field, value) {
+        this.state.modal.data[field] = value;
+        this.render();
+    },
+
+    addColumnToModal() {
+        this.state.modal.data.columns.push({ name: '', type: 'text', nullable: true, primary: false });
+        this.render();
+    },
+
+    removeColumnFromModal(index) {
+        this.state.modal.data.columns.splice(index, 1);
+        this.render();
+    },
+
+    updateModalColumn(index, field, value) {
+        this.state.modal.data.columns[index][field] = value;
+        this.render();
+    },
+
+    async createTable() {
+        const { name, columns } = this.state.modal.data;
+        if (!name || columns.length === 0) {
+            this.state.error = 'Name and at least one column required';
+            this.render();
+            return;
+        }
+
+        try {
+            const res = await fetch('/_/api/tables', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, columns })
+            });
+
+            if (res.ok) {
+                this.closeModal();
+                await this.loadTables();
+                this.selectTable(name);
+            } else {
+                const err = await res.json();
+                this.state.error = err.error || 'Failed to create table';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to create table';
+            this.render();
+        }
+    },
+
+    renderModals() {
+        const { type, data } = this.state.modal;
+        if (!type) return '';
+
+        let content = '';
+        switch (type) {
+            case 'createTable':
+                content = this.renderCreateTableModal();
+                break;
+            // Other modal types will be added in later tasks
+        }
+
+        return `
+            <div class="modal-overlay" onclick="App.closeModal()">
+                <div class="modal" onclick="event.stopPropagation()">
+                    ${content}
+                </div>
+            </div>
+        `;
+    },
+
+    renderCreateTableModal() {
+        const { name, columns } = this.state.modal.data;
+        const types = ['uuid', 'text', 'integer', 'boolean', 'timestamptz', 'jsonb', 'numeric', 'bytea'];
+
+        return `
+            <div class="modal-header">
+                <h3>Create Table</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Table Name</label>
+                    <input type="text" class="form-input" value="${name}"
+                        onchange="App.updateModalData('name', this.value)" placeholder="my_table">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Columns</label>
+                    ${columns.map((col, i) => `
+                        <div class="column-row">
+                            <input type="text" class="form-input" value="${col.name}" placeholder="column_name"
+                                onchange="App.updateModalColumn(${i}, 'name', this.value)">
+                            <select class="form-input" onchange="App.updateModalColumn(${i}, 'type', this.value)">
+                                ${types.map(t => `<option value="${t}" ${col.type === t ? 'selected' : ''}>${t}</option>`).join('')}
+                            </select>
+                            <label><input type="checkbox" ${col.primary ? 'checked' : ''}
+                                onchange="App.updateModalColumn(${i}, 'primary', this.checked)"> PK</label>
+                            <label><input type="checkbox" ${col.nullable ? 'checked' : ''}
+                                onchange="App.updateModalColumn(${i}, 'nullable', this.checked)"> Null</label>
+                            <button class="btn-icon" onclick="App.removeColumnFromModal(${i})">&times;</button>
+                        </div>
+                    `).join('')}
+                    <button class="btn btn-secondary btn-sm" onclick="App.addColumnToModal()">+ Add Column</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="App.createTable()">Create Table</button>
+            </div>
+        `;
+    },
+
+    // Placeholder methods for other modals (to be implemented in later tasks)
     showAddRowModal() {
         alert('Add row modal coming soon');
     },
