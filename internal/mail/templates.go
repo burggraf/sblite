@@ -113,6 +113,10 @@ func (s *TemplateService) ListTemplates() ([]EmailTemplate, error) {
 		templates = append(templates, tpl)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate templates: %w", err)
+	}
+
 	return templates, nil
 }
 
@@ -120,7 +124,7 @@ func (s *TemplateService) ListTemplates() ([]EmailTemplate, error) {
 func (s *TemplateService) UpdateTemplate(templateType, subject, bodyHTML, bodyText string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	_, err := s.db.Exec(`
+	result, err := s.db.Exec(`
 		UPDATE auth_email_templates
 		SET subject = ?, body_html = ?, body_text = ?, updated_at = ?
 		WHERE type = ?
@@ -128,6 +132,11 @@ func (s *TemplateService) UpdateTemplate(templateType, subject, bodyHTML, bodyTe
 
 	if err != nil {
 		return fmt.Errorf("failed to update template: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("template not found: %s", templateType)
 	}
 
 	// Invalidate cache
