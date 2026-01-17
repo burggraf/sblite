@@ -814,6 +814,12 @@ const App = {
             case 'userDetail':
                 content = this.renderUserDetailModal();
                 break;
+            case 'createUser':
+                content = this.renderCreateUserModal();
+                break;
+            case 'inviteUser':
+                content = this.renderInviteUserModal();
+                break;
         }
 
         return `
@@ -1227,6 +1233,8 @@ const App = {
                 <div class="table-toolbar">
                     <h2>Users</h2>
                     <div class="toolbar-actions">
+                        <button class="btn btn-primary btn-sm" onclick="App.showCreateUserModal()">+ Create User</button>
+                        <button class="btn btn-secondary btn-sm" onclick="App.showInviteUserModal()">Invite User</button>
                         <span class="text-muted">${totalUsers} user${totalUsers !== 1 ? 's' : ''}</span>
                     </div>
                 </div>
@@ -1445,6 +1453,213 @@ const App = {
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="App.updateUser()">Save Changes</button>
+            </div>
+        `;
+    },
+
+    // Create User modal methods
+    showCreateUserModal() {
+        this.state.modal = {
+            type: 'createUser',
+            data: { email: '', password: '', autoConfirm: true, error: null }
+        };
+        this.render();
+    },
+
+    updateCreateUserField(field, value) {
+        this.state.modal.data[field] = value;
+    },
+
+    async createUser() {
+        const { email, password, autoConfirm } = this.state.modal.data;
+
+        // Validate
+        if (!email || !email.includes('@')) {
+            this.state.modal.data.error = 'Please enter a valid email address';
+            this.render();
+            return;
+        }
+        if (!password || password.length < 6) {
+            this.state.modal.data.error = 'Password must be at least 6 characters';
+            this.render();
+            return;
+        }
+
+        try {
+            const res = await fetch('/_/api/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password, auto_confirm: autoConfirm })
+            });
+
+            if (res.ok) {
+                this.closeModal();
+                await this.loadUsers();
+            } else {
+                const err = await res.json();
+                this.state.modal.data.error = err.error || 'Failed to create user';
+                this.render();
+            }
+        } catch (e) {
+            this.state.modal.data.error = 'Failed to create user';
+            this.render();
+        }
+    },
+
+    renderCreateUserModal() {
+        const { email, password, autoConfirm, error } = this.state.modal.data;
+
+        return `
+            <div class="modal-header">
+                <h3>Create User</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                ${error ? `<div class="message message-error">${error}</div>` : ''}
+                <div class="form-group">
+                    <label class="form-label">Email</label>
+                    <input type="email" class="form-input" value="${email}" placeholder="user@example.com"
+                        onchange="App.updateCreateUserField('email', this.value)">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input type="password" class="form-input" value="${password}" placeholder="Minimum 6 characters"
+                        onchange="App.updateCreateUserField('password', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" ${autoConfirm ? 'checked' : ''}
+                            onchange="App.updateCreateUserField('autoConfirm', this.checked)">
+                        Auto-confirm email
+                    </label>
+                    <small class="text-muted" style="display: block; margin-top: 4px;">
+                        Skip email verification and mark user as confirmed immediately
+                    </small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="App.createUser()">Create User</button>
+            </div>
+        `;
+    },
+
+    // Invite User modal methods
+    showInviteUserModal() {
+        this.state.modal = {
+            type: 'inviteUser',
+            data: { email: '', error: null, success: false, inviteLink: '' }
+        };
+        this.render();
+    },
+
+    updateInviteUserField(field, value) {
+        this.state.modal.data[field] = value;
+    },
+
+    async sendInvite() {
+        const { email } = this.state.modal.data;
+
+        // Validate
+        if (!email || !email.includes('@')) {
+            this.state.modal.data.error = 'Please enter a valid email address';
+            this.render();
+            return;
+        }
+
+        try {
+            const res = await fetch('/_/api/users/invite', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+            });
+
+            const data = await res.json();
+            if (res.ok) {
+                this.state.modal.data.success = true;
+                this.state.modal.data.inviteLink = data.invite_link;
+                this.state.modal.data.error = null;
+                this.render();
+            } else {
+                this.state.modal.data.error = data.error || 'Failed to send invite';
+                this.render();
+            }
+        } catch (e) {
+            this.state.modal.data.error = 'Failed to send invite';
+            this.render();
+        }
+    },
+
+    async copyInviteLink() {
+        const { inviteLink } = this.state.modal.data;
+        try {
+            await navigator.clipboard.writeText(inviteLink);
+            // Show brief feedback
+            const btn = document.querySelector('.copy-link-btn');
+            if (btn) {
+                const original = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => { btn.textContent = original; }, 1500);
+            }
+        } catch (e) {
+            // Fallback: select the text
+            const input = document.querySelector('.invite-link-input');
+            if (input) {
+                input.select();
+            }
+        }
+    },
+
+    renderInviteUserModal() {
+        const { email, error, success, inviteLink } = this.state.modal.data;
+
+        if (success) {
+            return `
+                <div class="modal-header">
+                    <h3>Invite Sent</h3>
+                    <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="message message-success">
+                        Invitation created for ${email}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Invite Link</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" class="form-input invite-link-input" value="${inviteLink}" readonly
+                                style="flex: 1; font-size: 12px;">
+                            <button class="btn btn-secondary copy-link-btn" onclick="App.copyInviteLink()">Copy Link</button>
+                        </div>
+                        <small class="text-muted" style="display: block; margin-top: 4px;">
+                            Share this link with the user. The link expires in 7 days.
+                        </small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" onclick="App.closeModal(); App.loadUsers();">Done</button>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="modal-header">
+                <h3>Invite User</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                ${error ? `<div class="message message-error">${error}</div>` : ''}
+                <div class="form-group">
+                    <label class="form-label">Email</label>
+                    <input type="email" class="form-input" value="${email}" placeholder="user@example.com"
+                        onchange="App.updateInviteUserField('email', this.value)">
+                </div>
+                <small class="text-muted">
+                    An invitation will be created. The user will need to use the invite link to set their password.
+                </small>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="App.sendInvite()">Send Invite</button>
             </div>
         `;
     }

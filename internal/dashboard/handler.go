@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 //go:embed static/*
@@ -77,6 +79,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Route("/users", func(r chi.Router) {
 			r.Use(h.requireAuth)
 			r.Get("/", h.handleListUsers)
+			r.Post("/", h.handleCreateUser)
+			r.Post("/invite", h.handleInviteUser)
 			r.Get("/{id}", h.handleGetUser)
 			r.Patch("/{id}", h.handleUpdateUser)
 			r.Delete("/{id}", h.handleDeleteUser)
@@ -1125,6 +1129,173 @@ func nullStringToInterface(ns sql.NullString) interface{} {
 		return ns.String
 	}
 	return nil
+}
+
+func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email       string `json:"email"`
+		Password    string `json:"password"`
+		AutoConfirm bool   `json:"auto_confirm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		return
+	}
+
+	// Validate email
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	if req.Email == "" || !strings.Contains(req.Email, "@") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Please enter a valid email address"})
+		return
+	}
+
+	// Validate password
+	if len(req.Password) < 6 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Password must be at least 6 characters"})
+		return
+	}
+
+	// Check if user already exists
+	var existingID string
+	err := h.db.QueryRow("SELECT id FROM auth_users WHERE email = ?", req.Email).Scan(&existingID)
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "A user with this email already exists"})
+		return
+	}
+
+	// Hash password
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to create user"})
+		return
+	}
+
+	// Create user
+	id := uuid.New().String()
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	var emailConfirmedAt interface{} = nil
+	if req.AutoConfirm {
+		emailConfirmedAt = now
+	}
+
+	_, err = h.db.Exec(`
+		INSERT INTO auth_users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+		VALUES (?, ?, ?, ?, '{"provider":"email","providers":["email"]}', '{}', ?, ?)
+	`, id, req.Email, string(hash), emailConfirmedAt, now, now)
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to create user"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":                 id,
+		"email":              req.Email,
+		"created_at":         now,
+		"email_confirmed_at": emailConfirmedAt,
+	})
+}
+
+func (h *Handler) handleInviteUser(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		return
+	}
+
+	// Validate email
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	if req.Email == "" || !strings.Contains(req.Email, "@") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Please enter a valid email address"})
+		return
+	}
+
+	// Check if user already exists with confirmed email
+	var existingID string
+	var emailConfirmedAt sql.NullString
+	err := h.db.QueryRow("SELECT id, email_confirmed_at FROM auth_users WHERE email = ?", req.Email).Scan(&existingID, &emailConfirmedAt)
+	if err == nil && emailConfirmedAt.Valid {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "A user with this email already exists"})
+		return
+	}
+
+	// Create invite token
+	token := uuid.New().String()
+	now := time.Now().UTC()
+	expiresAt := now.Add(7 * 24 * time.Hour) // 7 days
+
+	// If user exists but unconfirmed (previously invited), update the token
+	// Otherwise create a new user with no password
+	var userID string
+	if err == nil {
+		// User exists, reuse their ID
+		userID = existingID
+	} else {
+		// No user exists, create one with no password
+		userID = uuid.New().String()
+		_, err = h.db.Exec(`
+			INSERT INTO auth_users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+			VALUES (?, ?, '', NULL, '{"provider":"email","providers":["email"]}', '{}', ?, ?)
+		`, userID, req.Email, now.Format(time.RFC3339), now.Format(time.RFC3339))
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to create user"})
+			return
+		}
+	}
+
+	// Create invite token
+	_, err = h.db.Exec(`
+		INSERT INTO auth_verification_tokens (id, user_id, type, email, expires_at, created_at)
+		VALUES (?, ?, 'invite', ?, ?, ?)
+	`, token, userID, req.Email, expiresAt.Format(time.RFC3339), now.Format(time.RFC3339))
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to create invitation"})
+		return
+	}
+
+	// Build invite link - get base URL from request
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
+	inviteLink := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=invite", baseURL, url.QueryEscape(token))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     true,
+		"invite_link": inviteLink,
+		"email":       req.Email,
+		"expires_at":  expiresAt.Format(time.RFC3339),
+	})
 }
 
 func (h *Handler) handleGetUser(w http.ResponseWriter, r *http.Request) {

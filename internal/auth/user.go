@@ -42,6 +42,11 @@ func generateID() string {
 }
 
 func (s *Service) CreateUser(email, password string, userMetadata map[string]any) (*User, error) {
+	return s.CreateUserWithOptions(email, password, userMetadata, false)
+}
+
+// CreateUserWithOptions creates a new user with optional email auto-confirmation.
+func (s *Service) CreateUserWithOptions(email, password string, userMetadata map[string]any, autoConfirm bool) (*User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -62,10 +67,16 @@ func (s *Service) CreateUser(email, password string, userMetadata map[string]any
 		userMetaJSON = string(metaBytes)
 	}
 
+	// Set email_confirmed_at if auto-confirm is enabled
+	var emailConfirmedAt interface{} = nil
+	if autoConfirm {
+		emailConfirmedAt = now
+	}
+
 	_, err = s.db.Exec(`
-		INSERT INTO auth_users (id, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
-		VALUES (?, ?, ?, '{"provider":"email","providers":["email"]}', ?, ?, ?)
-	`, id, email, string(hash), userMetaJSON, now, now)
+		INSERT INTO auth_users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+		VALUES (?, ?, ?, ?, '{"provider":"email","providers":["email"]}', ?, ?, ?)
+	`, id, email, string(hash), emailConfirmedAt, userMetaJSON, now, now)
 
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
