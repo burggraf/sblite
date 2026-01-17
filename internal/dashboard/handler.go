@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -59,6 +60,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Route("/data", func(r chi.Router) {
 			r.Use(h.requireAuth)
 			r.Get("/{table}", h.handleSelectData)
+			r.Post("/{table}", h.handleInsertData)
+			r.Patch("/{table}", h.handleUpdateData)
+			r.Delete("/{table}", h.handleDeleteData)
 		})
 	})
 
@@ -528,4 +532,123 @@ func (h *Handler) handleSelectData(w http.ResponseWriter, r *http.Request) {
 		"limit":  limit,
 		"offset": offset,
 	})
+}
+
+func (h *Handler) handleInsertData(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "table")
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	var columns []string
+	var placeholders []string
+	var values []interface{}
+	for col, val := range data {
+		columns = append(columns, fmt.Sprintf(`"%s"`, col))
+		placeholders = append(placeholders, "?")
+		values = append(values, val)
+	}
+
+	query := fmt.Sprintf(`INSERT INTO "%s" (%s) VALUES (%s)`,
+		tableName, strings.Join(columns, ", "), strings.Join(placeholders, ", "))
+
+	if _, err := h.db.Exec(query, values...); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(data)
+}
+
+func (h *Handler) handleUpdateData(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "table")
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	// Build SET clause
+	var setClauses []string
+	var values []interface{}
+	for col, val := range data {
+		setClauses = append(setClauses, fmt.Sprintf(`"%s" = ?`, col))
+		values = append(values, val)
+	}
+
+	// Parse filter from query string (simple eq filter)
+	whereClause, whereValues := h.parseSimpleFilter(r.URL.Query())
+	values = append(values, whereValues...)
+
+	query := fmt.Sprintf(`UPDATE "%s" SET %s %s`, tableName, strings.Join(setClauses, ", "), whereClause)
+
+	result, err := h.db.Exec(query, values...)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	affected, _ := result.RowsAffected()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"updated": affected})
+}
+
+func (h *Handler) handleDeleteData(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "table")
+
+	whereClause, whereValues := h.parseSimpleFilter(r.URL.Query())
+	if whereClause == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Filter required for delete"})
+		return
+	}
+
+	query := fmt.Sprintf(`DELETE FROM "%s" %s`, tableName, whereClause)
+
+	if _, err := h.db.Exec(query, whereValues...); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) parseSimpleFilter(query url.Values) (string, []interface{}) {
+	var conditions []string
+	var values []interface{}
+
+	for key, vals := range query {
+		if key == "limit" || key == "offset" || key == "order" {
+			continue
+		}
+		if len(vals) > 0 {
+			val := vals[0]
+			if strings.HasPrefix(val, "eq.") {
+				conditions = append(conditions, fmt.Sprintf(`"%s" = ?`, key))
+				values = append(values, strings.TrimPrefix(val, "eq."))
+			}
+		}
+	}
+
+	if len(conditions) == 0 {
+		return "", nil
+	}
+	return "WHERE " + strings.Join(conditions, " AND "), values
 }

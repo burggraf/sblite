@@ -436,3 +436,83 @@ func TestHandlerSelectData(t *testing.T) {
 	require.Len(t, rows, 2)
 	require.Equal(t, float64(3), result["total"])
 }
+
+func TestHandlerInsertData(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	_, err := h.db.Exec(`CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT)`)
+	require.NoError(t, err)
+
+	token := setupTestSession(t, h)
+
+	body := `{"id":"new-1","name":"New Item"}`
+	req := httptest.NewRequest("POST", "/api/data/items", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "_sblite_session", Value: token})
+	w := httptest.NewRecorder()
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var count int
+	h.db.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'new-1'`).Scan(&count)
+	require.Equal(t, 1, count)
+}
+
+func TestHandlerUpdateData(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	_, err := h.db.Exec(`CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT)`)
+	require.NoError(t, err)
+	_, err = h.db.Exec(`INSERT INTO items VALUES ('1', 'Old Name')`)
+	require.NoError(t, err)
+
+	token := setupTestSession(t, h)
+
+	body := `{"name":"New Name"}`
+	req := httptest.NewRequest("PATCH", "/api/data/items?id=eq.1", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "_sblite_session", Value: token})
+	w := httptest.NewRecorder()
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var name string
+	h.db.QueryRow(`SELECT name FROM items WHERE id = '1'`).Scan(&name)
+	require.Equal(t, "New Name", name)
+}
+
+func TestHandlerDeleteData(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	_, err := h.db.Exec(`CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT)`)
+	require.NoError(t, err)
+	_, err = h.db.Exec(`INSERT INTO items VALUES ('1', 'To Delete')`)
+	require.NoError(t, err)
+
+	token := setupTestSession(t, h)
+
+	req := httptest.NewRequest("DELETE", "/api/data/items?id=eq.1", nil)
+	req.AddCookie(&http.Cookie{Name: "_sblite_session", Value: token})
+	w := httptest.NewRecorder()
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+
+	var count int
+	h.db.QueryRow(`SELECT COUNT(*) FROM items WHERE id = '1'`).Scan(&count)
+	require.Equal(t, 0, count)
+}
