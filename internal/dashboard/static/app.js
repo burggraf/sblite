@@ -348,10 +348,15 @@ const App = {
         if (this.state.tables.loading) {
             return '<div class="loading">Loading...</div>';
         }
+        const { selectedRows } = this.state.tables;
         return `
             <div class="table-toolbar">
                 <h2>${this.state.tables.selected}</h2>
                 <div class="toolbar-actions">
+                    ${selectedRows.size > 0 ? `
+                        <button class="btn btn-secondary btn-sm" style="color: var(--error)"
+                            onclick="App.deleteSelectedRows()">Delete (${selectedRows.size})</button>
+                    ` : ''}
                     <button class="btn btn-secondary btn-sm" onclick="App.showAddRowModal()">+ Add Row</button>
                     <button class="btn btn-secondary btn-sm" onclick="App.showSchemaModal()">Schema</button>
                     <button class="btn btn-secondary btn-sm" onclick="App.confirmDeleteTable()">Delete Table</button>
@@ -787,17 +792,79 @@ const App = {
         `;
     },
 
-    // Placeholder methods for other modals (to be implemented in later tasks)
+    // Delete operations
+    async confirmDeleteRow(rowId) {
+        if (!confirm('Delete this row?')) return;
+
+        const { selected, schema } = this.state.tables;
+        const primaryKey = schema.columns.find(c => c.primary)?.name || schema.columns[0]?.name;
+
+        try {
+            const res = await fetch(`/_/api/data/${selected}?${primaryKey}=eq.${rowId}`, {
+                method: 'DELETE'
+            });
+
+            if (res.ok) {
+                await this.loadTableData();
+            } else {
+                this.state.error = 'Failed to delete';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to delete';
+            this.render();
+        }
+    },
+
+    async deleteSelectedRows() {
+        const { selectedRows, selected, schema } = this.state.tables;
+        if (selectedRows.size === 0) return;
+
+        if (!confirm(`Delete ${selectedRows.size} row(s)?`)) return;
+
+        const primaryKey = schema.columns.find(c => c.primary)?.name || schema.columns[0]?.name;
+
+        for (const rowId of selectedRows) {
+            try {
+                await fetch(`/_/api/data/${selected}?${primaryKey}=eq.${rowId}`, {
+                    method: 'DELETE'
+                });
+            } catch (e) {
+                // Continue with others
+            }
+        }
+
+        this.state.tables.selectedRows.clear();
+        await this.loadTableData();
+    },
+
+    async confirmDeleteTable() {
+        const { selected } = this.state.tables;
+        if (!confirm(`Delete table "${selected}"? This cannot be undone.`)) return;
+
+        try {
+            const res = await fetch(`/_/api/tables/${selected}`, {
+                method: 'DELETE'
+            });
+
+            if (res.ok) {
+                this.state.tables.selected = null;
+                this.state.tables.schema = null;
+                this.state.tables.data = [];
+                await this.loadTables();
+            } else {
+                this.state.error = 'Failed to delete table';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to delete table';
+            this.render();
+        }
+    },
+
+    // Placeholder for schema modal (Task 15)
     showSchemaModal() {
         alert('Schema modal coming soon');
-    },
-
-    confirmDeleteRow(rowId) {
-        alert('Delete row confirmation coming soon');
-    },
-
-    confirmDeleteTable() {
-        alert('Delete table confirmation coming soon');
     }
 };
 
