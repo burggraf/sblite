@@ -642,7 +642,12 @@ const App = {
             case 'editRow':
                 content = this.renderRowModal();
                 break;
-            // Other modal types will be added in later tasks
+            case 'schema':
+                content = this.renderSchemaModal();
+                break;
+            case 'addColumn':
+                content = this.renderAddColumnModal();
+                break;
         }
 
         return `
@@ -862,9 +867,162 @@ const App = {
         }
     },
 
-    // Placeholder for schema modal (Task 15)
+    // Schema management
     showSchemaModal() {
-        alert('Schema modal coming soon');
+        this.state.modal = { type: 'schema', data: {} };
+        this.render();
+    },
+
+    showAddColumnModal() {
+        this.state.modal = {
+            type: 'addColumn',
+            data: { name: '', type: 'text', nullable: true }
+        };
+        this.render();
+    },
+
+    async addColumn() {
+        const { data } = this.state.modal;
+        const { selected } = this.state.tables;
+
+        try {
+            const res = await fetch(`/_/api/tables/${selected}/columns`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (res.ok) {
+                this.closeModal();
+                await this.loadTableSchema(selected);
+                await this.loadTableData();
+            } else {
+                const err = await res.json();
+                this.state.error = err.error || 'Failed to add column';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to add column';
+            this.render();
+        }
+    },
+
+    async renameColumn(oldName) {
+        const newName = prompt('New column name:', oldName);
+        if (!newName || newName === oldName) return;
+
+        const { selected } = this.state.tables;
+
+        try {
+            const res = await fetch(`/_/api/tables/${selected}/columns/${oldName}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ new_name: newName })
+            });
+
+            if (res.ok) {
+                await this.loadTableSchema(selected);
+                await this.loadTableData();
+            } else {
+                const err = await res.json();
+                this.state.error = err.error || 'Failed to rename column';
+            }
+        } catch (e) {
+            this.state.error = 'Failed to rename column';
+        }
+        this.render();
+    },
+
+    async dropColumn(colName) {
+        if (!confirm(`Drop column "${colName}"? Data in this column will be lost.`)) return;
+
+        const { selected } = this.state.tables;
+
+        try {
+            const res = await fetch(`/_/api/tables/${selected}/columns/${colName}`, {
+                method: 'DELETE'
+            });
+
+            if (res.ok) {
+                await this.loadTableSchema(selected);
+                await this.loadTableData();
+            } else {
+                const err = await res.json();
+                this.state.error = err.error || 'Failed to drop column';
+            }
+        } catch (e) {
+            this.state.error = 'Failed to drop column';
+        }
+        this.render();
+    },
+
+    renderSchemaModal() {
+        const { schema } = this.state.tables;
+
+        return `
+            <div class="modal-header">
+                <h3>Schema: ${schema.name}</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <table class="schema-table">
+                    <thead>
+                        <tr><th>Column</th><th>Type</th><th>Nullable</th><th>Primary</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        ${schema.columns.map(col => `
+                            <tr>
+                                <td>${col.name}</td>
+                                <td>${col.type}</td>
+                                <td>${col.nullable ? 'Yes' : 'No'}</td>
+                                <td>${col.primary ? 'Yes' : ''}</td>
+                                <td>
+                                    <button class="btn-icon" onclick="App.renameColumn('${col.name}')">Rename</button>
+                                    ${!col.primary ? `<button class="btn-icon" onclick="App.dropColumn('${col.name}')">Drop</button>` : ''}
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.showAddColumnModal()">+ Add Column</button>
+                <button class="btn btn-primary" onclick="App.closeModal()">Done</button>
+            </div>
+        `;
+    },
+
+    renderAddColumnModal() {
+        const { data } = this.state.modal;
+        const types = ['uuid', 'text', 'integer', 'boolean', 'timestamptz', 'jsonb', 'numeric', 'bytea'];
+
+        return `
+            <div class="modal-header">
+                <h3>Add Column</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Column Name</label>
+                    <input type="text" class="form-input" value="${data.name}"
+                        onchange="App.updateModalData('name', this.value)">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Type</label>
+                    <select class="form-input" onchange="App.updateModalData('type', this.value)">
+                        ${types.map(t => `<option value="${t}" ${data.type === t ? 'selected' : ''}>${t}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" ${data.nullable ? 'checked' : ''}
+                        onchange="App.updateModalData('nullable', this.checked)"> Nullable</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.showSchemaModal()">Back</button>
+                <button class="btn btn-primary" onclick="App.addColumn()">Add Column</button>
+            </div>
+        `;
     }
 };
 
