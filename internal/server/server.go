@@ -35,7 +35,7 @@ type Server struct {
 	dashboardHandler *dashboard.Handler
 }
 
-func New(database *db.DB, jwtSecret string, mailConfig *mail.Config) *Server {
+func New(database *db.DB, jwtSecret string, mailConfig *mail.Config, migrationsDir string) *Server {
 	rlsService := rls.NewService(database)
 	rlsEnforcer := rls.NewEnforcer(rlsService)
 
@@ -65,7 +65,7 @@ func New(database *db.DB, jwtSecret string, mailConfig *mail.Config) *Server {
 	s.initMail()
 
 	// Initialize dashboard handler
-	s.dashboardHandler = dashboard.NewHandler(database.DB)
+	s.dashboardHandler = dashboard.NewHandler(database.DB, migrationsDir)
 
 	s.setupRoutes()
 	return s

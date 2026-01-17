@@ -8,8 +8,11 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -21,20 +24,22 @@ const sessionCookieName = "_sblite_session"
 
 // Handler serves the dashboard UI and API.
 type Handler struct {
-	db       *sql.DB
-	store    *Store
-	auth     *Auth
-	sessions *SessionManager
+	db            *sql.DB
+	store         *Store
+	auth          *Auth
+	sessions      *SessionManager
+	migrationsDir string
 }
 
 // NewHandler creates a new Handler.
-func NewHandler(db *sql.DB) *Handler {
+func NewHandler(db *sql.DB, migrationsDir string) *Handler {
 	store := NewStore(db)
 	return &Handler{
-		db:       db,
-		store:    store,
-		auth:     NewAuth(store),
-		sessions: NewSessionManager(store),
+		db:            db,
+		store:         store,
+		auth:          NewAuth(store),
+		sessions:      NewSessionManager(store),
+		migrationsDir: migrationsDir,
 	}
 }
 
@@ -412,6 +417,15 @@ func (h *Handler) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Write migration file
+	migrationName := fmt.Sprintf("create_%s_table", req.Name)
+	if err := h.writeMigration(migrationName, createSQL+";"); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table created but failed to write migration: " + err.Error()})
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{"name": req.Name, "columns": req.Columns})
@@ -426,6 +440,34 @@ func pgTypeToSQLite(pgType string) string {
 	default:
 		return "TEXT"
 	}
+}
+
+// writeMigration creates a migration file and records it in _schema_migrations.
+func (h *Handler) writeMigration(name string, sql string) error {
+	// Ensure migrations directory exists (auto-create if needed)
+	if err := os.MkdirAll(h.migrationsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create migrations directory: %w", err)
+	}
+
+	// Generate version timestamp
+	version := time.Now().UTC().Format("20060102150405")
+	filename := fmt.Sprintf("%s_%s.sql", version, name)
+
+	// Write migration file
+	path := filepath.Join(h.migrationsDir, filename)
+	if err := os.WriteFile(path, []byte(sql), 0644); err != nil {
+		return fmt.Errorf("failed to write migration file: %w", err)
+	}
+
+	// Record in _schema_migrations
+	_, err := h.db.Exec(`INSERT INTO _schema_migrations (version, name) VALUES (?, ?)`, version, name)
+	if err != nil {
+		// Clean up the file if we can't record the migration
+		os.Remove(path)
+		return fmt.Errorf("failed to record migration: %w", err)
+	}
+
+	return nil
 }
 
 func (h *Handler) handleDeleteTable(w http.ResponseWriter, r *http.Request) {
@@ -466,6 +508,16 @@ func (h *Handler) handleDeleteTable(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to commit"})
+		return
+	}
+
+	// Write migration file
+	dropSQL := fmt.Sprintf(`DROP TABLE IF EXISTS "%s";`, tableName)
+	migrationName := fmt.Sprintf("drop_%s_table", tableName)
+	if err := h.writeMigration(migrationName, dropSQL); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table dropped but failed to write migration: " + err.Error()})
 		return
 	}
 
@@ -796,6 +848,15 @@ func (h *Handler) handleAddColumn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Write migration file
+	migrationName := fmt.Sprintf("add_%s_column_to_%s", col.Name, tableName)
+	if err := h.writeMigration(migrationName, alterSQL+";"); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Column added but failed to write migration: " + err.Error()})
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(col)
@@ -844,6 +905,15 @@ func (h *Handler) handleRenameColumn(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to commit"})
+		return
+	}
+
+	// Write migration file
+	migrationName := fmt.Sprintf("rename_column_%s_to_%s_in_%s", oldName, req.NewName, tableName)
+	if err := h.writeMigration(migrationName, alterSQL+";"); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Column renamed but failed to write migration: " + err.Error()})
 		return
 	}
 
@@ -960,6 +1030,16 @@ func (h *Handler) handleDropColumn(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to commit"})
+		return
+	}
+
+	// Write migration file (use PostgreSQL-compatible syntax for Supabase migration)
+	dropColumnSQL := fmt.Sprintf(`ALTER TABLE "%s" DROP COLUMN "%s";`, tableName, columnName)
+	migrationName := fmt.Sprintf("drop_column_%s_from_%s", columnName, tableName)
+	if err := h.writeMigration(migrationName, dropColumnSQL); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Column dropped but failed to write migration: " + err.Error()})
 		return
 	}
 

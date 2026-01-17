@@ -53,8 +53,9 @@ var serveCmd = &cobra.Command{
 
 		// Build mail configuration
 		mailConfig := buildMailConfig(cmd)
+		migrationsDir, _ := cmd.Flags().GetString("migrations-dir")
 
-		srv := server.New(database, jwtSecret, mailConfig)
+		srv := server.New(database, jwtSecret, mailConfig, migrationsDir)
 		addr := fmt.Sprintf("%s:%d", host, port)
 		log.Info("starting server",
 			"addr", addr,
@@ -191,6 +192,7 @@ func init() {
 	serveCmd.Flags().String("db", "data.db", "Path to database file")
 	serveCmd.Flags().IntP("port", "p", 8080, "Port to listen on")
 	serveCmd.Flags().String("host", "0.0.0.0", "Host to bind to")
+	serveCmd.Flags().String("migrations-dir", "./migrations", "Path to migrations directory")
 	serveCmd.Flags().String("mail-mode", "", "Email mode: log, catch, or smtp (default: log)")
 	serveCmd.Flags().String("mail-from", "", "Default sender email address")
 	serveCmd.Flags().String("site-url", "", "Base URL for email links")

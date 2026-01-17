@@ -15,8 +15,9 @@ import (
 // setupTestHandler creates a Handler with a test database and returns the path for cleanup
 func setupTestHandler(t *testing.T) (*Handler, string) {
 	dbPath := t.TempDir() + "/test.db"
+	migrationsDir := t.TempDir() + "/migrations"
 	database := setupTestDB(t)
-	handler := NewHandler(database.DB)
+	handler := NewHandler(database.DB, migrationsDir)
 	return handler, dbPath
 }
 
@@ -36,7 +37,7 @@ func TestHandlerServesUI(t *testing.T) {
 	database := setupTestDB(t)
 	defer database.Close()
 
-	handler := NewHandler(database.DB)
+	handler := NewHandler(database.DB, t.TempDir()+"/migrations")
 
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
@@ -65,7 +66,7 @@ func TestHandlerServesCSS(t *testing.T) {
 	database := setupTestDB(t)
 	defer database.Close()
 
-	handler := NewHandler(database.DB)
+	handler := NewHandler(database.DB, t.TempDir()+"/migrations")
 
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
@@ -89,7 +90,7 @@ func TestHandlerServesJS(t *testing.T) {
 	database := setupTestDB(t)
 	defer database.Close()
 
-	handler := NewHandler(database.DB)
+	handler := NewHandler(database.DB, t.TempDir()+"/migrations")
 
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
@@ -113,7 +114,7 @@ func TestHandlerAuthStatus(t *testing.T) {
 	database := setupTestDB(t)
 	defer database.Close()
 
-	handler := NewHandler(database.DB)
+	handler := NewHandler(database.DB, t.TempDir()+"/migrations")
 
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
@@ -145,7 +146,7 @@ func TestHandlerSetupAndLogin(t *testing.T) {
 	database := setupTestDB(t)
 	defer database.Close()
 
-	handler := NewHandler(database.DB)
+	handler := NewHandler(database.DB, t.TempDir()+"/migrations")
 
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
@@ -201,7 +202,7 @@ func TestHandlerLogout(t *testing.T) {
 	database := setupTestDB(t)
 	defer database.Close()
 
-	handler := NewHandler(database.DB)
+	handler := NewHandler(database.DB, t.TempDir()+"/migrations")
 
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
@@ -235,7 +236,7 @@ func TestHandlerSPARouting(t *testing.T) {
 	database := setupTestDB(t)
 	defer database.Close()
 
-	handler := NewHandler(database.DB)
+	handler := NewHandler(database.DB, t.TempDir()+"/migrations")
 
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
@@ -269,7 +270,7 @@ func TestHandlerStaticNotFound(t *testing.T) {
 	database := setupTestDB(t)
 	defer database.Close()
 
-	handler := NewHandler(database.DB)
+	handler := NewHandler(database.DB, t.TempDir()+"/migrations")
 
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)

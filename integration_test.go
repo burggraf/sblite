@@ -40,7 +40,7 @@ func TestFullAuthFlow(t *testing.T) {
 		t.Fatalf("failed to run migrations: %v", err)
 	}
 
-	srv := server.New(database, "test-secret-key-min-32-characters", mail.DefaultConfig())
+	srv := server.New(database, "test-secret-key-min-32-characters", mail.DefaultConfig(), t.TempDir()+"/migrations")
 
 	// 1. Signup
 	signupBody := `{"email": "test@example.com", "password": "password123"}`
@@ -132,7 +132,7 @@ func TestFullRESTFlow(t *testing.T) {
 	`)
 
 	jwtSecret := "test-secret-key-min-32-characters"
-	srv := server.New(database, jwtSecret, mail.DefaultConfig())
+	srv := server.New(database, jwtSecret, mail.DefaultConfig(), t.TempDir()+"/migrations")
 	apiKey := generateTestAPIKey(jwtSecret, "anon")
 
 	// 1. Create todo
