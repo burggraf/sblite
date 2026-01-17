@@ -20,6 +20,9 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | Query filters (eq, neq, gt, lt, like, in, etc.) | :white_check_mark: |
 | Query modifiers (select, order, limit, offset) | :white_check_mark: |
 | SQLite with WAL mode | :white_check_mark: |
+| Email system (log, catch, SMTP) | :white_check_mark: |
+| Magic link authentication | :white_check_mark: |
+| User invitations | :white_check_mark: |
 | Row Level Security | :construction: Planned |
 | Realtime subscriptions | :construction: Planned |
 | File storage | :construction: Planned |
@@ -41,9 +44,11 @@ go build -o sblite
 ### Start the server
 
 ```bash
-./sblite serve                      # Default: localhost:8080
-./sblite serve --port 3000          # Custom port
-./sblite serve --host 0.0.0.0       # Bind to all interfaces
+./sblite serve                        # Default: localhost:8080
+./sblite serve --port 3000            # Custom port
+./sblite serve --host 0.0.0.0         # Bind to all interfaces
+./sblite serve --mail-mode=catch      # Development: captures emails, web UI at /mail
+./sblite serve --mail-mode=smtp       # Production: sends real emails via SMTP
 ```
 
 ### Use with Supabase client
@@ -81,12 +86,28 @@ await supabase.from('todos').delete().eq('id', 1)
 
 ## Configuration
 
+### Core Settings
+
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `SBLITE_JWT_SECRET` | (generated) | JWT signing secret (32+ characters recommended) |
 | `SBLITE_HOST` | `localhost` | Server bind address |
 | `SBLITE_PORT` | `8080` | Server port |
 | `SBLITE_DB_PATH` | `./data.db` | SQLite database path |
+
+### Email Settings
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `SBLITE_MAIL_MODE` | `log` | Email mode: `log`, `catch`, or `smtp` |
+| `SBLITE_MAIL_FROM` | `noreply@localhost` | Default sender email address |
+| `SBLITE_SITE_URL` | `http://localhost:8080` | Base URL for email links |
+| `SBLITE_SMTP_HOST` | - | SMTP server hostname (required for smtp mode) |
+| `SBLITE_SMTP_PORT` | `587` | SMTP server port |
+| `SBLITE_SMTP_USER` | - | SMTP username |
+| `SBLITE_SMTP_PASS` | - | SMTP password |
+
+See [Email System Documentation](docs/EMAIL.md) for detailed configuration and usage.
 
 ## API Endpoints
 
@@ -100,6 +121,11 @@ await supabase.from('todos').delete().eq('id', 1)
 | `/auth/v1/logout` | POST | Sign out (invalidate session) |
 | `/auth/v1/user` | GET | Get current user |
 | `/auth/v1/user` | PUT | Update current user |
+| `/auth/v1/recover` | POST | Request password recovery email |
+| `/auth/v1/verify` | POST/GET | Verify email or reset password |
+| `/auth/v1/magiclink` | POST | Request magic link login email |
+| `/auth/v1/resend` | POST | Resend confirmation or recovery email |
+| `/auth/v1/invite` | POST | Invite new user (admin only) |
 
 ### REST API (`/rest/v1`)
 
@@ -117,6 +143,9 @@ await supabase.from('todos').delete().eq('id', 1)
 | `/health` | GET | Health check |
 
 ## Documentation
+
+### Guides
+- [Email System](docs/EMAIL.md) - Complete guide to email modes, configuration, and authentication flows
 
 ### Design & Implementation
 - [Design Document](docs/plans/2026-01-16-supabase-lite-design.md) - Architecture, schema design, and roadmap
@@ -159,6 +188,9 @@ npm test         # Run all tests
 ├─────────────────────────────────────┤
 │  /auth/v1/*  →  Auth Service        │
 │  /rest/v1/*  →  REST Handler        │
+│  /mail/*     →  Mail Viewer (dev)   │
+├─────────────────────────────────────┤
+│  Email Service (log/catch/smtp)     │
 ├─────────────────────────────────────┤
 │         SQLite (WAL mode)           │
 └─────────────────────────────────────┘
