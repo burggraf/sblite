@@ -23,6 +23,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | Email system (log, catch, SMTP) | :white_check_mark: |
 | Magic link authentication | :white_check_mark: |
 | User invitations | :white_check_mark: |
+| Configurable logging (console/file/database) | :white_check_mark: |
 | Row Level Security | :construction: Planned |
 | Realtime subscriptions | :construction: Planned |
 | File storage | :construction: Planned |
@@ -108,6 +109,32 @@ await supabase.from('todos').delete().eq('id', 1)
 | `SBLITE_SMTP_PASS` | - | SMTP password |
 
 See [Email System Documentation](docs/EMAIL.md) for detailed configuration and usage.
+
+### Logging Settings
+
+| Environment Variable | CLI Flag | Default | Description |
+|---------------------|----------|---------|-------------|
+| `SBLITE_LOG_MODE` | `--log-mode` | `console` | Output: `console`, `file`, or `database` |
+| `SBLITE_LOG_LEVEL` | `--log-level` | `info` | Level: `debug`, `info`, `warn`, `error` |
+| `SBLITE_LOG_FORMAT` | `--log-format` | `text` | Format: `text` or `json` |
+| `SBLITE_LOG_FILE` | `--log-file` | `sblite.log` | Log file path (file mode) |
+| `SBLITE_LOG_DB` | `--log-db` | `log.db` | Log database path (database mode) |
+| `SBLITE_LOG_MAX_SIZE` | `--log-max-size` | `100` | Max file size in MB before rotation |
+| `SBLITE_LOG_MAX_AGE` | `--log-max-age` | `7` | Days to retain old logs |
+| `SBLITE_LOG_MAX_BACKUPS` | `--log-max-backups` | `3` | Number of backup files to keep |
+| `SBLITE_LOG_FIELDS` | `--log-fields` | - | DB fields: `source,request_id,user_id,extra` |
+
+**Examples:**
+```bash
+# JSON output for log aggregators
+./sblite serve --log-format=json
+
+# File logging with rotation
+./sblite serve --log-mode=file --log-file=/var/log/sblite.log
+
+# Database logging for queryable logs
+./sblite serve --log-mode=database --log-fields=request_id,user_id
+```
 
 ## API Endpoints
 
