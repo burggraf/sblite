@@ -211,3 +211,48 @@ func TestRunnerReadFromDir_NotExists(t *testing.T) {
 		t.Errorf("expected 0 migrations, got %d", len(migrations))
 	}
 }
+
+func TestRunnerGetPending(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	dir := t.TempDir()
+
+	// Create migration files
+	files := map[string]string{
+		"20260117100000_create_posts.sql": "CREATE TABLE posts (id TEXT);",
+		"20260117110000_create_users.sql": "CREATE TABLE users (id TEXT);",
+		"20260117120000_add_email.sql":    "ALTER TABLE users ADD email TEXT;",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write test file: %v", err)
+		}
+	}
+
+	// Mark first migration as applied
+	_, err := database.Exec(`
+		INSERT INTO _schema_migrations (version, name)
+		VALUES ('20260117100000', 'create_posts')
+	`)
+	if err != nil {
+		t.Fatalf("failed to insert test data: %v", err)
+	}
+
+	runner := NewRunner(database.DB)
+	pending, err := runner.GetPending(dir)
+	if err != nil {
+		t.Fatalf("GetPending() error: %v", err)
+	}
+
+	if len(pending) != 2 {
+		t.Fatalf("expected 2 pending migrations, got %d", len(pending))
+	}
+
+	if pending[0].Version != "20260117110000" {
+		t.Errorf("expected first pending version 20260117110000, got %s", pending[0].Version)
+	}
+	if pending[1].Version != "20260117120000" {
+		t.Errorf("expected second pending version 20260117120000, got %s", pending[1].Version)
+	}
+}

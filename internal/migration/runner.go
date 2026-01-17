@@ -121,6 +121,35 @@ func splitStatements(sql string) []string {
 	return statements
 }
 
+// GetPending returns migrations that exist in the directory but haven't been applied
+func (r *Runner) GetPending(dir string) ([]Migration, error) {
+	all, err := ReadFromDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	applied, err := r.GetApplied()
+	if err != nil {
+		return nil, err
+	}
+
+	// Build set of applied versions
+	appliedSet := make(map[string]bool)
+	for _, m := range applied {
+		appliedSet[m.Version] = true
+	}
+
+	// Filter to pending only
+	var pending []Migration
+	for _, m := range all {
+		if !appliedSet[m.Version] {
+			pending = append(pending, m)
+		}
+	}
+
+	return pending, nil
+}
+
 // ReadFromDir reads all migration files from a directory
 func ReadFromDir(dir string) ([]Migration, error) {
 	entries, err := os.ReadDir(dir)
