@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/mail"
 	"github.com/markb/sblite/internal/server"
 )
 
@@ -39,7 +40,7 @@ func TestFullAuthFlow(t *testing.T) {
 		t.Fatalf("failed to run migrations: %v", err)
 	}
 
-	srv := server.New(database, "test-secret-key-min-32-characters")
+	srv := server.New(database, "test-secret-key-min-32-characters", mail.DefaultConfig())
 
 	// 1. Signup
 	signupBody := `{"email": "test@example.com", "password": "password123"}`
@@ -131,7 +132,7 @@ func TestFullRESTFlow(t *testing.T) {
 	`)
 
 	jwtSecret := "test-secret-key-min-32-characters"
-	srv := server.New(database, jwtSecret)
+	srv := server.New(database, jwtSecret, mail.DefaultConfig())
 	apiKey := generateTestAPIKey(jwtSecret, "anon")
 
 	// 1. Create todo

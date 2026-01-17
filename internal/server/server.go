@@ -3,28 +3,40 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/mail"
+	"github.com/markb/sblite/internal/mail/viewer"
 	"github.com/markb/sblite/internal/rest"
 	"github.com/markb/sblite/internal/rls"
 )
 
 type Server struct {
-	db          *db.DB
-	router      *chi.Mux
-	authService *auth.Service
-	rlsService  *rls.Service
-	rlsEnforcer *rls.Enforcer
-	restHandler *rest.Handler
+	db           *db.DB
+	router       *chi.Mux
+	authService  *auth.Service
+	rlsService   *rls.Service
+	rlsEnforcer  *rls.Enforcer
+	restHandler  *rest.Handler
+	mailConfig   *mail.Config
+	mailer       mail.Mailer
+	catchMailer  *mail.CatchMailer
+	emailService *mail.EmailService
 }
 
-func New(database *db.DB, jwtSecret string) *Server {
+func New(database *db.DB, jwtSecret string, mailConfig *mail.Config) *Server {
 	rlsService := rls.NewService(database)
 	rlsEnforcer := rls.NewEnforcer(rlsService)
+
+	// Use default config if nil
+	if mailConfig == nil {
+		mailConfig = mail.DefaultConfig()
+	}
 
 	s := &Server{
 		db:          database,
@@ -33,9 +45,38 @@ func New(database *db.DB, jwtSecret string) *Server {
 		rlsService:  rlsService,
 		rlsEnforcer: rlsEnforcer,
 		restHandler: rest.NewHandler(database, rlsEnforcer),
+		mailConfig:  mailConfig,
 	}
+
+	// Initialize mail services
+	s.initMail()
+
 	s.setupRoutes()
 	return s
+}
+
+// initMail initializes the mail services based on configuration.
+func (s *Server) initMail() {
+	switch s.mailConfig.Mode {
+	case mail.ModeCatch:
+		s.catchMailer = mail.NewCatchMailer(s.db)
+		s.mailer = s.catchMailer
+	case mail.ModeSMTP:
+		smtpConfig := mail.SMTPConfig{
+			Host: s.mailConfig.SMTPHost,
+			Port: s.mailConfig.SMTPPort,
+			User: s.mailConfig.SMTPUser,
+			Pass: s.mailConfig.SMTPPass,
+		}
+		s.mailer = mail.NewSMTPMailer(smtpConfig)
+	default:
+		// Default to log mode
+		s.mailer = mail.NewLogMailer(nil)
+	}
+
+	// Create template and email services
+	templates := mail.NewTemplateService(s.db)
+	s.emailService = mail.NewEmailService(s.mailer, templates, s.mailConfig)
 }
 
 func (s *Server) setupRoutes() {
@@ -53,6 +94,8 @@ func (s *Server) setupRoutes() {
 		r.Post("/verify", s.handleVerify)
 		r.Get("/verify", s.handleVerify)
 		r.Get("/settings", s.handleSettings)
+		r.Post("/magiclink", s.handleMagicLink)
+		r.Post("/resend", s.handleResend)
 
 		// Protected routes
 		r.Group(func(r chi.Router) {
@@ -60,6 +103,7 @@ func (s *Server) setupRoutes() {
 			r.Get("/user", s.handleGetUser)
 			r.Put("/user", s.handleUpdateUser)
 			r.Post("/logout", s.handleLogout)
+			r.Post("/invite", s.handleInvite)
 		})
 	})
 
@@ -75,6 +119,14 @@ func (s *Server) setupRoutes() {
 		r.Patch("/{table}", s.restHandler.HandleUpdate)
 		r.Delete("/{table}", s.restHandler.HandleDelete)
 	})
+
+	// Mail viewer routes (only in catch mode)
+	if s.mailConfig.Mode == mail.ModeCatch && s.catchMailer != nil {
+		s.router.Route("/mail", func(r chi.Router) {
+			viewerHandler := viewer.NewHandler(s.catchMailer)
+			viewerHandler.RegisterRoutes(r)
+		})
+	}
 }
 
 func (s *Server) Router() *chi.Mux {
@@ -103,4 +155,39 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(spec)
+}
+
+// EmailService returns the email service for use by auth handlers.
+func (s *Server) EmailService() *mail.EmailService {
+	return s.emailService
+}
+
+// handleMagicLink handles magic link requests.
+// Stub implementation - will be implemented in Task 10.
+func (s *Server) handleMagicLink(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+	json.NewEncoder(w).Encode(map[string]string{
+		"error":   "not_implemented",
+		"message": fmt.Sprintf("Magic link is not yet implemented"),
+	})
+}
+
+// handleResend handles email resend requests.
+// Stub implementation - will be implemented in Task 10.
+func (s *Server) handleResend(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+	json.NewEncoder(w).Encode(map[string]string{
+		"error":   "not_implemented",
+		"message": fmt.Sprintf("Resend is not yet implemented"),
+	})
+}
+
+// handleInvite handles user invitation requests.
+// Stub implementation - will be implemented in Task 10.
+func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+	json.NewEncoder(w).Encode(map[string]string{
+		"error":   "not_implemented",
+		"message": fmt.Sprintf("Invite is not yet implemented"),
+	})
 }

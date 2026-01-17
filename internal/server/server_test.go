@@ -9,6 +9,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/mail"
 )
 
 const testJWTSecret = "test-secret-key-min-32-characters"
@@ -37,7 +38,7 @@ func setupTestServer(t *testing.T) *Server {
 	}
 	t.Cleanup(func() { database.Close() })
 
-	return New(database, testJWTSecret)
+	return New(database, testJWTSecret, mail.DefaultConfig())
 }
 
 func TestHealthEndpoint(t *testing.T) {
