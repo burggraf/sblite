@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/smtp"
+	"strconv"
 	"time"
 )
 
@@ -24,6 +25,9 @@ type SMTPConfig struct {
 func (c *SMTPConfig) Validate() error {
 	if c.Host == "" {
 		return fmt.Errorf("SMTP host is required")
+	}
+	if c.Port <= 0 || c.Port > 65535 {
+		return fmt.Errorf("SMTP port must be between 1 and 65535")
 	}
 	if c.User == "" || c.Pass == "" {
 		return fmt.Errorf("SMTP credentials are required")
@@ -43,11 +47,17 @@ func NewSMTPMailer(config SMTPConfig) *SMTPMailer {
 
 // Send sends the email via SMTP.
 func (m *SMTPMailer) Send(ctx context.Context, msg *Message) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	if err := msg.Validate(); err != nil {
 		return fmt.Errorf("invalid message: %w", err)
 	}
 
-	addr := fmt.Sprintf("%s:%d", m.config.Host, m.config.Port)
+	addr := net.JoinHostPort(m.config.Host, strconv.Itoa(m.config.Port))
 	auth := smtp.PlainAuth("", m.config.User, m.config.Pass, m.config.Host)
 
 	// Build the email message
@@ -59,6 +69,13 @@ func (m *SMTPMailer) Send(ctx context.Context, msg *Message) error {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
 	defer conn.Close()
+
+	// Set deadline based on context or default 30 seconds
+	deadline := time.Now().Add(30 * time.Second)
+	if d, ok := ctx.Deadline(); ok {
+		deadline = d
+	}
+	conn.SetDeadline(deadline)
 
 	// Create SMTP client
 	client, err := smtp.NewClient(conn, m.config.Host)
