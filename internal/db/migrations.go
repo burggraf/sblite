@@ -72,6 +72,99 @@ CREATE TABLE IF NOT EXISTS _rls_policies (
 );
 `
 
+const emailSchema = `
+CREATE TABLE IF NOT EXISTS auth_emails (
+    id TEXT PRIMARY KEY,
+    to_email TEXT NOT NULL,
+    from_email TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body_html TEXT,
+    body_text TEXT,
+    email_type TEXT NOT NULL,
+    user_id TEXT,
+    created_at TEXT NOT NULL,
+    metadata TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_emails_created_at ON auth_emails(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_auth_emails_type ON auth_emails(email_type);
+
+CREATE TABLE IF NOT EXISTS auth_email_templates (
+    id TEXT PRIMARY KEY,
+    type TEXT UNIQUE NOT NULL,
+    subject TEXT NOT NULL,
+    body_html TEXT NOT NULL,
+    body_text TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_verification_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    email TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_verification_tokens_user ON auth_verification_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_verification_tokens_type ON auth_verification_tokens(type);
+`
+
+const defaultTemplates = `
+INSERT OR IGNORE INTO auth_email_templates (id, type, subject, body_html, body_text, updated_at) VALUES
+('tpl-confirmation', 'confirmation', 'Confirm your email',
+'<h2>Confirm your email</h2><p>Click the link below to confirm your email address:</p><p><a href="{{.ConfirmationURL}}">Confirm Email</a></p><p>This link expires in {{.ExpiresIn}}.</p>',
+'Confirm your email
+
+Click the link below to confirm your email address:
+{{.ConfirmationURL}}
+
+This link expires in {{.ExpiresIn}}.',
+datetime('now')),
+
+('tpl-recovery', 'recovery', 'Reset your password',
+'<h2>Reset your password</h2><p>Click the link below to reset your password:</p><p><a href="{{.ConfirmationURL}}">Reset Password</a></p><p>This link expires in {{.ExpiresIn}}.</p>',
+'Reset your password
+
+Click the link below to reset your password:
+{{.ConfirmationURL}}
+
+This link expires in {{.ExpiresIn}}.',
+datetime('now')),
+
+('tpl-magic_link', 'magic_link', 'Your login link',
+'<h2>Your login link</h2><p>Click the link below to sign in:</p><p><a href="{{.ConfirmationURL}}">Sign In</a></p><p>This link expires in {{.ExpiresIn}}.</p>',
+'Your login link
+
+Click the link below to sign in:
+{{.ConfirmationURL}}
+
+This link expires in {{.ExpiresIn}}.',
+datetime('now')),
+
+('tpl-email_change', 'email_change', 'Confirm email change',
+'<h2>Confirm your new email</h2><p>Click the link below to confirm your new email address:</p><p><a href="{{.ConfirmationURL}}">Confirm New Email</a></p><p>This link expires in {{.ExpiresIn}}.</p>',
+'Confirm your new email
+
+Click the link below to confirm your new email address:
+{{.ConfirmationURL}}
+
+This link expires in {{.ExpiresIn}}.',
+datetime('now')),
+
+('tpl-invite', 'invite', 'You have been invited',
+'<h2>You have been invited</h2><p>Click the link below to accept your invitation and set your password:</p><p><a href="{{.ConfirmationURL}}">Accept Invitation</a></p><p>This link expires in {{.ExpiresIn}}.</p>',
+'You have been invited
+
+Click the link below to accept your invitation and set your password:
+{{.ConfirmationURL}}
+
+This link expires in {{.ExpiresIn}}.',
+datetime('now'));
+`
+
 func (db *DB) RunMigrations() error {
 	_, err := db.Exec(authSchema)
 	if err != nil {
@@ -81,6 +174,16 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(rlsSchema)
 	if err != nil {
 		return fmt.Errorf("failed to run RLS migrations: %w", err)
+	}
+
+	_, err = db.Exec(emailSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run email migrations: %w", err)
+	}
+
+	_, err = db.Exec(defaultTemplates)
+	if err != nil {
+		return fmt.Errorf("failed to seed email templates: %w", err)
 	}
 
 	return nil
