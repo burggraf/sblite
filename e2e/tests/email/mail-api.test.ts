@@ -45,6 +45,10 @@ describe('Mail API', () => {
     it('should return emails after triggering email send', async () => {
       const testEmail = uniqueEmail()
 
+      // Create user first (recovery emails only sent to existing users)
+      await supabase.auth.signUp({ email: testEmail, password: 'test-password-123' })
+      await clearAllEmails()
+
       // Trigger an email by requesting password reset
       await supabase.auth.resetPasswordForEmail(testEmail)
 
@@ -57,6 +61,12 @@ describe('Mail API', () => {
 
     it('should support limit parameter', async () => {
       const testEmails = [uniqueEmail(), uniqueEmail(), uniqueEmail()]
+
+      // Create users first
+      for (const email of testEmails) {
+        await supabase.auth.signUp({ email, password: 'test-password-123' })
+      }
+      await clearAllEmails()
 
       // Trigger multiple emails
       for (const email of testEmails) {
@@ -71,6 +81,12 @@ describe('Mail API', () => {
 
     it('should support offset parameter for pagination', async () => {
       const testEmails = [uniqueEmail(), uniqueEmail(), uniqueEmail()]
+
+      // Create users first
+      for (const email of testEmails) {
+        await supabase.auth.signUp({ email, password: 'test-password-123' })
+      }
+      await clearAllEmails()
 
       for (const email of testEmails) {
         await supabase.auth.resetPasswordForEmail(email)
@@ -91,6 +107,11 @@ describe('Mail API', () => {
       const email1 = uniqueEmail()
       const email2 = uniqueEmail()
 
+      // Create users first
+      await supabase.auth.signUp({ email: email1, password: 'test-password-123' })
+      await supabase.auth.signUp({ email: email2, password: 'test-password-123' })
+      await clearAllEmails()
+
       await supabase.auth.resetPasswordForEmail(email1)
       await new Promise((resolve) => setTimeout(resolve, 100))
       await supabase.auth.resetPasswordForEmail(email2)
@@ -110,6 +131,11 @@ describe('Mail API', () => {
   describe('GET /mail/api/emails/:id', () => {
     it('should return single email by ID', async () => {
       const testEmail = uniqueEmail()
+
+      // Create user first
+      await supabase.auth.signUp({ email: testEmail, password: 'test-password-123' })
+      await clearAllEmails()
+
       await supabase.auth.resetPasswordForEmail(testEmail)
 
       await new Promise((resolve) => setTimeout(resolve, 200))
@@ -131,6 +157,11 @@ describe('Mail API', () => {
   describe('DELETE /mail/api/emails/:id', () => {
     it('should delete single email by ID', async () => {
       const testEmail = uniqueEmail()
+
+      // Create user first
+      await supabase.auth.signUp({ email: testEmail, password: 'test-password-123' })
+      await clearAllEmails()
+
       await supabase.auth.resetPasswordForEmail(testEmail)
 
       await new Promise((resolve) => setTimeout(resolve, 200))
@@ -156,6 +187,12 @@ describe('Mail API', () => {
     it('should clear all emails', async () => {
       const testEmails = [uniqueEmail(), uniqueEmail()]
 
+      // Create users first
+      for (const email of testEmails) {
+        await supabase.auth.signUp({ email, password: 'test-password-123' })
+      }
+      await clearAllEmails()
+
       for (const email of testEmails) {
         await supabase.auth.resetPasswordForEmail(email)
       }
@@ -175,6 +212,11 @@ describe('Mail API', () => {
   describe('Email Content Structure', () => {
     it('should include all required fields', async () => {
       const testEmail = uniqueEmail()
+
+      // Create user first
+      await supabase.auth.signUp({ email: testEmail, password: 'test-password-123' })
+      await clearAllEmails()
+
       await supabase.auth.resetPasswordForEmail(testEmail)
 
       await new Promise((resolve) => setTimeout(resolve, 200))
@@ -195,6 +237,11 @@ describe('Mail API', () => {
 
     it('should have correct type for recovery email', async () => {
       const testEmail = uniqueEmail()
+
+      // Create user first
+      await supabase.auth.signUp({ email: testEmail, password: 'test-password-123' })
+      await clearAllEmails()
+
       await supabase.auth.resetPasswordForEmail(testEmail)
 
       await new Promise((resolve) => setTimeout(resolve, 200))
@@ -208,6 +255,11 @@ describe('Mail API', () => {
 
     it('should contain verification URL in body', async () => {
       const testEmail = uniqueEmail()
+
+      // Create user first
+      await supabase.auth.signUp({ email: testEmail, password: 'test-password-123' })
+      await clearAllEmails()
+
       await supabase.auth.resetPasswordForEmail(testEmail)
 
       await new Promise((resolve) => setTimeout(resolve, 200))

@@ -12,8 +12,8 @@
     "test:auth": "vitest run --testPathPattern=auth/",
     "test:filters": "vitest run --testPathPattern=filters/",
     "test:modifiers": "vitest run --testPathPattern=modifiers/",
-    "test:email": "vitest run --testPathPattern=email/",
-    "test:email:smtp": "SBLITE_TEST_SMTP=true vitest run --testPathPattern=email/smtp",
+    "test:email": "vitest run tests/email/",
+    "test:email:smtp": "SBLITE_TEST_SMTP=true vitest run tests/email/smtp",
     "setup": "tsx scripts/setup-test-db.ts",
     "server:start": "cd .. && ./sblite serve &",
     "server:stop": "pkill -f 'sblite serve' || true"

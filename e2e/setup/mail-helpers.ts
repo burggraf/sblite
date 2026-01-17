@@ -43,7 +43,9 @@ export async function getEmails(limit?: number, offset?: number): Promise<Caught
     throw new Error(`Failed to get emails: ${response.status} ${response.statusText}`)
   }
 
-  return response.json()
+  const data = await response.json()
+  // API returns null when no emails, normalize to empty array
+  return data ?? []
 }
 
 /**
@@ -163,6 +165,8 @@ export async function waitForEmail(
  * Looks for token parameter in URLs like:
  * - /auth/v1/verify?token=ABC123&type=signup
  * - token=ABC123
+ *
+ * Note: Tokens in email URLs are URL-encoded, so we decode them
  */
 export function extractToken(email: CaughtEmail): string | null {
   // Try HTML body first, then text body
@@ -170,7 +174,14 @@ export function extractToken(email: CaughtEmail): string | null {
 
   // Match token in query string
   const match = body.match(/token=([^&"\s<>]+)/)
-  return match ? match[1] : null
+  if (!match) return null
+
+  // URL-decode the token (e.g., %3D -> =)
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return match[1]
+  }
 }
 
 /**
