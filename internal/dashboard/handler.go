@@ -55,6 +55,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/{name}", h.handleGetTableSchema)
 			r.Delete("/{name}", h.handleDeleteTable)
 			r.Post("/{name}/columns", h.handleAddColumn)
+			r.Patch("/{name}/columns/{column}", h.handleRenameColumn)
+			r.Delete("/{name}/columns/{column}", h.handleDropColumn)
 		})
 
 		// Data API routes (require auth)
@@ -711,4 +713,169 @@ func (h *Handler) handleAddColumn(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(col)
+}
+
+func (h *Handler) handleRenameColumn(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	oldName := chi.URLParam(r, "column")
+
+	var req struct {
+		NewName string `json:"new_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NewName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "new_name required"})
+		return
+	}
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to start transaction"})
+		return
+	}
+	defer tx.Rollback()
+
+	alterSQL := fmt.Sprintf(`ALTER TABLE "%s" RENAME COLUMN "%s" TO "%s"`, tableName, oldName, req.NewName)
+	if _, err := tx.Exec(alterSQL); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if _, err := tx.Exec(`UPDATE _columns SET column_name = ? WHERE table_name = ? AND column_name = ?`,
+		req.NewName, tableName, oldName); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to update metadata"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to commit"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"name": req.NewName})
+}
+
+func (h *Handler) handleDropColumn(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	columnName := chi.URLParam(r, "column")
+
+	// Get remaining columns
+	rows, err := h.db.Query(`SELECT column_name, pg_type, is_nullable, default_value, is_primary
+		FROM _columns WHERE table_name = ? AND column_name != ? ORDER BY column_name`, tableName, columnName)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to get columns"})
+		return
+	}
+	defer rows.Close()
+
+	type colInfo struct {
+		name, pgType      string
+		nullable, primary bool
+		defaultVal        sql.NullString
+	}
+	var remainingCols []colInfo
+	var colNames []string
+
+	for rows.Next() {
+		var c colInfo
+		rows.Scan(&c.name, &c.pgType, &c.nullable, &c.defaultVal, &c.primary)
+		remainingCols = append(remainingCols, c)
+		colNames = append(colNames, fmt.Sprintf(`"%s"`, c.name))
+	}
+
+	if len(remainingCols) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Cannot drop last column"})
+		return
+	}
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to start transaction"})
+		return
+	}
+	defer tx.Rollback()
+
+	// Create new table without the column
+	var colDefs []string
+	var primaryKeys []string
+	for _, c := range remainingCols {
+		def := fmt.Sprintf(`"%s" %s`, c.name, pgTypeToSQLite(c.pgType))
+		if !c.nullable {
+			def += " NOT NULL"
+		}
+		if c.defaultVal.Valid {
+			def += " DEFAULT " + c.defaultVal.String
+		}
+		colDefs = append(colDefs, def)
+		if c.primary {
+			primaryKeys = append(primaryKeys, fmt.Sprintf(`"%s"`, c.name))
+		}
+	}
+	if len(primaryKeys) > 0 {
+		colDefs = append(colDefs, "PRIMARY KEY ("+strings.Join(primaryKeys, ", ")+")")
+	}
+
+	newTableSQL := fmt.Sprintf(`CREATE TABLE "%s_new" (%s)`, tableName, strings.Join(colDefs, ", "))
+	if _, err := tx.Exec(newTableSQL); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Copy data
+	copySQL := fmt.Sprintf(`INSERT INTO "%s_new" SELECT %s FROM "%s"`, tableName, strings.Join(colNames, ", "), tableName)
+	if _, err := tx.Exec(copySQL); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Drop old, rename new
+	if _, err := tx.Exec(fmt.Sprintf(`DROP TABLE "%s"`, tableName)); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if _, err := tx.Exec(fmt.Sprintf(`ALTER TABLE "%s_new" RENAME TO "%s"`, tableName, tableName)); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Update metadata
+	if _, err := tx.Exec(`DELETE FROM _columns WHERE table_name = ? AND column_name = ?`, tableName, columnName); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to update metadata"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to commit"})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

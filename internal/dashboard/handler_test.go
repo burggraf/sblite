@@ -545,3 +545,65 @@ func TestHandlerAddColumn(t *testing.T) {
 	h.db.QueryRow(`SELECT COUNT(*) FROM _columns WHERE table_name = 'items' AND column_name = 'description'`).Scan(&count)
 	require.Equal(t, 1, count)
 }
+
+func TestHandlerRenameColumn(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	_, err := h.db.Exec(`CREATE TABLE items (id TEXT, old_name TEXT)`)
+	require.NoError(t, err)
+	_, err = h.db.Exec(`INSERT INTO _columns (table_name, column_name, pg_type, is_nullable, is_primary) VALUES ('items', 'old_name', 'text', true, false)`)
+	require.NoError(t, err)
+
+	token := setupTestSession(t, h)
+
+	body := `{"new_name":"new_name"}`
+	req := httptest.NewRequest("PATCH", "/api/tables/items/columns/old_name", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "_sblite_session", Value: token})
+	w := httptest.NewRecorder()
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var count int
+	h.db.QueryRow(`SELECT COUNT(*) FROM _columns WHERE table_name = 'items' AND column_name = 'new_name'`).Scan(&count)
+	require.Equal(t, 1, count)
+}
+
+func TestHandlerDropColumn(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	_, err := h.db.Exec(`CREATE TABLE items (id TEXT PRIMARY KEY, to_drop TEXT)`)
+	require.NoError(t, err)
+	_, err = h.db.Exec(`INSERT INTO _columns (table_name, column_name, pg_type, is_nullable, is_primary) VALUES ('items', 'id', 'text', false, true), ('items', 'to_drop', 'text', true, false)`)
+	require.NoError(t, err)
+	_, err = h.db.Exec(`INSERT INTO items VALUES ('1', 'value')`)
+	require.NoError(t, err)
+
+	token := setupTestSession(t, h)
+
+	req := httptest.NewRequest("DELETE", "/api/tables/items/columns/to_drop", nil)
+	req.AddCookie(&http.Cookie{Name: "_sblite_session", Value: token})
+	w := httptest.NewRecorder()
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+
+	// Verify column is gone from metadata
+	var count int
+	h.db.QueryRow(`SELECT COUNT(*) FROM _columns WHERE table_name = 'items' AND column_name = 'to_drop'`).Scan(&count)
+	require.Equal(t, 0, count)
+
+	// Verify data preserved in remaining columns
+	var id string
+	h.db.QueryRow(`SELECT id FROM items`).Scan(&id)
+	require.Equal(t, "1", id)
+}
