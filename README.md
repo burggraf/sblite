@@ -25,6 +25,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | User invitations | :white_check_mark: |
 | Configurable logging (console/file/database) | :white_check_mark: |
 | Row Level Security | :white_check_mark: |
+| Web Dashboard | :white_check_mark: |
 | Realtime subscriptions | :construction: Planned |
 | File storage | :construction: Planned |
 
@@ -50,6 +51,21 @@ go build -o sblite
 ./sblite serve --host 0.0.0.0         # Bind to all interfaces
 ./sblite serve --mail-mode=catch      # Development: captures emails, web UI at /mail
 ./sblite serve --mail-mode=smtp       # Production: sends real emails via SMTP
+```
+
+### Access the Dashboard
+
+The built-in web dashboard is available at `http://localhost:8080/_`
+
+On first access, you'll be prompted to set an admin password. The dashboard provides:
+- **Table Management** - Create, modify, and delete tables with typed schemas
+- **Data Browser** - View, filter, sort, and edit rows with pagination
+- **Schema Editor** - Add, rename, and remove columns
+
+You can also set the password via CLI:
+```bash
+./sblite dashboard setup              # Set initial password
+./sblite dashboard reset-password     # Reset password and clear sessions
 ```
 
 ### Use with Supabase client
@@ -163,6 +179,24 @@ See [Email System Documentation](docs/EMAIL.md) for detailed configuration and u
 | `/rest/v1/{table}` | PATCH | Update rows matching filters |
 | `/rest/v1/{table}` | DELETE | Delete rows matching filters |
 
+### Dashboard (`/_`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/_/` | GET | Dashboard web interface |
+| `/_/api/auth/status` | GET | Check auth/setup status |
+| `/_/api/auth/setup` | POST | Set initial password |
+| `/_/api/auth/login` | POST | Login to dashboard |
+| `/_/api/auth/logout` | POST | Logout from dashboard |
+| `/_/api/tables` | GET | List all tables |
+| `/_/api/tables` | POST | Create table |
+| `/_/api/tables/{name}` | GET | Get table schema |
+| `/_/api/tables/{name}` | DELETE | Drop table |
+| `/_/api/data/{table}` | GET | Select rows (paginated) |
+| `/_/api/data/{table}` | POST | Insert row |
+| `/_/api/data/{table}` | PATCH | Update rows |
+| `/_/api/data/{table}` | DELETE | Delete rows |
+
 ### Health
 
 | Endpoint | Method | Description |
@@ -216,6 +250,7 @@ npm test         # Run all tests
 ├─────────────────────────────────────┤
 │  /auth/v1/*  →  Auth Service        │
 │  /rest/v1/*  →  REST Handler        │
+│  /_/*        →  Web Dashboard       │
 │  /mail/*     →  Mail Viewer (dev)   │
 ├─────────────────────────────────────┤
 │  Email Service (log/catch/smtp)     │

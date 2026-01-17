@@ -29,7 +29,8 @@ sblite/
 │   ├── serve.go              # `sblite serve` - start server
 │   ├── migrate.go            # `sblite migrate` - export to PostgreSQL
 │   ├── migration.go          # `sblite migration` - manage migrations
-│   └── db.go                 # `sblite db` - database operations
+│   ├── db.go                 # `sblite db` - database operations
+│   └── dashboard.go          # `sblite dashboard` - manage dashboard password
 ├── internal/
 │   ├── auth/                 # Authentication service
 │   │   ├── jwt.go            # JWT generation/validation, sessions
@@ -49,6 +50,12 @@ sblite/
 │   ├── migration/            # Schema migration system
 │   │   ├── migration.go      # Migration types, filename parsing
 │   │   └── runner.go         # Apply, GetApplied, GetPending, ReadFromDir
+│   ├── dashboard/            # Web dashboard
+│   │   ├── handler.go        # HTTP handlers, API endpoints
+│   │   ├── auth.go           # Password verification, bcrypt
+│   │   ├── store.go          # Key-value store for config
+│   │   ├── session.go        # Session token management
+│   │   └── static/           # Embedded frontend (HTML, CSS, JS)
 │   ├── rest/                 # REST API (PostgREST-compatible)
 │   │   ├── handler.go        # HTTP handlers for CRUD
 │   │   ├── query.go          # Query parsing (filters, modifiers)
@@ -96,6 +103,10 @@ go test ./...
 ./sblite migration new create_users           # Create new migration file
 ./sblite migration list --db data.db          # List all migrations and status
 ./sblite db push --db data.db                 # Apply pending migrations
+
+# Dashboard management
+./sblite dashboard setup                      # Set initial dashboard password
+./sblite dashboard reset-password             # Reset password and clear sessions
 
 # Run E2E tests (requires Node.js 18+)
 cd e2e
@@ -170,6 +181,29 @@ npm test         # Run all tests (server must be running)
 | `/admin/v1/tables` | GET | List all user tables |
 | `/admin/v1/tables/{name}` | GET | Get table schema |
 | `/admin/v1/tables/{name}` | DELETE | Drop table |
+
+### Dashboard (`/_`)
+
+Web dashboard accessible at `http://localhost:8080/_`
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/_/` | GET | Dashboard web interface |
+| `/_/api/auth/status` | GET | Check auth/setup status |
+| `/_/api/auth/setup` | POST | Set initial password |
+| `/_/api/auth/login` | POST | Login to dashboard |
+| `/_/api/auth/logout` | POST | Logout from dashboard |
+| `/_/api/tables` | GET | List all tables |
+| `/_/api/tables` | POST | Create table with typed columns |
+| `/_/api/tables/{name}` | GET | Get table schema |
+| `/_/api/tables/{name}` | DELETE | Drop table |
+| `/_/api/tables/{name}/columns` | POST | Add column |
+| `/_/api/tables/{name}/columns/{col}` | PATCH | Rename column |
+| `/_/api/tables/{name}/columns/{col}` | DELETE | Drop column |
+| `/_/api/data/{table}` | GET | Select rows (paginated) |
+| `/_/api/data/{table}` | POST | Insert row |
+| `/_/api/data/{table}` | PATCH | Update rows |
+| `/_/api/data/{table}` | DELETE | Delete rows |
 
 ### Query Operators
 
@@ -255,6 +289,30 @@ sblite includes a Supabase CLI-compatible migration system for managing schema c
 - `--db` - Database path (default: `./data.db`)
 - `--migrations-dir` - Migrations directory (default: `./migrations`)
 
+### Web Dashboard
+
+Built-in web UI for table and data management, served at `/_`.
+
+**Architecture:**
+- Embedded static files using Go's `//go:embed` directive
+- Vanilla JavaScript SPA (no framework dependencies)
+- Session-based authentication with HTTP-only cookies
+
+**Database Tables:**
+- `_dashboard` - Key-value store for password_hash, session_token, session_expiry
+
+**Security:**
+- Password: minimum 8 characters, bcrypt hashed (cost 10)
+- Session: 24-hour expiry, HTTP-only SameSite=Strict cookie
+- First access requires initial password setup
+
+**Features:**
+- Create/modify/delete tables with typed schemas
+- View/filter/sort/paginate row data
+- Add, rename, and remove columns
+- Insert, update, and delete rows
+- Dark/light theme toggle
+
 ## Testing
 
 ### Go Unit Tests
@@ -291,6 +349,7 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Admin API for typed table creation
 - PostgreSQL DDL export for Supabase migration
 - Schema migration system (Supabase CLI-compatible)
+- Web dashboard for table and data management
 
 ### Planned
 - Row Level Security (RLS) via query rewriting
@@ -345,3 +404,10 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 1. Add handler method in `internal/admin/handler.go`
 2. Register route in `internal/server/server.go` setupRoutes()
 3. Add tests in `internal/admin/handler_test.go`
+
+### Adding a new dashboard endpoint
+
+1. Add handler method in `internal/dashboard/handler.go`
+2. Register route in `RegisterRoutes()` function in same file
+3. Update frontend in `internal/dashboard/static/app.js` if needed
+4. Add E2E test in `e2e/tests/dashboard/`
