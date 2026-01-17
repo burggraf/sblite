@@ -516,3 +516,32 @@ func TestHandlerDeleteData(t *testing.T) {
 	h.db.QueryRow(`SELECT COUNT(*) FROM items WHERE id = '1'`).Scan(&count)
 	require.Equal(t, 0, count)
 }
+
+func TestHandlerAddColumn(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	_, err := h.db.Exec(`CREATE TABLE items (id TEXT PRIMARY KEY)`)
+	require.NoError(t, err)
+	_, err = h.db.Exec(`INSERT INTO _columns (table_name, column_name, pg_type, is_nullable, is_primary) VALUES ('items', 'id', 'text', false, true)`)
+	require.NoError(t, err)
+
+	token := setupTestSession(t, h)
+
+	body := `{"name":"description","type":"text","nullable":true}`
+	req := httptest.NewRequest("POST", "/api/tables/items/columns", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "_sblite_session", Value: token})
+	w := httptest.NewRecorder()
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	// Verify column exists in metadata
+	var count int
+	h.db.QueryRow(`SELECT COUNT(*) FROM _columns WHERE table_name = 'items' AND column_name = 'description'`).Scan(&count)
+	require.Equal(t, 1, count)
+}

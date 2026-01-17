@@ -54,6 +54,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Post("/", h.handleCreateTable)
 			r.Get("/{name}", h.handleGetTableSchema)
 			r.Delete("/{name}", h.handleDeleteTable)
+			r.Post("/{name}/columns", h.handleAddColumn)
 		})
 
 		// Data API routes (require auth)
@@ -651,4 +652,63 @@ func (h *Handler) parseSimpleFilter(query url.Values) (string, []interface{}) {
 		return "", nil
 	}
 	return "WHERE " + strings.Join(conditions, " AND "), values
+}
+
+func (h *Handler) handleAddColumn(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+
+	var col struct {
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		Nullable bool   `json:"nullable"`
+		Default  string `json:"default,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&col); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		return
+	}
+
+	sqlType := pgTypeToSQLite(col.Type)
+	alterSQL := fmt.Sprintf(`ALTER TABLE "%s" ADD COLUMN "%s" %s`, tableName, col.Name, sqlType)
+	if col.Default != "" {
+		alterSQL += " DEFAULT " + col.Default
+	}
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to start transaction"})
+		return
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(alterSQL); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	_, err = tx.Exec(`INSERT INTO _columns (table_name, column_name, pg_type, is_nullable, default_value, is_primary) VALUES (?, ?, ?, ?, ?, ?)`,
+		tableName, col.Name, col.Type, col.Nullable, col.Default, false)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to register column"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to commit"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(col)
 }
