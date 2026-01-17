@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/markb/sblite/internal/admin"
 	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/db"
 	"github.com/markb/sblite/internal/log"
@@ -14,6 +15,7 @@ import (
 	"github.com/markb/sblite/internal/mail/viewer"
 	"github.com/markb/sblite/internal/rest"
 	"github.com/markb/sblite/internal/rls"
+	"github.com/markb/sblite/internal/schema"
 )
 
 type Server struct {
@@ -27,6 +29,8 @@ type Server struct {
 	mailer       mail.Mailer
 	catchMailer  *mail.CatchMailer
 	emailService *mail.EmailService
+	adminHandler *admin.Handler
+	schema       *schema.Schema
 }
 
 func New(database *db.DB, jwtSecret string, mailConfig *mail.Config) *Server {
@@ -47,6 +51,10 @@ func New(database *db.DB, jwtSecret string, mailConfig *mail.Config) *Server {
 		restHandler: rest.NewHandler(database, rlsEnforcer),
 		mailConfig:  mailConfig,
 	}
+
+	// Initialize schema and admin handler
+	s.schema = schema.New(s.db.DB)
+	s.adminHandler = admin.NewHandler(s.db, s.schema)
 
 	// Initialize mail services
 	s.initMail()
@@ -118,6 +126,14 @@ func (s *Server) setupRoutes() {
 		r.Post("/{table}", s.restHandler.HandleInsert)
 		r.Patch("/{table}", s.restHandler.HandleUpdate)
 		r.Delete("/{table}", s.restHandler.HandleDelete)
+	})
+
+	// Admin API routes
+	s.router.Route("/admin/v1", func(r chi.Router) {
+		r.Post("/tables", s.adminHandler.CreateTable)
+		r.Get("/tables", s.adminHandler.ListTables)
+		r.Get("/tables/{name}", s.adminHandler.GetTable)
+		r.Delete("/tables/{name}", s.adminHandler.DeleteTable)
 	})
 
 	// Mail viewer routes (only in catch mode)
