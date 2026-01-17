@@ -7,12 +7,27 @@ const App = {
         theme: 'dark',
         currentView: 'tables',
         loading: true,
-        error: null
+        error: null,
+        tables: {
+            list: [],
+            selected: null,
+            schema: null,
+            data: [],
+            page: 1,
+            pageSize: 25,
+            totalRows: 0,
+            selectedRows: new Set(),
+            editingCell: null,
+            loading: false,
+        },
     },
 
     async init() {
         this.loadTheme();
         await this.checkAuth();
+        if (this.state.authenticated) {
+            await this.loadTables();
+        }
         this.render();
     },
 
@@ -100,6 +115,60 @@ const App = {
             this.state.error = 'Logout failed';
             this.render();
         }
+    },
+
+    // Table management methods
+    async loadTables() {
+        try {
+            const res = await fetch('/_/api/tables');
+            if (res.ok) {
+                this.state.tables.list = await res.json();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load tables';
+        }
+        this.render();
+    },
+
+    async selectTable(name) {
+        this.state.tables.selected = name;
+        this.state.tables.page = 1;
+        this.state.tables.selectedRows = new Set();
+        await this.loadTableSchema(name);
+        await this.loadTableData();
+    },
+
+    async loadTableSchema(name) {
+        try {
+            const res = await fetch(`/_/api/tables/${name}`);
+            if (res.ok) {
+                this.state.tables.schema = await res.json();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load schema';
+        }
+    },
+
+    async loadTableData() {
+        const { selected, page, pageSize } = this.state.tables;
+        if (!selected) return;
+
+        this.state.tables.loading = true;
+        this.render();
+
+        try {
+            const offset = (page - 1) * pageSize;
+            const res = await fetch(`/_/api/data/${selected}?limit=${pageSize}&offset=${offset}`);
+            if (res.ok) {
+                const data = await res.json();
+                this.state.tables.data = data.rows;
+                this.state.tables.totalRows = data.total;
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load data';
+        }
+        this.state.tables.loading = false;
+        this.render();
     },
 
     navigate(view) {
@@ -230,7 +299,7 @@ const App = {
     renderContent() {
         switch (this.state.currentView) {
             case 'tables':
-                return '<div class="card"><h2 class="card-title">Tables</h2><p>Table management coming in Phase 3</p></div>';
+                return this.renderTablesView();
             case 'users':
                 return '<div class="card"><h2 class="card-title">Users</h2><p>User management coming soon</p></div>';
             case 'policies':
@@ -242,6 +311,76 @@ const App = {
             default:
                 return '<div class="card">Select a section from the sidebar</div>';
         }
+    },
+
+    renderTablesView() {
+        return `
+            <div class="tables-layout">
+                <div class="table-list-panel">
+                    <div class="panel-header">
+                        <span>Tables</span>
+                        <button class="btn btn-primary btn-sm" onclick="App.showCreateTableModal()">+ New</button>
+                    </div>
+                    <div class="table-list">
+                        ${this.state.tables.list.length === 0
+                            ? '<div class="empty-state">No tables yet</div>'
+                            : this.state.tables.list.map(t => `
+                                <div class="table-list-item ${this.state.tables.selected === t.name ? 'active' : ''}"
+                                     onclick="App.selectTable('${t.name}')">
+                                    ${t.name}
+                                </div>
+                            `).join('')}
+                    </div>
+                </div>
+                <div class="table-content-panel">
+                    ${this.state.tables.selected ? this.renderTableContent() : '<div class="empty-state">Select a table</div>'}
+                </div>
+            </div>
+        `;
+    },
+
+    renderTableContent() {
+        if (this.state.tables.loading) {
+            return '<div class="loading">Loading...</div>';
+        }
+        return `
+            <div class="table-toolbar">
+                <h2>${this.state.tables.selected}</h2>
+                <div class="toolbar-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="App.showAddRowModal()">+ Add Row</button>
+                    <button class="btn btn-secondary btn-sm" onclick="App.showSchemaModal()">Schema</button>
+                    <button class="btn btn-secondary btn-sm" onclick="App.confirmDeleteTable()">Delete Table</button>
+                </div>
+            </div>
+            ${this.renderDataGrid()}
+            ${this.renderPagination()}
+        `;
+    },
+
+    // Placeholder methods for data grid and pagination (to be implemented in Task 10)
+    renderDataGrid() {
+        return '<div class="empty-state">Data grid coming in next task</div>';
+    },
+
+    renderPagination() {
+        return '';
+    },
+
+    // Placeholder methods for modals (to be implemented in later tasks)
+    showCreateTableModal() {
+        alert('Create table modal coming soon');
+    },
+
+    showAddRowModal() {
+        alert('Add row modal coming soon');
+    },
+
+    showSchemaModal() {
+        alert('Schema modal coming soon');
+    },
+
+    confirmDeleteTable() {
+        alert('Delete table confirmation coming soon');
     }
 };
 
