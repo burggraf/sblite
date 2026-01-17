@@ -27,7 +27,11 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Auth - User | 12 | 1 | 6 | 5 |
 | Auth - State Change | 11 | 2 | 4 | 5 |
 | Auth - Password Reset | 6 | 0 | 0 | 6 |
-| **TOTAL** | **173** | **96** | **19** | **58** |
+| Email - Mail API | 10 | 10 | 0 | 0 |
+| Email - Flows | 12 | 12 | 0 | 0 |
+| Email - Verification | 11 | 11 | 0 | 0 |
+| Email - SMTP | 4 | 0 | 0 | 4 |
+| **TOTAL** | **210** | **133** | **19** | **58** |
 
 *Last tested: 2026-01-16*
 
@@ -499,6 +503,104 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 ---
 
+## Email Tests
+
+### `tests/email/mail-api.test.ts`
+
+**GET /mail/api/emails**
+- ✅ should return empty array when no emails
+- ✅ should return emails after triggering email send
+- ✅ should support limit parameter
+- ✅ should support offset parameter for pagination
+- ✅ should return emails in descending order by default (newest first)
+
+**GET /mail/api/emails/:id**
+- ✅ should return single email by ID
+- ✅ should return null for non-existent ID
+
+**DELETE /mail/api/emails/:id**
+- ✅ should delete single email by ID
+- ✅ should not error when deleting non-existent email
+
+**DELETE /mail/api/emails**
+- ✅ should clear all emails
+
+**Email Content Structure**
+- ✅ should include all required fields
+- ✅ should have correct type for recovery email
+- ✅ should contain verification URL in body
+
+---
+
+### `tests/email/email-flows.test.ts`
+
+**Password Recovery (resetPasswordForEmail)**
+- ✅ should send recovery email for existing user
+- ✅ should include verification token in recovery email
+- ✅ should send recovery email even for non-existent user (no information leak)
+- ✅ should accept redirectTo option
+
+**Magic Link (signInWithOtp)**
+- ✅ should send magic link email
+- ✅ should include verification token in magic link email
+- ✅ should work for existing users
+
+**User Invite (Admin Only)**
+- ✅ should send invite email via service role
+- ✅ should include verification token in invite email
+- ✅ should reject invite without service role
+
+**Resend Email**
+- ✅ should resend confirmation email
+- ✅ should resend recovery email
+
+**Security**
+- ✅ should not reveal user existence via API response
+- ✅ should not send email to non-existent user for recovery
+
+---
+
+### `tests/email/verification.test.ts`
+
+**Password Reset Flow**
+- ✅ should complete full password reset flow
+- ✅ should reject invalid recovery token
+- ✅ should reject already-used recovery token
+
+**Magic Link Flow**
+- ✅ should complete full magic link sign-in flow
+- ✅ should reject invalid magic link token
+- ✅ should reject already-used magic link token
+
+**Invite Flow**
+- ✅ should complete full invite acceptance flow
+- ✅ should reject invalid invite token
+
+**Token Validation**
+- ✅ should reject token with wrong type
+- ✅ should reject empty token
+- ✅ should reject missing type
+
+---
+
+### `tests/email/smtp.test.ts`
+
+*Note: These tests are skipped by default. Enable with `SBLITE_TEST_SMTP=true`.*
+
+**Password Recovery via SMTP**
+- ⏭️ should send recovery email through SMTP
+
+**Magic Link via SMTP**
+- ⏭️ should send magic link email through SMTP
+
+**User Invite via SMTP**
+- ⏭️ should send invite email through SMTP
+
+**SMTP Configuration**
+- ⏭️ should include correct sender address
+
+---
+
 ## Known Issues Summary
 
 ### Fixed Issues (as of 2026-01-16)
@@ -544,3 +646,7 @@ Each test maps to examples from the Supabase JavaScript documentation:
 | user.test.ts | https://supabase.com/docs/reference/javascript/auth-getuser |
 | auth-state-change.test.ts | https://supabase.com/docs/reference/javascript/auth-onauthstatechange |
 | password-reset.test.ts | https://supabase.com/docs/reference/javascript/auth-resetpasswordforemail |
+| mail-api.test.ts | (sblite-specific mail viewer API) |
+| email-flows.test.ts | https://supabase.com/docs/reference/javascript/auth-resetpasswordforemail |
+| verification.test.ts | https://supabase.com/docs/reference/javascript/auth-verifyotp |
+| smtp.test.ts | (sblite-specific SMTP mode testing) |

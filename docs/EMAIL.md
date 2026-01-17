@@ -308,6 +308,82 @@ const token = tokenMatch[1];
 await fetch(`http://localhost:8080/auth/v1/verify?token=${token}&type=signup`);
 ```
 
+## E2E Testing
+
+The email system has comprehensive E2E tests located in `e2e/tests/email/`.
+
+### Running Email Tests
+
+**Catch Mode (Automated - Recommended)**
+
+Catch mode stores emails in the database for programmatic verification:
+
+```bash
+# Start server in catch mode
+./sblite serve --mail-mode=catch --db test.db
+
+# Run email tests
+cd e2e
+npm run test:email
+```
+
+This runs all email tests (~37 tests):
+- `mail-api.test.ts` - Mail viewer API endpoints
+- `email-flows.test.ts` - Auth flows that trigger emails
+- `verification.test.ts` - Complete verification flows
+
+### SMTP Mode (Manual/Local Testing)
+
+SMTP tests require a local mail server like Mailpit:
+
+```bash
+# 1. Start Mailpit
+docker run -d --name mailpit -p 8025:8025 -p 1025:1025 axllent/mailpit
+
+# 2. Start sblite with SMTP
+export SBLITE_MAIL_MODE=smtp
+export SBLITE_SMTP_HOST=localhost
+export SBLITE_SMTP_PORT=1025
+./sblite serve --db test.db
+
+# 3. Run SMTP tests
+cd e2e
+SBLITE_TEST_SMTP=true npm run test:email:smtp
+
+# 4. View emails in browser
+open http://localhost:8025
+```
+
+SMTP tests are skipped by default and only run when `SBLITE_TEST_SMTP=true`.
+
+### Test Helpers
+
+The `e2e/setup/mail-helpers.ts` module provides utilities for email testing:
+
+```typescript
+import {
+  getEmails,          // List all caught emails
+  getEmail,           // Get single email by ID
+  clearAllEmails,     // Clear all emails
+  waitForEmail,       // Wait for email with timeout
+  findEmail,          // Find email with polling
+  extractToken,       // Extract verification token
+  extractVerificationUrl,  // Extract full URL
+  assertNoEmailSent,  // Security: verify no email sent
+} from '../setup/mail-helpers'
+
+// Example: Wait for recovery email and extract token
+const email = await waitForEmail('user@example.com', 'recovery')
+const token = extractToken(email)
+```
+
+### Environment Variables for Testing
+
+| Variable | Description |
+|----------|-------------|
+| `SBLITE_TEST_SMTP` | Set to `true` to enable SMTP tests |
+| `MAILPIT_API` | Mailpit API URL (default: `http://localhost:8025/api`) |
+
 ## Troubleshooting
 
 ### Emails not being sent (SMTP mode)
