@@ -43,6 +43,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Post("/auth/setup", h.handleSetup)
 		r.Post("/auth/login", h.handleLogin)
 		r.Post("/auth/logout", h.handleLogout)
+
+		// Table management API routes (require auth)
+		r.Route("/tables", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/", h.handleListTables)
+		})
 	})
 
 	// Static files - use Route group to ensure priority
@@ -197,4 +203,45 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// requireAuth middleware checks for valid session cookie
+func (h *Handler) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookieName)
+		if err != nil || cookie.Value == "" || !h.sessions.Validate(cookie.Value) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (h *Handler) handleListTables(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(`SELECT DISTINCT table_name FROM _columns ORDER BY table_name`)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to list tables"})
+		return
+	}
+	defer rows.Close()
+
+	var tables []map[string]interface{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
+		tables = append(tables, map[string]interface{}{"name": name})
+	}
+
+	if tables == nil {
+		tables = []map[string]interface{}{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tables)
 }

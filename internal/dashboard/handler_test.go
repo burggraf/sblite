@@ -1,13 +1,36 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/require"
 )
+
+// setupTestHandler creates a Handler with a test database and returns the path for cleanup
+func setupTestHandler(t *testing.T) (*Handler, string) {
+	dbPath := t.TempDir() + "/test.db"
+	database := setupTestDB(t)
+	handler := NewHandler(database.DB)
+	return handler, dbPath
+}
+
+// setupTestSession creates a session and returns the token
+func setupTestSession(t *testing.T, h *Handler) string {
+	// Setup password first
+	err := h.auth.SetupPassword("testpassword123")
+	require.NoError(t, err)
+
+	// Create session
+	token, err := h.sessions.Create()
+	require.NoError(t, err)
+	return token
+}
 
 func TestHandlerServesUI(t *testing.T) {
 	database := setupTestDB(t)
@@ -259,4 +282,38 @@ func TestHandlerStaticNotFound(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", w.Code)
 	}
+}
+
+func TestHandlerListTables(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	// Create a test table first
+	_, err := h.db.Exec(`CREATE TABLE test_items (id TEXT PRIMARY KEY, name TEXT)`)
+	require.NoError(t, err)
+
+	// Register in schema
+	_, err = h.db.Exec(`INSERT INTO _columns (table_name, column_name, pg_type, is_nullable, is_primary) VALUES ('test_items', 'id', 'text', false, true)`)
+	require.NoError(t, err)
+	_, err = h.db.Exec(`INSERT INTO _columns (table_name, column_name, pg_type, is_nullable, is_primary) VALUES ('test_items', 'name', 'text', true, false)`)
+	require.NoError(t, err)
+
+	// Setup session
+	token := setupTestSession(t, h)
+
+	req := httptest.NewRequest("GET", "/api/tables", nil)
+	req.AddCookie(&http.Cookie{Name: "_sblite_session", Value: token})
+	w := httptest.NewRecorder()
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var tables []map[string]interface{}
+	err = json.Unmarshal(w.Body.Bytes(), &tables)
+	require.NoError(t, err)
+	require.Len(t, tables, 1)
+	require.Equal(t, "test_items", tables[0]["name"])
 }
