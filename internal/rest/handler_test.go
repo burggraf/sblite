@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/schema"
 )
 
 func setupTestHandler(t *testing.T) (*Handler, *db.DB) {
@@ -38,7 +39,7 @@ func setupTestHandler(t *testing.T) (*Handler, *db.DB) {
 		t.Fatalf("failed to create todos table: %v", err)
 	}
 
-	handler := NewHandler(database, nil) // nil enforcer for tests without RLS
+	handler := NewHandler(database, nil, nil) // nil enforcer for tests without RLS
 	return handler, database
 }
 
@@ -784,7 +785,7 @@ func setupTestHandlerWithRelations(t *testing.T) (*Handler, *db.DB) {
 		t.Fatalf("failed to create cities table: %v", err)
 	}
 
-	handler := NewHandler(database, nil)
+	handler := NewHandler(database, nil, nil)
 	return handler, database
 }
 
@@ -1290,7 +1291,7 @@ func setupTestHandlerWithUpsertTable(t *testing.T) (*Handler, *db.DB) {
 		t.Fatalf("failed to create users table: %v", err)
 	}
 
-	handler := NewHandler(database, nil)
+	handler := NewHandler(database, nil, nil)
 	return handler, database
 }
 
@@ -1483,4 +1484,201 @@ func TestUpsertNewRowWithIgnoreDuplicates(t *testing.T) {
 	if name != "New User" {
 		t.Errorf("expected name 'New User', got %q", name)
 	}
+}
+
+// setupTestHandlerWithSchema creates a handler with a schema for validation tests
+func setupTestHandlerWithSchema(t *testing.T) (*Handler, *db.DB) {
+	t.Helper()
+	path := t.TempDir() + "/test.db"
+	database, err := db.New(path)
+	if err != nil {
+		t.Fatalf("failed to create db: %v", err)
+	}
+	if err := database.RunMigrations(); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+
+	// Create test table
+	_, err = database.Exec(`
+		CREATE TABLE IF NOT EXISTS profiles (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			age INTEGER,
+			active INTEGER DEFAULT 1
+		)
+	`)
+	if err != nil {
+		t.Fatalf("failed to create profiles table: %v", err)
+	}
+
+	// Create schema and register columns
+	s := schema.New(database.DB)
+
+	// Register columns with schema metadata
+	err = s.RegisterColumn(schema.Column{
+		TableName:  "profiles",
+		ColumnName: "id",
+		PgType:     "uuid",
+		IsNullable: false,
+		IsPrimary:  true,
+	})
+	if err != nil {
+		t.Fatalf("failed to register id column: %v", err)
+	}
+
+	err = s.RegisterColumn(schema.Column{
+		TableName:  "profiles",
+		ColumnName: "name",
+		PgType:     "text",
+		IsNullable: false,
+	})
+	if err != nil {
+		t.Fatalf("failed to register name column: %v", err)
+	}
+
+	err = s.RegisterColumn(schema.Column{
+		TableName:  "profiles",
+		ColumnName: "age",
+		PgType:     "integer",
+		IsNullable: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to register age column: %v", err)
+	}
+
+	err = s.RegisterColumn(schema.Column{
+		TableName:  "profiles",
+		ColumnName: "active",
+		PgType:     "boolean",
+		IsNullable: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to register active column: %v", err)
+	}
+
+	handler := NewHandler(database, nil, s)
+	return handler, database
+}
+
+func TestValidateRow(t *testing.T) {
+	t.Run("nil schema - should pass", func(t *testing.T) {
+		handler, database := setupTestHandler(t)
+		defer database.Close()
+
+		// Handler from setupTestHandler has nil schema
+		err := handler.validateRow("todos", map[string]any{
+			"title":     "Test",
+			"completed": 0,
+		})
+		if err != nil {
+			t.Errorf("expected nil schema to pass validation, got error: %v", err)
+		}
+	})
+
+	t.Run("table with no schema metadata (raw SQL) - should pass", func(t *testing.T) {
+		handler, database := setupTestHandlerWithSchema(t)
+		defer database.Close()
+
+		// The todos table exists in the database but has no schema metadata
+		// (only profiles has schema metadata)
+		err := handler.validateRow("todos", map[string]any{
+			"title":     "Test",
+			"completed": 0,
+		})
+		if err != nil {
+			t.Errorf("expected table without schema metadata to pass validation, got error: %v", err)
+		}
+	})
+
+	t.Run("valid data passing validation", func(t *testing.T) {
+		handler, database := setupTestHandlerWithSchema(t)
+		defer database.Close()
+
+		err := handler.validateRow("profiles", map[string]any{
+			"id":     "550e8400-e29b-41d4-a716-446655440000",
+			"name":   "John Doe",
+			"age":    30,
+			"active": 1,
+		})
+		if err != nil {
+			t.Errorf("expected valid data to pass validation, got error: %v", err)
+		}
+	})
+
+	t.Run("invalid UUID format - should fail", func(t *testing.T) {
+		handler, database := setupTestHandlerWithSchema(t)
+		defer database.Close()
+
+		err := handler.validateRow("profiles", map[string]any{
+			"id":   "not-a-valid-uuid",
+			"name": "John Doe",
+		})
+		if err == nil {
+			t.Error("expected invalid UUID to fail validation")
+		}
+		if !strings.Contains(err.Error(), "id") || !strings.Contains(err.Error(), "uuid") {
+			t.Errorf("expected error to mention column 'id' and 'uuid', got: %v", err)
+		}
+	})
+
+	t.Run("null value in non-nullable column - should fail", func(t *testing.T) {
+		handler, database := setupTestHandlerWithSchema(t)
+		defer database.Close()
+
+		err := handler.validateRow("profiles", map[string]any{
+			"id":   "550e8400-e29b-41d4-a716-446655440000",
+			"name": nil, // name is non-nullable
+		})
+		if err == nil {
+			t.Error("expected null in non-nullable column to fail validation")
+		}
+		if !strings.Contains(err.Error(), "name") || !strings.Contains(err.Error(), "null") {
+			t.Errorf("expected error to mention column 'name' and 'null', got: %v", err)
+		}
+	})
+
+	t.Run("unknown column - should pass (let SQLite handle it)", func(t *testing.T) {
+		handler, database := setupTestHandlerWithSchema(t)
+		defer database.Close()
+
+		err := handler.validateRow("profiles", map[string]any{
+			"id":            "550e8400-e29b-41d4-a716-446655440000",
+			"name":          "John Doe",
+			"unknown_field": "some value",
+		})
+		if err != nil {
+			t.Errorf("expected unknown column to pass validation (let SQLite handle), got error: %v", err)
+		}
+	})
+
+	t.Run("null value in nullable column - should pass", func(t *testing.T) {
+		handler, database := setupTestHandlerWithSchema(t)
+		defer database.Close()
+
+		err := handler.validateRow("profiles", map[string]any{
+			"id":   "550e8400-e29b-41d4-a716-446655440000",
+			"name": "John Doe",
+			"age":  nil, // age is nullable
+		})
+		if err != nil {
+			t.Errorf("expected null in nullable column to pass validation, got error: %v", err)
+		}
+	})
+
+	t.Run("invalid type for column - should fail", func(t *testing.T) {
+		handler, database := setupTestHandlerWithSchema(t)
+		defer database.Close()
+
+		err := handler.validateRow("profiles", map[string]any{
+			"id":   "550e8400-e29b-41d4-a716-446655440000",
+			"name": "John Doe",
+			"age":  "not-an-integer",
+		})
+		if err == nil {
+			t.Error("expected invalid type for integer column to fail validation")
+		}
+		if !strings.Contains(err.Error(), "age") {
+			t.Errorf("expected error to mention column 'age', got: %v", err)
+		}
+	})
 }

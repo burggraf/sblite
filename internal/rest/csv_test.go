@@ -37,7 +37,7 @@ func setupTestHandlerForCSV(t *testing.T) (*Handler, *db.DB) {
 		t.Fatalf("failed to create items table: %v", err)
 	}
 
-	handler := NewHandler(database, nil)
+	handler := NewHandler(database, nil, nil)
 	return handler, database
 }
 

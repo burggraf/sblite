@@ -42,18 +42,21 @@ func New(database *db.DB, jwtSecret string, mailConfig *mail.Config) *Server {
 		mailConfig = mail.DefaultConfig()
 	}
 
+	// Initialize schema first (needed by REST handler)
+	schemaInstance := schema.New(database.DB)
+
 	s := &Server{
 		db:          database,
 		router:      chi.NewRouter(),
 		authService: auth.NewService(database, jwtSecret),
 		rlsService:  rlsService,
 		rlsEnforcer: rlsEnforcer,
-		restHandler: rest.NewHandler(database, rlsEnforcer),
+		restHandler: rest.NewHandler(database, rlsEnforcer, schemaInstance),
 		mailConfig:  mailConfig,
+		schema:      schemaInstance,
 	}
 
-	// Initialize schema and admin handler
-	s.schema = schema.New(s.db.DB)
+	// Initialize admin handler (uses schema)
 	s.adminHandler = admin.NewHandler(s.db, s.schema)
 
 	// Initialize mail services

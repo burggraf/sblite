@@ -14,16 +14,19 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/markb/sblite/internal/db"
 	"github.com/markb/sblite/internal/rls"
+	"github.com/markb/sblite/internal/schema"
+	"github.com/markb/sblite/internal/types"
 )
 
 type Handler struct {
-	db        *db.DB
-	enforcer  *rls.Enforcer
-	relCache  *RelationshipCache
-	relExec   *RelationQueryExecutor
+	db       *db.DB
+	enforcer *rls.Enforcer
+	relCache *RelationshipCache
+	relExec  *RelationQueryExecutor
+	schema   *schema.Schema
 }
 
-func NewHandler(database *db.DB, enforcer *rls.Enforcer) *Handler {
+func NewHandler(database *db.DB, enforcer *rls.Enforcer, s *schema.Schema) *Handler {
 	// Get the underlying *sql.DB for relationship cache (db.DB embeds *sql.DB)
 	relCache := NewRelationshipCache(database.DB)
 	relExec := NewRelationQueryExecutor(database.DB, relCache)
@@ -33,6 +36,7 @@ func NewHandler(database *db.DB, enforcer *rls.Enforcer) *Handler {
 		enforcer: enforcer,
 		relCache: relCache,
 		relExec:  relExec,
+		schema:   s,
 	}
 }
 
@@ -393,6 +397,14 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 		records = []map[string]any{single}
 	}
 
+	// Validate all records against schema before inserting
+	for _, data := range records {
+		if err := h.validateRow(table, data); err != nil {
+			h.writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+			return
+		}
+	}
+
 	var insertedIDs []int64
 	for _, data := range records {
 		var sqlStr string
@@ -460,6 +472,12 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	var data map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON body")
+		return
+	}
+
+	// Validate data against schema before updating
+	if err := h.validateRow(q.Table, data); err != nil {
+		h.writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
 
@@ -536,6 +554,42 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// validateRow validates a row's data against the schema metadata for a table.
+// If no schema metadata exists for the table (raw SQL table), validation is skipped.
+func (h *Handler) validateRow(table string, data map[string]any) error {
+	if h.schema == nil {
+		return nil
+	}
+
+	cols, err := h.schema.GetColumns(table)
+	if err != nil {
+		return fmt.Errorf("failed to load schema for validation: %w", err)
+	}
+
+	// If no schema defined, skip validation (raw SQL table)
+	if len(cols) == 0 {
+		return nil
+	}
+
+	for colName, value := range data {
+		col, ok := cols[colName]
+		if !ok {
+			continue // Unknown column, let SQLite handle it
+		}
+
+		if err := types.Validate(types.PgType(col.PgType), value); err != nil {
+			return fmt.Errorf("column %q: %w", colName, err)
+		}
+
+		// Check nullable
+		if !col.IsNullable && value == nil {
+			return fmt.Errorf("column %q cannot be null", colName)
+		}
+	}
+
+	return nil
 }
 
 func (h *Handler) scanRows(rows *sql.Rows) ([]map[string]any, error) {
