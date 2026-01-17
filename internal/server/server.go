@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
 	"github.com/markb/sblite/internal/mail/viewer"
 	"github.com/markb/sblite/internal/rest"
@@ -79,7 +80,7 @@ func (s *Server) initMail() {
 }
 
 func (s *Server) setupRoutes() {
-	s.router.Use(middleware.Logger)
+	s.router.Use(log.RequestLogger)
 	s.router.Use(middleware.Recoverer)
 	s.router.Use(middleware.SetHeader("Content-Type", "application/json"))
 
