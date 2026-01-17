@@ -137,11 +137,6 @@ func Log(ctx context.Context, level slog.Level, msg string, args ...any) {
 
 // Stub handlers - will be replaced in subsequent tasks
 
-// NewFileHandler creates a file handler (stub - not implemented).
-func NewFileHandler(cfg *Config, level slog.Level) (slog.Handler, error) {
-	return nil, fmt.Errorf("file handler not implemented")
-}
-
 // NewDBHandler creates a database handler (stub - not implemented).
 func NewDBHandler(cfg *Config, level slog.Level) (slog.Handler, error) {
 	return nil, fmt.Errorf("database handler not implemented")
