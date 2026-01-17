@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/markb/sblite/internal/admin"
 	"github.com/markb/sblite/internal/auth"
+	"github.com/markb/sblite/internal/dashboard"
 	"github.com/markb/sblite/internal/db"
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
@@ -19,18 +20,19 @@ import (
 )
 
 type Server struct {
-	db           *db.DB
-	router       *chi.Mux
-	authService  *auth.Service
-	rlsService   *rls.Service
-	rlsEnforcer  *rls.Enforcer
-	restHandler  *rest.Handler
-	mailConfig   *mail.Config
-	mailer       mail.Mailer
-	catchMailer  *mail.CatchMailer
-	emailService *mail.EmailService
-	adminHandler *admin.Handler
-	schema       *schema.Schema
+	db               *db.DB
+	router           *chi.Mux
+	authService      *auth.Service
+	rlsService       *rls.Service
+	rlsEnforcer      *rls.Enforcer
+	restHandler      *rest.Handler
+	mailConfig       *mail.Config
+	mailer           mail.Mailer
+	catchMailer      *mail.CatchMailer
+	emailService     *mail.EmailService
+	adminHandler     *admin.Handler
+	schema           *schema.Schema
+	dashboardHandler *dashboard.Handler
 }
 
 func New(database *db.DB, jwtSecret string, mailConfig *mail.Config) *Server {
@@ -61,6 +63,9 @@ func New(database *db.DB, jwtSecret string, mailConfig *mail.Config) *Server {
 
 	// Initialize mail services
 	s.initMail()
+
+	// Initialize dashboard handler
+	s.dashboardHandler = dashboard.NewHandler(database.DB)
 
 	s.setupRoutes()
 	return s
@@ -146,6 +151,11 @@ func (s *Server) setupRoutes() {
 			viewerHandler.RegisterRoutes(r)
 		})
 	}
+
+	// Dashboard routes
+	s.router.Route("/_", func(r chi.Router) {
+		s.dashboardHandler.RegisterRoutes(r)
+	})
 }
 
 func (s *Server) Router() *chi.Mux {
