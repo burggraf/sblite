@@ -19,6 +19,11 @@ const App = {
             selectedRows: new Set(),
             editingCell: null,
             loading: false,
+            // Filtering
+            filters: [],
+            showFilters: false,
+            // Sorting
+            sort: { column: null, direction: null }, // direction: 'asc', 'desc', or null
         },
         modal: {
             type: null,  // 'createTable', 'addRow', 'editRow', 'schema', 'addColumn'
@@ -138,6 +143,9 @@ const App = {
         this.state.tables.selected = name;
         this.state.tables.page = 1;
         this.state.tables.selectedRows = new Set();
+        this.state.tables.filters = [];
+        this.state.tables.showFilters = false;
+        this.state.tables.sort = { column: null, direction: null };
         await this.loadTableSchema(name);
         await this.loadTableData();
     },
@@ -154,7 +162,7 @@ const App = {
     },
 
     async loadTableData() {
-        const { selected, page, pageSize } = this.state.tables;
+        const { selected, page, pageSize, filters, sort } = this.state.tables;
         if (!selected) return;
 
         this.state.tables.loading = true;
@@ -162,7 +170,23 @@ const App = {
 
         try {
             const offset = (page - 1) * pageSize;
-            const res = await fetch(`/_/api/data/${selected}?limit=${pageSize}&offset=${offset}`);
+            const params = new URLSearchParams();
+            params.set('limit', pageSize);
+            params.set('offset', offset);
+
+            // Add filters
+            filters.forEach(f => {
+                if (f.column && f.operator && f.value !== '') {
+                    params.append(f.column, `${f.operator}.${f.value}`);
+                }
+            });
+
+            // Add sort
+            if (sort.column && sort.direction) {
+                params.set('order', `${sort.column}.${sort.direction}`);
+            }
+
+            const res = await fetch(`/_/api/data/${selected}?${params.toString()}`);
             if (res.ok) {
                 const data = await res.json();
                 this.state.tables.data = data.rows;
@@ -173,6 +197,64 @@ const App = {
         }
         this.state.tables.loading = false;
         this.render();
+    },
+
+    // Filter methods
+    toggleFilterPanel() {
+        this.state.tables.showFilters = !this.state.tables.showFilters;
+        this.render();
+    },
+
+    addFilter() {
+        const { schema } = this.state.tables;
+        const firstColumn = schema?.columns?.[0]?.name || '';
+        this.state.tables.filters.push({
+            column: firstColumn,
+            operator: 'eq',
+            value: ''
+        });
+        this.render();
+    },
+
+    removeFilter(index) {
+        this.state.tables.filters.splice(index, 1);
+        this.state.tables.page = 1;
+        this.loadTableData();
+    },
+
+    updateFilter(index, field, value) {
+        this.state.tables.filters[index][field] = value;
+        this.render();
+    },
+
+    applyFilters() {
+        this.state.tables.page = 1;
+        this.loadTableData();
+    },
+
+    clearFilters() {
+        this.state.tables.filters = [];
+        this.state.tables.page = 1;
+        this.loadTableData();
+    },
+
+    // Sort methods
+    toggleSort(column) {
+        const { sort } = this.state.tables;
+        if (sort.column === column) {
+            // Cycle: asc -> desc -> null
+            if (sort.direction === 'asc') {
+                this.state.tables.sort = { column, direction: 'desc' };
+            } else if (sort.direction === 'desc') {
+                this.state.tables.sort = { column: null, direction: null };
+            } else {
+                this.state.tables.sort = { column, direction: 'asc' };
+            }
+        } else {
+            this.state.tables.sort = { column, direction: 'asc' };
+        }
+        this.state.tables.page = 1;
+        this.loadTableData();
     },
 
     navigate(view) {
@@ -348,11 +430,17 @@ const App = {
         if (this.state.tables.loading) {
             return '<div class="loading">Loading...</div>';
         }
-        const { selectedRows } = this.state.tables;
+        const { selectedRows, filters, showFilters } = this.state.tables;
+        const hasActiveFilters = filters.some(f => f.column && f.operator && f.value !== '');
+
         return `
             <div class="table-toolbar">
                 <h2>${this.state.tables.selected}</h2>
                 <div class="toolbar-actions">
+                    <button class="btn ${showFilters || hasActiveFilters ? 'btn-primary' : 'btn-secondary'} btn-sm"
+                        onclick="App.toggleFilterPanel()">
+                        Filter${hasActiveFilters ? ` (${filters.filter(f => f.value !== '').length})` : ''}
+                    </button>
                     ${selectedRows.size > 0 ? `
                         <button class="btn btn-secondary btn-sm" style="color: var(--error)"
                             onclick="App.deleteSelectedRows()">Delete (${selectedRows.size})</button>
@@ -362,18 +450,76 @@ const App = {
                     <button class="btn btn-secondary btn-sm" onclick="App.confirmDeleteTable()">Delete Table</button>
                 </div>
             </div>
+            ${showFilters ? this.renderFilterPanel() : ''}
             ${this.renderDataGrid()}
             ${this.renderPagination()}
         `;
     },
 
+    renderFilterPanel() {
+        const { filters, schema } = this.state.tables;
+        const columns = schema?.columns || [];
+        const operators = [
+            { value: 'eq', label: 'equals' },
+            { value: 'neq', label: 'not equals' },
+            { value: 'gt', label: 'greater than' },
+            { value: 'gte', label: 'greater or equal' },
+            { value: 'lt', label: 'less than' },
+            { value: 'lte', label: 'less or equal' },
+            { value: 'like', label: 'like' },
+            { value: 'ilike', label: 'ilike (case-insensitive)' },
+            { value: 'is', label: 'is (null/true/false)' },
+        ];
+
+        return `
+            <div class="filter-panel">
+                <div class="filter-rows">
+                    ${filters.length === 0 ? `
+                        <div class="filter-empty">No filters applied. Click "Add filter" to start filtering.</div>
+                    ` : filters.map((f, i) => `
+                        <div class="filter-row">
+                            <select class="form-input filter-column" onchange="App.updateFilter(${i}, 'column', this.value)">
+                                ${columns.map(c => `
+                                    <option value="${c.name}" ${f.column === c.name ? 'selected' : ''}>${c.name}</option>
+                                `).join('')}
+                            </select>
+                            <select class="form-input filter-operator" onchange="App.updateFilter(${i}, 'operator', this.value)">
+                                ${operators.map(o => `
+                                    <option value="${o.value}" ${f.operator === o.value ? 'selected' : ''}>${o.label}</option>
+                                `).join('')}
+                            </select>
+                            <input type="text" class="form-input filter-value" value="${f.value}"
+                                placeholder="value" onchange="App.updateFilter(${i}, 'value', this.value)"
+                                onkeydown="if(event.key==='Enter')App.applyFilters()">
+                            <button class="btn-icon filter-remove" onclick="App.removeFilter(${i})">&times;</button>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="filter-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="App.addFilter()">+ Add filter</button>
+                    ${filters.length > 0 ? `
+                        <button class="btn btn-primary btn-sm" onclick="App.applyFilters()">Apply</button>
+                        <button class="btn btn-secondary btn-sm" onclick="App.clearFilters()">Clear all</button>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    },
+
     // Data grid rendering
     renderDataGrid() {
-        const { schema, data, selectedRows } = this.state.tables;
+        const { schema, data, selectedRows, sort } = this.state.tables;
         if (!schema || !schema.columns) return '';
 
         const columns = schema.columns;
         const primaryKey = columns.find(c => c.primary)?.name || columns[0]?.name;
+
+        const getSortIndicator = (colName) => {
+            if (sort.column !== colName) return '<span class="sort-indicator"></span>';
+            if (sort.direction === 'asc') return '<span class="sort-indicator sort-asc">▲</span>';
+            if (sort.direction === 'desc') return '<span class="sort-indicator sort-desc">▼</span>';
+            return '<span class="sort-indicator"></span>';
+        };
 
         return `
             <div class="data-grid-container">
@@ -385,7 +531,13 @@ const App = {
                                     ${data.length > 0 && selectedRows.size === data.length ? 'checked' : ''}>
                             </th>
                             ${columns.map(col => `
-                                <th>${col.name}<span class="col-type">${col.type}</span></th>
+                                <th class="sortable-header" onclick="App.toggleSort('${col.name}')">
+                                    <div class="header-content">
+                                        <span class="header-name">${col.name}</span>
+                                        ${getSortIndicator(col.name)}
+                                    </div>
+                                    <span class="col-type">${col.type}</span>
+                                </th>
                             `).join('')}
                             <th class="actions-col"></th>
                         </tr>

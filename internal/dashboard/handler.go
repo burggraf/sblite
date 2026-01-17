@@ -485,9 +485,27 @@ func (h *Handler) handleSelectData(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get total count
+	// Parse filters
+	whereClause, whereValues := h.parseSelectFilter(r.URL.Query())
+
+	// Parse order
+	orderClause := ""
+	if order := r.URL.Query().Get("order"); order != "" {
+		parts := strings.Split(order, ".")
+		if len(parts) >= 1 {
+			col := parts[0]
+			dir := "ASC"
+			if len(parts) >= 2 && strings.ToLower(parts[1]) == "desc" {
+				dir = "DESC"
+			}
+			orderClause = fmt.Sprintf(` ORDER BY "%s" %s`, col, dir)
+		}
+	}
+
+	// Get total count with filters
 	var total int
-	err := h.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, tableName)).Scan(&total)
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM "%s" %s`, tableName, whereClause)
+	err := h.db.QueryRow(countQuery, whereValues...).Scan(&total)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
@@ -495,9 +513,9 @@ func (h *Handler) handleSelectData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get rows
-	query := fmt.Sprintf(`SELECT * FROM "%s" LIMIT %d OFFSET %d`, tableName, limit, offset)
-	rows, err := h.db.Query(query)
+	// Get rows with filters and order
+	query := fmt.Sprintf(`SELECT * FROM "%s" %s%s LIMIT %d OFFSET %d`, tableName, whereClause, orderClause, limit, offset)
+	rows, err := h.db.Query(query, whereValues...)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -646,6 +664,66 @@ func (h *Handler) parseSimpleFilter(query url.Values) (string, []interface{}) {
 			if strings.HasPrefix(val, "eq.") {
 				conditions = append(conditions, fmt.Sprintf(`"%s" = ?`, key))
 				values = append(values, strings.TrimPrefix(val, "eq."))
+			}
+		}
+	}
+
+	if len(conditions) == 0 {
+		return "", nil
+	}
+	return "WHERE " + strings.Join(conditions, " AND "), values
+}
+
+func (h *Handler) parseSelectFilter(query url.Values) (string, []interface{}) {
+	var conditions []string
+	var values []interface{}
+
+	for key, vals := range query {
+		if key == "limit" || key == "offset" || key == "order" {
+			continue
+		}
+		if len(vals) > 0 {
+			val := vals[0]
+
+			switch {
+			case strings.HasPrefix(val, "eq."):
+				conditions = append(conditions, fmt.Sprintf(`"%s" = ?`, key))
+				values = append(values, strings.TrimPrefix(val, "eq."))
+			case strings.HasPrefix(val, "neq."):
+				conditions = append(conditions, fmt.Sprintf(`"%s" != ?`, key))
+				values = append(values, strings.TrimPrefix(val, "neq."))
+			case strings.HasPrefix(val, "gt."):
+				conditions = append(conditions, fmt.Sprintf(`"%s" > ?`, key))
+				values = append(values, strings.TrimPrefix(val, "gt."))
+			case strings.HasPrefix(val, "gte."):
+				conditions = append(conditions, fmt.Sprintf(`"%s" >= ?`, key))
+				values = append(values, strings.TrimPrefix(val, "gte."))
+			case strings.HasPrefix(val, "lt."):
+				conditions = append(conditions, fmt.Sprintf(`"%s" < ?`, key))
+				values = append(values, strings.TrimPrefix(val, "lt."))
+			case strings.HasPrefix(val, "lte."):
+				conditions = append(conditions, fmt.Sprintf(`"%s" <= ?`, key))
+				values = append(values, strings.TrimPrefix(val, "lte."))
+			case strings.HasPrefix(val, "like."):
+				pattern := strings.TrimPrefix(val, "like.")
+				pattern = strings.ReplaceAll(pattern, "*", "%")
+				conditions = append(conditions, fmt.Sprintf(`"%s" LIKE ?`, key))
+				values = append(values, pattern)
+			case strings.HasPrefix(val, "ilike."):
+				pattern := strings.TrimPrefix(val, "ilike.")
+				pattern = strings.ReplaceAll(pattern, "*", "%")
+				conditions = append(conditions, fmt.Sprintf(`"%s" LIKE ? COLLATE NOCASE`, key))
+				values = append(values, pattern)
+			case strings.HasPrefix(val, "is."):
+				v := strings.TrimPrefix(val, "is.")
+				switch v {
+				case "null":
+					conditions = append(conditions, fmt.Sprintf(`"%s" IS NULL`, key))
+				case "true":
+					conditions = append(conditions, fmt.Sprintf(`"%s" = 1`, key))
+				case "false":
+					conditions = append(conditions, fmt.Sprintf(`"%s" = 0`, key))
+				}
 			}
 		}
 	}
