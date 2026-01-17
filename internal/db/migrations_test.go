@@ -78,3 +78,47 @@ func TestEmailTablesMigration(t *testing.T) {
 		t.Fatalf("auth_verification_tokens table should exist: %v", err)
 	}
 }
+
+func TestColumnsTableCreated(t *testing.T) {
+	path := t.TempDir() + "/test.db"
+	database, err := New(path)
+	if err != nil {
+		t.Fatalf("failed to create db: %v", err)
+	}
+	defer database.Close()
+
+	if err := database.RunMigrations(); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+
+	// Check _columns table exists
+	var name string
+	err = database.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='_columns'").Scan(&name)
+	if err != nil {
+		t.Fatalf("_columns table not found: %v", err)
+	}
+
+	// Check required columns exist
+	rows, err := database.Query("PRAGMA table_info(_columns)")
+	if err != nil {
+		t.Fatalf("failed to get table info: %v", err)
+	}
+	defer rows.Close()
+
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk)
+		columns[name] = true
+	}
+
+	required := []string{"table_name", "column_name", "pg_type", "is_nullable", "default_value", "is_primary"}
+	for _, col := range required {
+		if !columns[col] {
+			t.Errorf("missing required column: %s", col)
+		}
+	}
+}

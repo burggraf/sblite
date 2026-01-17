@@ -112,6 +112,24 @@ CREATE INDEX IF NOT EXISTS idx_auth_verification_tokens_user ON auth_verificatio
 CREATE INDEX IF NOT EXISTS idx_auth_verification_tokens_type ON auth_verification_tokens(type);
 `
 
+const columnsSchema = `
+CREATE TABLE IF NOT EXISTS _columns (
+    table_name    TEXT NOT NULL,
+    column_name   TEXT NOT NULL,
+    pg_type       TEXT NOT NULL CHECK (pg_type IN (
+                    'uuid', 'text', 'integer', 'numeric',
+                    'boolean', 'timestamptz', 'jsonb', 'bytea'
+                  )),
+    is_nullable   INTEGER DEFAULT 1,
+    default_value TEXT,
+    is_primary    INTEGER DEFAULT 0,
+    created_at    TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (table_name, column_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_columns_table ON _columns(table_name);
+`
+
 const defaultTemplates = `
 INSERT OR IGNORE INTO auth_email_templates (id, type, subject, body_html, body_text, updated_at) VALUES
 ('tpl-confirmation', 'confirmation', 'Confirm your email',
@@ -184,6 +202,11 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(defaultTemplates)
 	if err != nil {
 		return fmt.Errorf("failed to seed email templates: %w", err)
+	}
+
+	_, err = db.Exec(columnsSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run columns schema migration: %w", err)
 	}
 
 	return nil
