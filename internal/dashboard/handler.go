@@ -67,6 +67,15 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Patch("/{table}", h.handleUpdateData)
 			r.Delete("/{table}", h.handleDeleteData)
 		})
+
+		// Users API routes (require auth)
+		r.Route("/users", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/", h.handleListUsers)
+			r.Get("/{id}", h.handleGetUser)
+			r.Patch("/{id}", h.handleUpdateUser)
+			r.Delete("/{id}", h.handleDeleteUser)
+		})
 	})
 
 	// Static files - use Route group to ensure priority
@@ -951,6 +960,228 @@ func (h *Handler) handleDropColumn(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to commit"})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// User management handlers
+
+func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	limit := 25
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	// Get total count
+	var total int
+	err := h.db.QueryRow(`SELECT COUNT(*) FROM auth_users`).Scan(&total)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to count users"})
+		return
+	}
+
+	// Get users
+	rows, err := h.db.Query(`
+		SELECT id, email, email_confirmed_at, last_sign_in_at,
+		       raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+		FROM auth_users
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to list users"})
+		return
+	}
+	defer rows.Close()
+
+	var users []map[string]interface{}
+	for rows.Next() {
+		var id, email string
+		var emailConfirmedAt, lastSignInAt, appMeta, userMeta, createdAt, updatedAt sql.NullString
+		if err := rows.Scan(&id, &email, &emailConfirmedAt, &lastSignInAt, &appMeta, &userMeta, &createdAt, &updatedAt); err != nil {
+			continue
+		}
+		user := map[string]interface{}{
+			"id":                 id,
+			"email":              email,
+			"email_confirmed_at": nullStringToInterface(emailConfirmedAt),
+			"last_sign_in_at":    nullStringToInterface(lastSignInAt),
+			"raw_app_meta_data":  nullStringToInterface(appMeta),
+			"raw_user_meta_data": nullStringToInterface(userMeta),
+			"created_at":         nullStringToInterface(createdAt),
+			"updated_at":         nullStringToInterface(updatedAt),
+		}
+		users = append(users, user)
+	}
+
+	if users == nil {
+		users = []map[string]interface{}{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"users":  users,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
+func nullStringToInterface(ns sql.NullString) interface{} {
+	if ns.Valid {
+		return ns.String
+	}
+	return nil
+}
+
+func (h *Handler) handleGetUser(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "id")
+	if userID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User ID required"})
+		return
+	}
+
+	var id, email string
+	var emailConfirmedAt, lastSignInAt, appMeta, userMeta, createdAt, updatedAt sql.NullString
+	err := h.db.QueryRow(`
+		SELECT id, email, email_confirmed_at, last_sign_in_at,
+		       raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+		FROM auth_users WHERE id = ?`, userID).Scan(
+		&id, &email, &emailConfirmedAt, &lastSignInAt, &appMeta, &userMeta, &createdAt, &updatedAt)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User not found"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":                 id,
+		"email":              email,
+		"email_confirmed_at": nullStringToInterface(emailConfirmedAt),
+		"last_sign_in_at":    nullStringToInterface(lastSignInAt),
+		"raw_app_meta_data":  nullStringToInterface(appMeta),
+		"raw_user_meta_data": nullStringToInterface(userMeta),
+		"created_at":         nullStringToInterface(createdAt),
+		"updated_at":         nullStringToInterface(updatedAt),
+	})
+}
+
+func (h *Handler) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "id")
+	if userID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User ID required"})
+		return
+	}
+
+	var req struct {
+		Email          *string `json:"email,omitempty"`
+		AppMetadata    *string `json:"raw_app_meta_data,omitempty"`
+		UserMetadata   *string `json:"raw_user_meta_data,omitempty"`
+		EmailConfirmed *bool   `json:"email_confirmed,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		return
+	}
+
+	// Build update query
+	var setClauses []string
+	var values []interface{}
+
+	if req.Email != nil {
+		setClauses = append(setClauses, "email = ?")
+		values = append(values, *req.Email)
+	}
+	if req.AppMetadata != nil {
+		setClauses = append(setClauses, "raw_app_meta_data = ?")
+		values = append(values, *req.AppMetadata)
+	}
+	if req.UserMetadata != nil {
+		setClauses = append(setClauses, "raw_user_meta_data = ?")
+		values = append(values, *req.UserMetadata)
+	}
+	if req.EmailConfirmed != nil {
+		if *req.EmailConfirmed {
+			setClauses = append(setClauses, "email_confirmed_at = datetime('now')")
+		} else {
+			setClauses = append(setClauses, "email_confirmed_at = NULL")
+		}
+	}
+
+	if len(setClauses) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "No fields to update"})
+		return
+	}
+
+	setClauses = append(setClauses, "updated_at = datetime('now')")
+	values = append(values, userID)
+
+	query := fmt.Sprintf(`UPDATE auth_users SET %s WHERE id = ?`, strings.Join(setClauses, ", "))
+	result, err := h.db.Exec(query, values...)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User not found"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "id")
+	if userID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User ID required"})
+		return
+	}
+
+	result, err := h.db.Exec(`DELETE FROM auth_users WHERE id = ?`, userID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User not found"})
 		return
 	}
 

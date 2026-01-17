@@ -26,8 +26,15 @@ const App = {
             sort: { column: null, direction: null }, // direction: 'asc', 'desc', or null
         },
         modal: {
-            type: null,  // 'createTable', 'addRow', 'editRow', 'schema', 'addColumn'
+            type: null,  // 'createTable', 'addRow', 'editRow', 'schema', 'addColumn', 'userDetail'
             data: {}
+        },
+        users: {
+            list: [],
+            page: 1,
+            pageSize: 25,
+            totalUsers: 0,
+            loading: false,
         },
     },
 
@@ -259,7 +266,11 @@ const App = {
 
     navigate(view) {
         this.state.currentView = view;
-        this.render();
+        if (view === 'users') {
+            this.loadUsers();
+        } else {
+            this.render();
+        }
     },
 
     render() {
@@ -388,7 +399,7 @@ const App = {
             case 'tables':
                 return this.renderTablesView();
             case 'users':
-                return '<div class="card"><h2 class="card-title">Users</h2><p>User management coming soon</p></div>';
+                return this.renderUsersView();
             case 'policies':
                 return '<div class="card"><h2 class="card-title">RLS Policies</h2><p>Policy editor coming in Phase 5</p></div>';
             case 'settings':
@@ -800,6 +811,9 @@ const App = {
             case 'addColumn':
                 content = this.renderAddColumnModal();
                 break;
+            case 'userDetail':
+                content = this.renderUserDetailModal();
+                break;
         }
 
         return `
@@ -1173,6 +1187,264 @@ const App = {
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="App.showSchemaModal()">Back</button>
                 <button class="btn btn-primary" onclick="App.addColumn()">Add Column</button>
+            </div>
+        `;
+    },
+
+    // User management methods
+
+    async loadUsers() {
+        this.state.users.loading = true;
+        this.render();
+
+        try {
+            const { page, pageSize } = this.state.users;
+            const offset = (page - 1) * pageSize;
+            const res = await fetch(`/_/api/users?limit=${pageSize}&offset=${offset}`);
+            if (res.ok) {
+                const data = await res.json();
+                this.state.users.list = data.users;
+                this.state.users.totalUsers = data.total;
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load users';
+        }
+        this.state.users.loading = false;
+        this.render();
+    },
+
+    renderUsersView() {
+        const { loading, list, page, pageSize, totalUsers } = this.state.users;
+
+        if (loading) {
+            return '<div class="loading">Loading...</div>';
+        }
+
+        const totalPages = Math.ceil(totalUsers / pageSize);
+
+        return `
+            <div class="users-view">
+                <div class="table-toolbar">
+                    <h2>Users</h2>
+                    <div class="toolbar-actions">
+                        <span class="text-muted">${totalUsers} user${totalUsers !== 1 ? 's' : ''}</span>
+                    </div>
+                </div>
+
+                <div class="data-grid-container">
+                    <table class="data-grid">
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Created</th>
+                                <th>Last Sign In</th>
+                                <th>Confirmed</th>
+                                <th class="actions-col"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${list.length === 0
+                                ? '<tr><td colspan="5" class="empty-state">No users</td></tr>'
+                                : list.map(user => this.renderUserRow(user)).join('')}
+                        </tbody>
+                    </table>
+                </div>
+
+                ${this.renderUsersPagination()}
+            </div>
+        `;
+    },
+
+    renderUserRow(user) {
+        const confirmed = user.email_confirmed_at ? '✓' : '—';
+        const createdAt = user.created_at ? this.formatDate(user.created_at) : '—';
+        const lastSignIn = user.last_sign_in_at ? this.formatDate(user.last_sign_in_at) : 'Never';
+
+        return `
+            <tr>
+                <td>${user.email}</td>
+                <td>${createdAt}</td>
+                <td>${lastSignIn}</td>
+                <td class="${user.email_confirmed_at ? 'text-success' : 'text-muted'}">${confirmed}</td>
+                <td class="actions-col">
+                    <button class="btn-icon" onclick="App.showUserModal('${user.id}')">View</button>
+                    <button class="btn-icon" onclick="App.confirmDeleteUser('${user.id}', '${user.email}')">Delete</button>
+                </td>
+            </tr>
+        `;
+    },
+
+    formatDate(dateStr) {
+        if (!dateStr) return '—';
+        const date = new Date(dateStr);
+        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    },
+
+    renderUsersPagination() {
+        const { page, pageSize, totalUsers } = this.state.users;
+        const totalPages = Math.ceil(totalUsers / pageSize);
+
+        return `
+            <div class="pagination">
+                <div class="pagination-info">
+                    ${totalUsers} users | Page ${page} of ${totalPages || 1}
+                </div>
+                <div class="pagination-controls">
+                    <select onchange="App.changeUsersPageSize(this.value)">
+                        <option value="25" ${pageSize === 25 ? 'selected' : ''}>25</option>
+                        <option value="50" ${pageSize === 50 ? 'selected' : ''}>50</option>
+                        <option value="100" ${pageSize === 100 ? 'selected' : ''}>100</option>
+                    </select>
+                    <button class="btn btn-secondary btn-sm" onclick="App.prevUsersPage()" ${page <= 1 ? 'disabled' : ''}>Prev</button>
+                    <button class="btn btn-secondary btn-sm" onclick="App.nextUsersPage()" ${page >= totalPages ? 'disabled' : ''}>Next</button>
+                </div>
+            </div>
+        `;
+    },
+
+    changeUsersPageSize(size) {
+        this.state.users.pageSize = parseInt(size);
+        this.state.users.page = 1;
+        this.loadUsers();
+    },
+
+    prevUsersPage() {
+        if (this.state.users.page > 1) {
+            this.state.users.page--;
+            this.loadUsers();
+        }
+    },
+
+    nextUsersPage() {
+        const totalPages = Math.ceil(this.state.users.totalUsers / this.state.users.pageSize);
+        if (this.state.users.page < totalPages) {
+            this.state.users.page++;
+            this.loadUsers();
+        }
+    },
+
+    async showUserModal(userId) {
+        try {
+            const res = await fetch(`/_/api/users/${userId}`);
+            if (res.ok) {
+                const user = await res.json();
+                this.state.modal = { type: 'userDetail', data: user };
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load user';
+            this.render();
+        }
+    },
+
+    async confirmDeleteUser(userId, email) {
+        if (!confirm(`Delete user "${email}"? This will also delete their sessions and cannot be undone.`)) return;
+
+        try {
+            const res = await fetch(`/_/api/users/${userId}`, { method: 'DELETE' });
+            if (res.ok) {
+                await this.loadUsers();
+            } else {
+                this.state.error = 'Failed to delete user';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to delete user';
+            this.render();
+        }
+    },
+
+    async updateUser() {
+        const { data } = this.state.modal;
+        const userId = data.id;
+
+        const updateData = {
+            raw_user_meta_data: data.raw_user_meta_data,
+            email_confirmed: data.email_confirmed_at !== null
+        };
+
+        try {
+            const res = await fetch(`/_/api/users/${userId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updateData)
+            });
+
+            if (res.ok) {
+                this.closeModal();
+                await this.loadUsers();
+            } else {
+                const err = await res.json();
+                this.state.error = err.error || 'Failed to update user';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to update user';
+            this.render();
+        }
+    },
+
+    updateUserField(field, value) {
+        this.state.modal.data[field] = value;
+        this.render();
+    },
+
+    toggleUserEmailConfirmed() {
+        const { data } = this.state.modal;
+        if (data.email_confirmed_at) {
+            data.email_confirmed_at = null;
+        } else {
+            data.email_confirmed_at = new Date().toISOString();
+        }
+        this.render();
+    },
+
+    renderUserDetailModal() {
+        const { data } = this.state.modal;
+        const confirmed = data.email_confirmed_at !== null;
+
+        return `
+            <div class="modal-header">
+                <h3>User Details</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">ID</label>
+                    <input type="text" class="form-input" value="${data.id}" disabled>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Email</label>
+                    <input type="text" class="form-input" value="${data.email}" disabled>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Created</label>
+                    <input type="text" class="form-input" value="${this.formatDate(data.created_at)}" disabled>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Last Sign In</label>
+                    <input type="text" class="form-input" value="${data.last_sign_in_at ? this.formatDate(data.last_sign_in_at) : 'Never'}" disabled>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" ${confirmed ? 'checked' : ''} onchange="App.toggleUserEmailConfirmed()">
+                        Email Confirmed
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">User Metadata (JSON)</label>
+                    <textarea class="form-input" rows="4"
+                        onchange="App.updateUserField('raw_user_meta_data', this.value)">${data.raw_user_meta_data || '{}'}</textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">App Metadata (JSON)</label>
+                    <textarea class="form-input" rows="3" disabled>${data.raw_app_meta_data || '{}'}</textarea>
+                    <small class="text-muted">App metadata is read-only</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="App.updateUser()">Save Changes</button>
             </div>
         `;
     }

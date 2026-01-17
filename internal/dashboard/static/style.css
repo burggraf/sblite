@@ -659,3 +659,37 @@ body {
     font-weight: 500;
     color: var(--text-secondary);
 }
+
+/* Users view */
+.users-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* Utility classes */
+.text-success {
+    color: var(--success);
+}
+
+.text-muted {
+    color: var(--text-muted);
+}
+
+.text-error {
+    color: var(--error);
+}
+
+/* Textarea in forms */
+textarea.form-input {
+    resize: vertical;
+    min-height: 60px;
+    font-family: monospace;
+    font-size: 0.875rem;
+}
+
+small.text-muted {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+}
