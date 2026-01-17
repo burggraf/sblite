@@ -3,7 +3,6 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -160,34 +159,4 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 // EmailService returns the email service for use by auth handlers.
 func (s *Server) EmailService() *mail.EmailService {
 	return s.emailService
-}
-
-// handleMagicLink handles magic link requests.
-// Stub implementation - will be implemented in Task 10.
-func (s *Server) handleMagicLink(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(map[string]string{
-		"error":   "not_implemented",
-		"message": fmt.Sprintf("Magic link is not yet implemented"),
-	})
-}
-
-// handleResend handles email resend requests.
-// Stub implementation - will be implemented in Task 10.
-func (s *Server) handleResend(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(map[string]string{
-		"error":   "not_implemented",
-		"message": fmt.Sprintf("Resend is not yet implemented"),
-	})
-}
-
-// handleInvite handles user invitation requests.
-// Stub implementation - will be implemented in Task 10.
-func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(map[string]string{
-		"error":   "not_implemented",
-		"message": fmt.Sprintf("Invite is not yet implemented"),
-	})
 }

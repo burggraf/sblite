@@ -3,6 +3,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -321,8 +322,14 @@ func (s *Server) handleRecover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate token (don't reveal if user exists)
-	_, _ = s.authService.GenerateRecoveryToken(req.Email)
+	// Generate token and send email
+	token, err := s.authService.GenerateRecoveryToken(req.Email)
+	if err == nil && token != "" {
+		user, _ := s.authService.GetUserByEmail(req.Email)
+		if user != nil {
+			s.emailService.SendRecovery(r.Context(), user.ID, req.Email, token)
+		}
+	}
 
 	// Always return success to prevent email enumeration
 	w.Header().Set("Content-Type", "application/json")
@@ -418,4 +425,131 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
+}
+
+type MagicLinkRequest struct {
+	Email string `json:"email"`
+}
+
+func (s *Server) handleMagicLink(w http.ResponseWriter, r *http.Request) {
+	var req MagicLinkRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.Email == "" {
+		s.writeError(w, http.StatusBadRequest, "validation_failed", "Email is required")
+		return
+	}
+
+	// Generate magic link token
+	token, err := s.authService.GenerateMagicLinkToken(req.Email)
+	if err != nil {
+		// Don't reveal if user exists - always return success
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "If the email exists, a magic link has been sent",
+		})
+		return
+	}
+
+	// Send magic link email
+	if err := s.emailService.SendMagicLink(r.Context(), req.Email, token); err != nil {
+		// Log error but don't expose to user
+		fmt.Printf("Failed to send magic link email: %v\n", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "If the email exists, a magic link has been sent",
+	})
+}
+
+type InviteRequest struct {
+	Email string `json:"email"`
+}
+
+func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
+	// Check if user has admin privileges (service_role)
+	claims := GetClaimsFromContext(r)
+	if claims == nil {
+		s.writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	role, _ := (*claims)["role"].(string)
+	if role != "service_role" {
+		s.writeError(w, http.StatusForbidden, "forbidden", "Admin access required")
+		return
+	}
+
+	var req InviteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.Email == "" {
+		s.writeError(w, http.StatusBadRequest, "validation_failed", "Email is required")
+		return
+	}
+
+	// Generate invite token
+	token, err := s.authService.GenerateInviteToken(req.Email)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "user_already_exists", "User already registered")
+		return
+	}
+
+	// Send invite email
+	if err := s.emailService.SendInvite(r.Context(), req.Email, token); err != nil {
+		fmt.Printf("Failed to send invite email: %v\n", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Invitation sent",
+	})
+}
+
+type ResendRequest struct {
+	Type  string `json:"type"`  // confirmation, recovery
+	Email string `json:"email"`
+}
+
+func (s *Server) handleResend(w http.ResponseWriter, r *http.Request) {
+	var req ResendRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.Email == "" {
+		s.writeError(w, http.StatusBadRequest, "validation_failed", "Email is required")
+		return
+	}
+
+	switch req.Type {
+	case "confirmation", "signup":
+		user, err := s.authService.GetUserByEmail(req.Email)
+		if err == nil && user.EmailConfirmedAt == nil {
+			token, _ := s.authService.GenerateConfirmationTokenNew(user.ID)
+			s.emailService.SendConfirmation(r.Context(), user.ID, req.Email, token)
+		}
+	case "recovery":
+		token, _ := s.authService.GenerateRecoveryToken(req.Email)
+		if token != "" {
+			user, _ := s.authService.GetUserByEmail(req.Email)
+			if user != nil {
+				s.emailService.SendRecovery(r.Context(), user.ID, req.Email, token)
+			}
+		}
+	}
+
+	// Always return success to prevent enumeration
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "If applicable, an email has been sent",
+	})
 }
