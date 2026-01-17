@@ -682,9 +682,8 @@ func (h *Handler) parseSelectFilter(query url.Values) (string, []interface{}) {
 		if key == "limit" || key == "offset" || key == "order" {
 			continue
 		}
-		if len(vals) > 0 {
-			val := vals[0]
-
+		// Process ALL filter values for this key (supports multiple filters on same column)
+		for _, val := range vals {
 			switch {
 			case strings.HasPrefix(val, "eq."):
 				conditions = append(conditions, fmt.Sprintf(`"%s" = ?`, key))
