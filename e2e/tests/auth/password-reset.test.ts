@@ -38,22 +38,18 @@ describe('Auth - Password Reset', () => {
      * Example 1: Reset password
      */
     describe('1. Reset password', () => {
-      it.skip('should send password reset email', async () => {
-        // This requires email sending capability
+      it('should send password reset email', async () => {
         const { data, error } = await supabase.auth.resetPasswordForEmail(testEmail, {
           redirectTo: 'https://example.com/update-password',
         })
 
-        // In a real implementation, this would send an email
-        // sblite Phase 1 may not have email sending
+        // Email system is now implemented
         expect(error).toBeNull()
       })
 
-      it.skip('should accept valid email addresses', async () => {
+      it('should accept valid email addresses', async () => {
         const { error } = await supabase.auth.resetPasswordForEmail(testEmail)
 
-        // Should not error even if email sending is not implemented
-        // The API call should be valid
         expect(error).toBeNull()
       })
     })
@@ -91,31 +87,30 @@ describe('Auth - Password Reset', () => {
 
   // Additional tests
   describe('Edge Cases', () => {
-    it.skip('should handle non-existent email gracefully', async () => {
-      // Some implementations don't reveal if email exists
+    it('should handle non-existent email gracefully', async () => {
+      // sblite does not reveal if email exists (security best practice)
       const { error } = await supabase.auth.resetPasswordForEmail('nonexistent@example.com')
 
-      // Should not reveal if user exists (security)
-      // Behavior may vary - some return success, some return error
+      // Should return success to prevent email enumeration
+      expect(error).toBeNull()
     })
 
     it.skip('should handle invalid email format', async () => {
+      // Note: supabase-js may validate email format client-side
       const { error } = await supabase.auth.resetPasswordForEmail('not-an-email')
 
       expect(error).not.toBeNull()
     })
 
     it.skip('should rate limit password reset requests', async () => {
-      // Make multiple rapid requests
+      // Rate limiting not yet implemented in sblite
       const promises = Array(10)
         .fill(null)
         .map(() => supabase.auth.resetPasswordForEmail(testEmail))
 
       const results = await Promise.all(promises)
 
-      // At some point, should be rate limited
       const errors = results.filter((r) => r.error !== null)
-      // Note: Rate limiting may or may not be implemented
     })
   })
 })
@@ -123,12 +118,11 @@ describe('Auth - Password Reset', () => {
 /**
  * Compatibility Summary for Password Reset:
  *
- * NOT IMPLEMENTED IN PHASE 1:
- * - resetPasswordForEmail(): Requires email sending
- * - PASSWORD_RECOVERY event handling
- * - Email redirect flow
+ * IMPLEMENTED IN PHASE 2:
+ * - resetPasswordForEmail(): Sends recovery email via email system
+ * - /auth/v1/verify?type=recovery endpoint for password reset
  *
- * FUTURE IMPLEMENTATION:
- * - Could use local SMTP or external email service
- * - Could implement magic link pattern
+ * NOT YET IMPLEMENTED:
+ * - PASSWORD_RECOVERY auth state event (realtime not implemented)
+ * - Rate limiting for reset requests
  */

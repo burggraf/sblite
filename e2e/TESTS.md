@@ -12,7 +12,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 | Category | Total | Passing | Failing | Skipped |
 |----------|-------|---------|---------|---------|
-| REST - SELECT | 16 | 6 | 0 | 10 |
+| REST - SELECT | 16 | 10 | 0 | 6 |
 | REST - INSERT | 9 | 9 | 0 | 0 |
 | REST - UPDATE | 10 | 8 | 0 | 2 |
 | REST - UPSERT | 7 | 5 | 0 | 2 |
@@ -20,22 +20,27 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Filters - Basic | 24 | 22 | 0 | 2 |
 | Filters - Advanced | 15 | 0 | 0 | 15 |
 | Filters - Logical | 11 | 3 | 0 | 8 |
-| Modifiers | 18 | 14 | 0 | 4 |
-| Auth - Sign Up | 11 | 6 | 2 | 3 |
+| Modifiers | 18 | 18 | 0 | 0 |
+| Modifiers - Count | 12 | 12 | 0 | 0 |
+| Modifiers - CSV | 6 | 6 | 0 | 0 |
+| Auth - Sign Up | 11 | 8 | 0 | 3 |
 | Auth - Sign In/Out | 12 | 8 | 0 | 4 |
-| Auth - Session | 11 | 2 | 7 | 2 |
-| Auth - User | 12 | 1 | 6 | 5 |
-| Auth - State Change | 11 | 2 | 4 | 5 |
-| Auth - Password Reset | 6 | 0 | 0 | 6 |
+| Auth - Session | 11 | 8 | 0 | 3 |
+| Auth - User | 12 | 7 | 0 | 5 |
+| Auth - State Change | 11 | 6 | 0 | 5 |
+| Auth - Password Reset | 6 | 3 | 0 | 3 |
 | Email - Mail API | 13 | 13 | 0 | 0 |
 | Email - Flows | 11 | 8 | 0 | 3 |
 | Email - Verification | 11 | 9 | 0 | 2 |
 | Email - SMTP | 4 | 3 | 0 | 1 |
-| **TOTAL** | **212** | **129** | **19** | **64** |
+| Relations | 10 | 10 | 0 | 0 |
+| RLS | 9 | 9 | 0 | 0 |
+| API Key | 12 | 12 | 0 | 0 |
+| **TOTAL** | **288** | **222** | **0** | **65** |
 
-*Last tested: 2026-01-16*
+*Last tested: 2026-01-17*
 
-**Note:** Some REST tests may show intermittent failures due to test parallelization. When run in isolation, all REST tests pass.
+**Note:** Server must be started in `catch` mode (`--mail-mode catch`) for email tests to pass.
 
 ---
 
