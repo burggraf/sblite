@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -52,6 +53,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Post("/", h.handleCreateTable)
 			r.Get("/{name}", h.handleGetTableSchema)
 			r.Delete("/{name}", h.handleDeleteTable)
+		})
+
+		// Data API routes (require auth)
+		r.Route("/data", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/{table}", h.handleSelectData)
 		})
 	})
 
@@ -447,4 +454,78 @@ func (h *Handler) handleDeleteTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleSelectData(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "table")
+	if tableName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
+		return
+	}
+
+	limit := 25
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	// Get total count
+	var total int
+	err := h.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, tableName)).Scan(&total)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table not found"})
+		return
+	}
+
+	// Get rows
+	query := fmt.Sprintf(`SELECT * FROM "%s" LIMIT %d OFFSET %d`, tableName, limit, offset)
+	rows, err := h.db.Query(query)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	columns, _ := rows.Columns()
+	var results []map[string]interface{}
+
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+		rows.Scan(valuePtrs...)
+
+		row := make(map[string]interface{})
+		for i, col := range columns {
+			row[col] = values[i]
+		}
+		results = append(results, row)
+	}
+
+	if results == nil {
+		results = []map[string]interface{}{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"rows":   results,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }

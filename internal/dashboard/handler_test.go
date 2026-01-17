@@ -405,3 +405,34 @@ func TestHandlerDeleteTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, count)
 }
+
+func TestHandlerSelectData(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	// Create and populate table
+	_, err := h.db.Exec(`CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT)`)
+	require.NoError(t, err)
+	_, err = h.db.Exec(`INSERT INTO items VALUES ('1', 'Apple'), ('2', 'Banana'), ('3', 'Cherry')`)
+	require.NoError(t, err)
+
+	token := setupTestSession(t, h)
+
+	req := httptest.NewRequest("GET", "/api/data/items?limit=2&offset=0", nil)
+	req.AddCookie(&http.Cookie{Name: "_sblite_session", Value: token})
+	w := httptest.NewRecorder()
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]interface{}
+	err = json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+
+	rows := result["rows"].([]interface{})
+	require.Len(t, rows, 2)
+	require.Equal(t, float64(3), result["total"])
+}
