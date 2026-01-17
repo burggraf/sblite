@@ -465,3 +465,18 @@ body {
     background: var(--bg-secondary);
     color: var(--text-primary);
 }
+
+/* Inline cell editing */
+.data-cell.editing {
+    padding: 0;
+}
+
+.cell-input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 2px solid var(--accent);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: inherit;
+    outline: none;
+}

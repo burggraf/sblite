@@ -393,6 +393,7 @@ const App = {
     renderDataRow(row, columns, primaryKey) {
         const rowId = row[primaryKey];
         const isSelected = this.state.tables.selectedRows.has(rowId);
+        const { editingCell } = this.state.tables;
 
         return `
             <tr class="${isSelected ? 'selected' : ''}">
@@ -400,13 +401,26 @@ const App = {
                     <input type="checkbox" ${isSelected ? 'checked' : ''}
                         onchange="App.toggleRow('${rowId}', this.checked)">
                 </td>
-                ${columns.map(col => `
-                    <td class="data-cell"
-                        onclick="App.startCellEdit('${rowId}', '${col.name}')"
-                        data-row="${rowId}" data-col="${col.name}">
-                        ${this.formatCellValue(row[col.name], col.type)}
-                    </td>
-                `).join('')}
+                ${columns.map(col => {
+                    const isEditing = editingCell?.rowId === rowId && editingCell?.column === col.name;
+                    const value = row[col.name];
+
+                    if (isEditing) {
+                        return `
+                            <td class="data-cell editing">
+                                <input type="text" class="cell-input" value="${value ?? ''}"
+                                    onblur="App.saveCellEdit('${rowId}', '${col.name}', this.value)"
+                                    onkeydown="App.handleCellKeydown(event, '${rowId}', '${col.name}')">
+                            </td>
+                        `;
+                    }
+                    return `
+                        <td class="data-cell"
+                            onclick="App.startCellEdit('${rowId}', '${col.name}')">
+                            ${this.formatCellValue(value, col.type)}
+                        </td>
+                    `;
+                }).join('')}
                 <td class="actions-col">
                     <button class="btn-icon" onclick="App.showEditRowModal('${rowId}')">Edit</button>
                     <button class="btn-icon" onclick="App.confirmDeleteRow('${rowId}')">Delete</button>
@@ -487,9 +501,55 @@ const App = {
         }
     },
 
-    // Placeholder methods for inline editing (Task 11)
+    // Inline cell editing
     startCellEdit(rowId, column) {
-        // Implemented in Task 11
+        this.state.tables.editingCell = { rowId, column };
+        this.render();
+
+        // Focus the input after render
+        setTimeout(() => {
+            const input = document.querySelector('.cell-input');
+            if (input) {
+                input.focus();
+                input.select();
+            }
+        }, 0);
+    },
+
+    cancelCellEdit() {
+        this.state.tables.editingCell = null;
+        this.render();
+    },
+
+    async saveCellEdit(rowId, column, value) {
+        const { selected, schema } = this.state.tables;
+        const primaryKey = schema.columns.find(c => c.primary)?.name || schema.columns[0]?.name;
+
+        try {
+            const res = await fetch(`/_/api/data/${selected}?${primaryKey}=eq.${rowId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [column]: value || null })
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                this.state.error = err.error || 'Failed to update';
+            }
+        } catch (e) {
+            this.state.error = 'Failed to update';
+        }
+
+        this.state.tables.editingCell = null;
+        await this.loadTableData();
+    },
+
+    handleCellKeydown(e, rowId, column) {
+        if (e.key === 'Enter') {
+            this.saveCellEdit(rowId, column, e.target.value);
+        } else if (e.key === 'Escape') {
+            this.cancelCellEdit();
+        }
     },
 
     // Placeholder methods for modals (to be implemented in later tasks)
