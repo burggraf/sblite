@@ -4,3 +4,4 @@ test.db*
 e2e/node_modules/
 e2e/package-lock.json
 .worktrees/
+.DS_Store
