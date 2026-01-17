@@ -114,9 +114,8 @@ describe('Modifiers', () => {
 
     /**
      * Example 2: Order on referenced table
-     * Not implemented in Phase 1
      */
-    it.skip('should order on referenced table', async () => {
+    it('should order on referenced table', async () => {
       const { data, error } = await supabase
         .from('orchestral_sections')
         .select(`
@@ -128,6 +127,15 @@ describe('Modifiers', () => {
         .order('name', { referencedTable: 'instruments', ascending: false })
 
       expect(error).toBeNull()
+      expect(data).toBeDefined()
+      // Verify the instruments are ordered descending within each section
+      const strings = data!.find((s) => s.name === 'strings')
+      expect(strings).toBeDefined()
+      // strings has violin and viola - descending: viola, violin
+      if (strings!.instruments.length > 1) {
+        const names = strings!.instruments.map((i: any) => i.name)
+        expect(names[0].localeCompare(names[1])).toBeGreaterThanOrEqual(0)
+      }
     })
 
     /**
@@ -179,9 +187,8 @@ describe('Modifiers', () => {
 
     /**
      * Example 2: Limit on referenced table
-     * Not implemented in Phase 1
      */
-    it.skip('should limit results from referenced table', async () => {
+    it('should limit results from referenced table', async () => {
       const { data, error } = await supabase
         .from('orchestral_sections')
         .select(`
@@ -193,6 +200,11 @@ describe('Modifiers', () => {
         .limit(1, { referencedTable: 'instruments' })
 
       expect(error).toBeNull()
+      expect(data).toBeDefined()
+      // Each section should have at most 1 instrument
+      data!.forEach((section) => {
+        expect(section.instruments.length).toBeLessThanOrEqual(1)
+      })
     })
   })
 
@@ -402,7 +414,9 @@ describe('Modifiers', () => {
  * IMPLEMENTED:
  * - select() with insert/update/upsert/delete
  * - order(): Basic ordering (ascending/descending)
+ * - order() with referencedTable option
  * - limit(): Limit number of rows
+ * - limit() with referencedTable option
  * - range(): Pagination (offset + limit)
  * - single(): Return single object (errors on 0 or >1 results)
  * - maybeSingle(): Return object or null (errors on >1 results)
@@ -410,6 +424,5 @@ describe('Modifiers', () => {
  * - explain(): Query execution plan (SQLite EXPLAIN QUERY PLAN)
  *
  * NOT IMPLEMENTED:
- * - order() on referenced tables
- * - limit() on referenced tables
+ * - order() parent by referenced table column (e.g., order('section(name)'))
  */

@@ -153,16 +153,22 @@ var reservedParams = map[string]bool{
 	"order":  true,
 	"limit":  true,
 	"offset": true,
-	"or":     true,    // handled separately as logical filter
-	"and":    true,    // handled separately as logical filter
-	"match":  true,    // handled separately as match filter (expands to multiple eq filters)
+	"or":     true,  // handled separately as logical filter
+	"and":    true,  // handled separately as logical filter
+	"match":  true,  // handled separately as match filter (expands to multiple eq filters)
+}
+
+// isRelationModifier checks if a modifier name is a relation-specific modifier
+func isRelationModifier(modifier string) bool {
+	return modifier == "order" || modifier == "limit" || modifier == "offset"
 }
 
 func (h *Handler) parseQueryParams(r *http.Request) Query {
 	q := Query{
-		Table:  chi.URLParam(r, "table"),
-		Select: ParseSelect(r.URL.Query().Get("select")),
-		Order:  ParseOrder(r.URL.Query().Get("order")),
+		Table:             chi.URLParam(r, "table"),
+		Select:            ParseSelect(r.URL.Query().Get("select")),
+		Order:             ParseOrder(r.URL.Query().Get("order")),
+		RelationModifiers: make(map[string]RelationModifiers),
 	}
 
 	if limit := r.URL.Query().Get("limit"); limit != "" {
@@ -172,11 +178,56 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 		q.Offset, _ = strconv.Atoi(offset)
 	}
 
-	// Parse filters from query params
+	// Parse filters and relation-specific modifiers from query params
 	for key, values := range r.URL.Query() {
 		if reservedParams[key] {
 			continue
 		}
+
+		// Check for relation-prefixed modifiers (e.g., "instruments.order", "instruments.limit")
+		if strings.Contains(key, ".") {
+			parts := strings.SplitN(key, ".", 2)
+			if len(parts) == 2 {
+				relName := parts[0]
+				modifier := parts[1]
+
+				// Skip if it looks like a filter on related table (has operator)
+				if strings.Contains(values[0], ".") && !isRelationModifier(modifier) {
+					// This is a related table filter like "country.name=eq.Canada"
+					for _, value := range values {
+						filterStr := fmt.Sprintf("%s=%s", key, value)
+						if filter, err := ParseFilter(filterStr); err == nil {
+							q.Filters = append(q.Filters, filter)
+						}
+					}
+					continue
+				}
+
+				// Handle relation-specific modifiers
+				mods := q.RelationModifiers[relName]
+				switch modifier {
+				case "order":
+					mods.Order = ParseOrder(values[0])
+				case "limit":
+					mods.Limit, _ = strconv.Atoi(values[0])
+				case "offset":
+					mods.Offset, _ = strconv.Atoi(values[0])
+				default:
+					// Not a recognized modifier, treat as filter
+					for _, value := range values {
+						filterStr := fmt.Sprintf("%s=%s", key, value)
+						if filter, err := ParseFilter(filterStr); err == nil {
+							q.Filters = append(q.Filters, filter)
+						}
+					}
+					continue
+				}
+				q.RelationModifiers[relName] = mods
+				continue
+			}
+		}
+
+		// Regular filter
 		for _, value := range values {
 			filterStr := fmt.Sprintf("%s=%s", key, value)
 			if filter, err := ParseFilter(filterStr); err == nil {

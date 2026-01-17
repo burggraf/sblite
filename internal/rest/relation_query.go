@@ -88,7 +88,14 @@ func (rqe *RelationQueryExecutor) ExecuteWithRelations(q Query, parsed *ParsedSe
 	// Process inner joins which may filter results
 	for _, col := range parsed.Columns {
 		if col.Relation != nil {
-			if err := rqe.embedRelation(&results, q.Table, col.Relation); err != nil {
+			// Get relation-specific modifiers if any
+			var mods *RelationModifiers
+			if q.RelationModifiers != nil {
+				if m, ok := q.RelationModifiers[col.Relation.Name]; ok {
+					mods = &m
+				}
+			}
+			if err := rqe.embedRelation(&results, q.Table, col.Relation, mods); err != nil {
 				return nil, fmt.Errorf("failed to embed relation %s: %w", col.Relation.Name, err)
 			}
 		}
@@ -111,7 +118,8 @@ func (rqe *RelationQueryExecutor) ExecuteWithRelations(q Query, parsed *ParsedSe
 
 // embedRelation embeds related data into the results based on the relationship type.
 // The results pointer allows inner joins to filter out rows without matching relations.
-func (rqe *RelationQueryExecutor) embedRelation(results *[]map[string]any, table string, rel *SelectRelation) error {
+// The mods parameter contains optional ORDER BY, LIMIT, OFFSET modifiers for the relation.
+func (rqe *RelationQueryExecutor) embedRelation(results *[]map[string]any, table string, rel *SelectRelation, mods *RelationModifiers) error {
 	if len(*results) == 0 {
 		return nil
 	}
@@ -136,9 +144,9 @@ func (rqe *RelationQueryExecutor) embedRelation(results *[]map[string]any, table
 
 	switch relDef.Type {
 	case "many-to-one":
-		return rqe.embedManyToOne(results, relDef, rel)
+		return rqe.embedManyToOne(results, relDef, rel, mods)
 	case "one-to-many":
-		return rqe.embedOneToMany(results, relDef, rel)
+		return rqe.embedOneToMany(results, relDef, rel, mods)
 	default:
 		return fmt.Errorf("unknown relationship type: %s", relDef.Type)
 	}
@@ -147,7 +155,7 @@ func (rqe *RelationQueryExecutor) embedRelation(results *[]map[string]any, table
 // embedManyToOne handles many-to-one relationships (e.g., city -> country).
 // Each result row gets a single related object (or null).
 // If rel.Inner is true, rows without matching relations are filtered out.
-func (rqe *RelationQueryExecutor) embedManyToOne(results *[]map[string]any, relDef *Relationship, rel *SelectRelation) error {
+func (rqe *RelationQueryExecutor) embedManyToOne(results *[]map[string]any, relDef *Relationship, rel *SelectRelation, mods *RelationModifiers) error {
 	// Collect all foreign key values from the results
 	fkValues := make([]any, 0)
 	fkSet := make(map[any]bool)
@@ -231,7 +239,7 @@ func (rqe *RelationQueryExecutor) embedManyToOne(results *[]map[string]any, relD
 	// Handle nested relations in the related results
 	for _, relCol := range rel.Columns {
 		if relCol.Relation != nil {
-			if err := rqe.embedRelation(&relResults, relDef.ForeignTable, relCol.Relation); err != nil {
+			if err := rqe.embedRelation(&relResults, relDef.ForeignTable, relCol.Relation, nil); err != nil {
 				return fmt.Errorf("failed to embed nested relation %s: %w", relCol.Relation.Name, err)
 			}
 		}
@@ -281,7 +289,7 @@ func (rqe *RelationQueryExecutor) embedManyToOne(results *[]map[string]any, relD
 // embedOneToMany handles one-to-many relationships (e.g., country -> cities).
 // Each result row gets an array of related objects (possibly empty).
 // If rel.Inner is true, rows without matching relations are filtered out.
-func (rqe *RelationQueryExecutor) embedOneToMany(results *[]map[string]any, relDef *Relationship, rel *SelectRelation) error {
+func (rqe *RelationQueryExecutor) embedOneToMany(results *[]map[string]any, relDef *Relationship, rel *SelectRelation, mods *RelationModifiers) error {
 	// For one-to-many: LocalColumn is the column in our table being referenced (e.g., "id")
 	// ForeignColumn is the FK column in the child table (e.g., "country_id")
 
@@ -354,6 +362,22 @@ func (rqe *RelationQueryExecutor) embedOneToMany(results *[]map[string]any, relD
 		relDef.ForeignColumn,
 		strings.Join(placeholders, ", "))
 
+	// Apply relation-specific modifiers (ORDER BY, LIMIT)
+	if mods != nil {
+		if len(mods.Order) > 0 {
+			orderParts := make([]string, len(mods.Order))
+			for i, o := range mods.Order {
+				dir := "ASC"
+				if o.Desc {
+					dir = "DESC"
+				}
+				orderParts[i] = fmt.Sprintf("\"%s\" %s", o.Column, dir)
+			}
+			sqlStr += " ORDER BY " + strings.Join(orderParts, ", ")
+		}
+		// Note: LIMIT on relation applies per-parent-row, handled in grouping below
+	}
+
 	rows, err := rqe.db.Query(sqlStr, pkValues...)
 	if err != nil {
 		return fmt.Errorf("relation query failed: %w", err)
@@ -368,7 +392,7 @@ func (rqe *RelationQueryExecutor) embedOneToMany(results *[]map[string]any, relD
 	// Handle nested relations in the related results
 	for _, relCol := range rel.Columns {
 		if relCol.Relation != nil {
-			if err := rqe.embedRelation(&relResults, relDef.ForeignTable, relCol.Relation); err != nil {
+			if err := rqe.embedRelation(&relResults, relDef.ForeignTable, relCol.Relation, nil); err != nil {
 				return fmt.Errorf("failed to embed nested relation %s: %w", relCol.Relation.Name, err)
 			}
 		}
@@ -391,10 +415,20 @@ func (rqe *RelationQueryExecutor) embedOneToMany(results *[]map[string]any, relD
 		relIndex[key] = append(relIndex[key], relRow)
 	}
 
+	// Apply per-parent limit if specified
+	limitPerParent := 0
+	if mods != nil && mods.Limit > 0 {
+		limitPerParent = mods.Limit
+	}
+
 	// Embed into results
 	for _, row := range *results {
 		pk := row[relDef.LocalColumn]
 		if relData, ok := relIndex[pk]; ok {
+			// Apply limit per parent if specified
+			if limitPerParent > 0 && len(relData) > limitPerParent {
+				relData = relData[:limitPerParent]
+			}
 			row[embedName] = relData
 		}
 		// If no matches, the empty array was already set
