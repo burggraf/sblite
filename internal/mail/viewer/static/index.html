@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>sblite Mail Catcher</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #3ecf8e 0%, #38b2ac 100%);
+            color: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .email-count {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+        }
+
+        button {
+            background: white;
+            color: #333;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: #f0f0f0;
+            transform: translateY(-1px);
+        }
+
+        button.danger {
+            background: #ff4757;
+            color: white;
+        }
+
+        button.danger:hover {
+            background: #ff3344;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+
+        .controls label {
+            font-weight: 500;
+        }
+
+        select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            background: white;
+        }
+
+        .email-table {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        tr:hover {
+            background: #f8f9fa;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-confirmation {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .badge-recovery {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .badge-magic_link {
+            background: #cce5ff;
+            color: #004085;
+        }
+
+        .badge-email_change {
+            background: #e2d5f7;
+            color: #4a2c7d;
+        }
+
+        .badge-invite {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .email-subject {
+            cursor: pointer;
+            color: #2563eb;
+            font-weight: 500;
+        }
+
+        .email-subject:hover {
+            text-decoration: underline;
+        }
+
+        .email-time {
+            color: #888;
+            font-size: 0.85rem;
+        }
+
+        .btn-delete {
+            background: transparent;
+            color: #ff4757;
+            padding: 4px 8px;
+            font-size: 0.8rem;
+        }
+
+        .btn-delete:hover {
+            background: #fff0f0;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #888;
+        }
+
+        .empty-state h3 {
+            margin-bottom: 10px;
+            color: #555;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .modal-header h2 {
+            font-size: 1.2rem;
+            margin-bottom: 8px;
+        }
+
+        .modal-meta {
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .modal-meta span {
+            margin-right: 15px;
+        }
+
+        .btn-close {
+            background: transparent;
+            font-size: 1.5rem;
+            padding: 0;
+            line-height: 1;
+            color: #888;
+        }
+
+        .btn-close:hover {
+            color: #333;
+        }
+
+        .modal-tabs {
+            display: flex;
+            border-bottom: 1px solid #eee;
+            padding: 0 20px;
+        }
+
+        .tab-btn {
+            background: transparent;
+            padding: 12px 20px;
+            border-bottom: 2px solid transparent;
+            color: #666;
+            border-radius: 0;
+        }
+
+        .tab-btn.active {
+            color: #3ecf8e;
+            border-bottom-color: #3ecf8e;
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow: auto;
+            padding: 20px;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .email-preview {
+            border: 1px solid #eee;
+            border-radius: 8px;
+            min-height: 300px;
+        }
+
+        .email-preview iframe {
+            width: 100%;
+            height: 400px;
+            border: none;
+        }
+
+        .email-text {
+            white-space: pre-wrap;
+            font-family: monospace;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
+
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .auto-refresh input {
+            cursor: pointer;
+        }
+
+        @media (max-width: 768px) {
+            header {
+                flex-direction: column;
+                gap: 15px;
+            }
+
+            .controls {
+                flex-wrap: wrap;
+            }
+
+            table {
+                font-size: 0.9rem;
+            }
+
+            th, td {
+                padding: 8px 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>sblite Mail Catcher</h1>
+            <div class="header-actions">
+                <span class="email-count" id="emailCount">0 emails</span>
+                <button onclick="refreshEmails()">Refresh</button>
+                <button class="danger" onclick="clearAllEmails()">Clear All</button>
+            </div>
+        </header>
+
+        <div class="controls">
+            <label for="typeFilter">Filter by type:</label>
+            <select id="typeFilter" onchange="filterEmails()">
+                <option value="">All Types</option>
+                <option value="confirmation">Confirmation</option>
+                <option value="recovery">Recovery</option>
+                <option value="magic_link">Magic Link</option>
+                <option value="email_change">Email Change</option>
+                <option value="invite">Invite</option>
+            </select>
+            <div class="auto-refresh">
+                <input type="checkbox" id="autoRefresh" checked>
+                <label for="autoRefresh">Auto-refresh (5s)</label>
+            </div>
+        </div>
+
+        <div class="email-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>To</th>
+                        <th>Subject</th>
+                        <th>Time</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="emailList">
+                </tbody>
+            </table>
+            <div class="empty-state" id="emptyState" style="display: none;">
+                <h3>No emails caught</h3>
+                <p>Emails sent by the application will appear here.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div>
+                    <h2 id="modalSubject">Subject</h2>
+                    <div class="modal-meta">
+                        <span><strong>To:</strong> <span id="modalTo"></span></span>
+                        <span><strong>From:</strong> <span id="modalFrom"></span></span>
+                        <span><strong>Time:</strong> <span id="modalTime"></span></span>
+                    </div>
+                </div>
+                <button class="btn-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-tabs">
+                <button class="tab-btn active" onclick="switchTab('html')">HTML</button>
+                <button class="tab-btn" onclick="switchTab('text')">Text</button>
+            </div>
+            <div class="modal-body">
+                <div class="tab-content active" id="tabHtml">
+                    <div class="email-preview">
+                        <iframe id="emailFrame" sandbox="allow-same-origin"></iframe>
+                    </div>
+                </div>
+                <div class="tab-content" id="tabText">
+                    <pre class="email-text" id="emailText"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allEmails = [];
+        let autoRefreshInterval = null;
+
+        // Get the base path for API calls (handles mounting at /mail)
+        function getApiBase() {
+            const path = window.location.pathname;
+            if (path.endsWith('/')) {
+                return path + 'api/emails';
+            }
+            return path + '/api/emails';
+        }
+
+        async function fetchEmails() {
+            try {
+                const response = await fetch(getApiBase());
+                if (!response.ok) throw new Error('Failed to fetch emails');
+                allEmails = await response.json() || [];
+                return allEmails;
+            } catch (error) {
+                console.error('Error fetching emails:', error);
+                return [];
+            }
+        }
+
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = now - date;
+
+            if (diff < 60000) return 'Just now';
+            if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+            if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function getBadgeClass(type) {
+            return 'badge badge-' + (type || 'confirmation');
+        }
+
+        function renderEmails(emails) {
+            const tbody = document.getElementById('emailList');
+            const emptyState = document.getElementById('emptyState');
+            const countEl = document.getElementById('emailCount');
+
+            countEl.textContent = emails.length + ' email' + (emails.length !== 1 ? 's' : '');
+
+            if (emails.length === 0) {
+                tbody.innerHTML = '';
+                emptyState.style.display = 'block';
+                return;
+            }
+
+            emptyState.style.display = 'none';
+            tbody.innerHTML = emails.map(email => `
+                <tr data-id="${email.id}">
+                    <td><span class="${getBadgeClass(email.type)}">${email.type || 'unknown'}</span></td>
+                    <td>${escapeHtml(email.to)}</td>
+                    <td><span class="email-subject" onclick="viewEmail('${email.id}')">${escapeHtml(email.subject)}</span></td>
+                    <td class="email-time">${formatTime(email.created_at)}</td>
+                    <td><button class="btn-delete" onclick="deleteEmail('${email.id}')">Delete</button></td>
+                </tr>
+            `).join('');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function refreshEmails() {
+            const emails = await fetchEmails();
+            filterEmails();
+        }
+
+        function filterEmails() {
+            const typeFilter = document.getElementById('typeFilter').value;
+            let filtered = allEmails;
+
+            if (typeFilter) {
+                filtered = allEmails.filter(e => e.type === typeFilter);
+            }
+
+            renderEmails(filtered);
+        }
+
+        async function viewEmail(id) {
+            try {
+                const response = await fetch(getApiBase() + '/' + id);
+                if (!response.ok) throw new Error('Failed to fetch email');
+                const email = await response.json();
+
+                document.getElementById('modalSubject').textContent = email.subject;
+                document.getElementById('modalTo').textContent = email.to;
+                document.getElementById('modalFrom').textContent = email.from;
+                document.getElementById('modalTime').textContent = new Date(email.created_at).toLocaleString();
+
+                const iframe = document.getElementById('emailFrame');
+                const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                iframeDoc.open();
+                iframeDoc.write(email.body_html || '<p style="color: #888;">No HTML content</p>');
+                iframeDoc.close();
+
+                document.getElementById('emailText').textContent = email.body_text || 'No text content';
+
+                document.getElementById('modalOverlay').classList.add('active');
+                switchTab('html');
+            } catch (error) {
+                console.error('Error viewing email:', error);
+                alert('Failed to load email');
+            }
+        }
+
+        function closeModal(event) {
+            if (event && event.target !== event.currentTarget) return;
+            document.getElementById('modalOverlay').classList.remove('active');
+        }
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            document.querySelector('.tab-btn[onclick*="' + tab + '"]').classList.add('active');
+            document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.add('active');
+        }
+
+        async function deleteEmail(id) {
+            try {
+                const response = await fetch(getApiBase() + '/' + id, { method: 'DELETE' });
+                if (!response.ok) throw new Error('Failed to delete email');
+                await refreshEmails();
+            } catch (error) {
+                console.error('Error deleting email:', error);
+                alert('Failed to delete email');
+            }
+        }
+
+        async function clearAllEmails() {
+            if (!confirm('Are you sure you want to delete all emails?')) return;
+
+            try {
+                const response = await fetch(getApiBase(), { method: 'DELETE' });
+                if (!response.ok) throw new Error('Failed to clear emails');
+                await refreshEmails();
+            } catch (error) {
+                console.error('Error clearing emails:', error);
+                alert('Failed to clear emails');
+            }
+        }
+
+        function setupAutoRefresh() {
+            const checkbox = document.getElementById('autoRefresh');
+
+            if (checkbox.checked) {
+                autoRefreshInterval = setInterval(refreshEmails, 5000);
+            }
+
+            checkbox.addEventListener('change', () => {
+                if (checkbox.checked) {
+                    autoRefreshInterval = setInterval(refreshEmails, 5000);
+                } else {
+                    clearInterval(autoRefreshInterval);
+                }
+            });
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+        });
+
+        // Initialize
+        refreshEmails();
+        setupAutoRefresh();
+    </script>
+</body>
+</html>
