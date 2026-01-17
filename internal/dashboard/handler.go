@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -48,6 +49,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Route("/tables", func(r chi.Router) {
 			r.Use(h.requireAuth)
 			r.Get("/", h.handleListTables)
+			r.Post("/", h.handleCreateTable)
 			r.Get("/{name}", h.handleGetTableSchema)
 		})
 	})
@@ -298,4 +300,106 @@ func (h *Handler) handleGetTableSchema(w http.ResponseWriter, r *http.Request) {
 		"name":    tableName,
 		"columns": columns,
 	})
+}
+
+// CreateTableRequest defines the request body for creating a table
+type CreateTableRequest struct {
+	Name    string `json:"name"`
+	Columns []struct {
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		Nullable bool   `json:"nullable"`
+		Default  string `json:"default,omitempty"`
+		Primary  bool   `json:"primary"`
+	} `json:"columns"`
+}
+
+func (h *Handler) handleCreateTable(w http.ResponseWriter, r *http.Request) {
+	var req CreateTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if req.Name == "" || len(req.Columns) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Name and columns required"})
+		return
+	}
+
+	// Build CREATE TABLE SQL
+	var colDefs []string
+	var primaryKeys []string
+	for _, col := range req.Columns {
+		sqlType := pgTypeToSQLite(col.Type)
+		def := fmt.Sprintf(`"%s" %s`, col.Name, sqlType)
+		if !col.Nullable {
+			def += " NOT NULL"
+		}
+		if col.Default != "" {
+			def += " DEFAULT " + col.Default
+		}
+		colDefs = append(colDefs, def)
+		if col.Primary {
+			primaryKeys = append(primaryKeys, fmt.Sprintf(`"%s"`, col.Name))
+		}
+	}
+	if len(primaryKeys) > 0 {
+		colDefs = append(colDefs, "PRIMARY KEY ("+strings.Join(primaryKeys, ", ")+")")
+	}
+
+	createSQL := fmt.Sprintf(`CREATE TABLE "%s" (%s)`, req.Name, strings.Join(colDefs, ", "))
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to start transaction"})
+		return
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(createSQL); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Register columns in metadata
+	for _, col := range req.Columns {
+		_, err := tx.Exec(`INSERT INTO _columns (table_name, column_name, pg_type, is_nullable, default_value, is_primary) VALUES (?, ?, ?, ?, ?, ?)`,
+			req.Name, col.Name, col.Type, col.Nullable, col.Default, col.Primary)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to register column"})
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to commit"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{"name": req.Name, "columns": req.Columns})
+}
+
+func pgTypeToSQLite(pgType string) string {
+	switch pgType {
+	case "integer", "boolean":
+		return "INTEGER"
+	case "bytea":
+		return "BLOB"
+	default:
+		return "TEXT"
+	}
 }

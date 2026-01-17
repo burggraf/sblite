@@ -351,3 +351,28 @@ func TestHandlerGetTableSchema(t *testing.T) {
 	columns := schema["columns"].([]interface{})
 	require.Len(t, columns, 3)
 }
+
+func TestHandlerCreateTable(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	token := setupTestSession(t, h)
+
+	body := `{"name":"orders","columns":[{"name":"id","type":"uuid","primary":true},{"name":"total","type":"integer","nullable":true}]}`
+	req := httptest.NewRequest("POST", "/api/tables", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "_sblite_session", Value: token})
+	w := httptest.NewRecorder()
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	// Verify table exists
+	var count int
+	err := h.db.QueryRow(`SELECT COUNT(*) FROM _columns WHERE table_name = 'orders'`).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+}
