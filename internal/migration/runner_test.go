@@ -67,3 +67,81 @@ func TestRunnerGetAppliedMigrations_WithData(t *testing.T) {
 		t.Errorf("expected second version 20260117110000, got %s", applied[1].Version)
 	}
 }
+
+func TestRunnerApply(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	runner := NewRunner(database.DB)
+
+	m := Migration{
+		Version: "20260117120000",
+		Name:    "create_posts",
+		SQL: `
+			CREATE TABLE posts (
+				id TEXT PRIMARY KEY,
+				title TEXT NOT NULL
+			);
+			INSERT INTO _columns (table_name, column_name, pg_type, is_nullable, is_primary)
+			VALUES ('posts', 'id', 'uuid', 0, 1), ('posts', 'title', 'text', 0, 0);
+		`,
+	}
+
+	err := runner.Apply(m)
+	if err != nil {
+		t.Fatalf("Apply() error: %v", err)
+	}
+
+	// Verify table was created
+	var tableName string
+	err = database.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='posts'").Scan(&tableName)
+	if err != nil {
+		t.Errorf("posts table not created: %v", err)
+	}
+
+	// Verify migration was recorded
+	applied, err := runner.GetApplied()
+	if err != nil {
+		t.Fatalf("GetApplied() error: %v", err)
+	}
+	if len(applied) != 1 {
+		t.Fatalf("expected 1 applied migration, got %d", len(applied))
+	}
+	if applied[0].Version != "20260117120000" {
+		t.Errorf("expected version 20260117120000, got %s", applied[0].Version)
+	}
+}
+
+func TestRunnerApply_Rollback(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	runner := NewRunner(database.DB)
+
+	m := Migration{
+		Version: "20260117120000",
+		Name:    "bad_migration",
+		SQL: `
+			CREATE TABLE good_table (id TEXT);
+			INSERT INTO nonexistent_table (id) VALUES ('fail');
+		`,
+	}
+
+	err := runner.Apply(m)
+	if err == nil {
+		t.Fatal("expected error for invalid SQL")
+	}
+
+	// Verify good_table was NOT created (rolled back)
+	var tableName string
+	err = database.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='good_table'").Scan(&tableName)
+	if err == nil {
+		t.Error("good_table should not exist after rollback")
+	}
+
+	// Verify migration was NOT recorded
+	applied, _ := runner.GetApplied()
+	if len(applied) != 0 {
+		t.Errorf("expected 0 applied migrations after rollback, got %d", len(applied))
+	}
+}
