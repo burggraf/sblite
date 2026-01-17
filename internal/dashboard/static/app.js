@@ -357,13 +357,139 @@ const App = {
         `;
     },
 
-    // Placeholder methods for data grid and pagination (to be implemented in Task 10)
+    // Data grid rendering
     renderDataGrid() {
-        return '<div class="empty-state">Data grid coming in next task</div>';
+        const { schema, data, selectedRows } = this.state.tables;
+        if (!schema || !schema.columns) return '';
+
+        const columns = schema.columns;
+        const primaryKey = columns.find(c => c.primary)?.name || columns[0]?.name;
+
+        return `
+            <div class="data-grid-container">
+                <table class="data-grid">
+                    <thead>
+                        <tr>
+                            <th class="checkbox-col">
+                                <input type="checkbox" onchange="App.toggleAllRows(this.checked)"
+                                    ${data.length > 0 && selectedRows.size === data.length ? 'checked' : ''}>
+                            </th>
+                            ${columns.map(col => `
+                                <th>${col.name}<span class="col-type">${col.type}</span></th>
+                            `).join('')}
+                            <th class="actions-col"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.length === 0
+                            ? `<tr><td colspan="${columns.length + 2}" class="empty-state">No data</td></tr>`
+                            : data.map(row => this.renderDataRow(row, columns, primaryKey)).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    },
+
+    renderDataRow(row, columns, primaryKey) {
+        const rowId = row[primaryKey];
+        const isSelected = this.state.tables.selectedRows.has(rowId);
+
+        return `
+            <tr class="${isSelected ? 'selected' : ''}">
+                <td class="checkbox-col">
+                    <input type="checkbox" ${isSelected ? 'checked' : ''}
+                        onchange="App.toggleRow('${rowId}', this.checked)">
+                </td>
+                ${columns.map(col => `
+                    <td class="data-cell"
+                        onclick="App.startCellEdit('${rowId}', '${col.name}')"
+                        data-row="${rowId}" data-col="${col.name}">
+                        ${this.formatCellValue(row[col.name], col.type)}
+                    </td>
+                `).join('')}
+                <td class="actions-col">
+                    <button class="btn-icon" onclick="App.showEditRowModal('${rowId}')">Edit</button>
+                    <button class="btn-icon" onclick="App.confirmDeleteRow('${rowId}')">Delete</button>
+                </td>
+            </tr>
+        `;
+    },
+
+    formatCellValue(value, type) {
+        if (value === null || value === undefined) return '<span class="null-value">NULL</span>';
+        if (type === 'boolean') return value ? 'true' : 'false';
+        if (type === 'jsonb') return '<span class="json-value">{...}</span>';
+        const str = String(value);
+        return str.length > 50 ? str.substring(0, 50) + '...' : str;
+    },
+
+    toggleRow(rowId, checked) {
+        if (checked) {
+            this.state.tables.selectedRows.add(rowId);
+        } else {
+            this.state.tables.selectedRows.delete(rowId);
+        }
+        this.render();
+    },
+
+    toggleAllRows(checked) {
+        const { data, schema } = this.state.tables;
+        const primaryKey = schema.columns.find(c => c.primary)?.name || schema.columns[0]?.name;
+
+        if (checked) {
+            data.forEach(row => this.state.tables.selectedRows.add(row[primaryKey]));
+        } else {
+            this.state.tables.selectedRows.clear();
+        }
+        this.render();
     },
 
     renderPagination() {
-        return '';
+        const { page, pageSize, totalRows } = this.state.tables;
+        const totalPages = Math.ceil(totalRows / pageSize);
+
+        return `
+            <div class="pagination">
+                <div class="pagination-info">
+                    ${totalRows} rows | Page ${page} of ${totalPages || 1}
+                </div>
+                <div class="pagination-controls">
+                    <select onchange="App.changePageSize(this.value)">
+                        <option value="25" ${pageSize === 25 ? 'selected' : ''}>25</option>
+                        <option value="50" ${pageSize === 50 ? 'selected' : ''}>50</option>
+                        <option value="100" ${pageSize === 100 ? 'selected' : ''}>100</option>
+                    </select>
+                    <button class="btn btn-secondary btn-sm" onclick="App.prevPage()" ${page <= 1 ? 'disabled' : ''}>Prev</button>
+                    <button class="btn btn-secondary btn-sm" onclick="App.nextPage()" ${page >= totalPages ? 'disabled' : ''}>Next</button>
+                </div>
+            </div>
+        `;
+    },
+
+    changePageSize(size) {
+        this.state.tables.pageSize = parseInt(size);
+        this.state.tables.page = 1;
+        this.loadTableData();
+    },
+
+    prevPage() {
+        if (this.state.tables.page > 1) {
+            this.state.tables.page--;
+            this.loadTableData();
+        }
+    },
+
+    nextPage() {
+        const totalPages = Math.ceil(this.state.tables.totalRows / this.state.tables.pageSize);
+        if (this.state.tables.page < totalPages) {
+            this.state.tables.page++;
+            this.loadTableData();
+        }
+    },
+
+    // Placeholder methods for inline editing (Task 11)
+    startCellEdit(rowId, column) {
+        // Implemented in Task 11
     },
 
     // Placeholder methods for modals (to be implemented in later tasks)
@@ -375,8 +501,16 @@ const App = {
         alert('Add row modal coming soon');
     },
 
+    showEditRowModal(rowId) {
+        alert('Edit row modal coming soon');
+    },
+
     showSchemaModal() {
         alert('Schema modal coming soon');
+    },
+
+    confirmDeleteRow(rowId) {
+        alert('Delete row confirmation coming soon');
     },
 
     confirmDeleteTable() {

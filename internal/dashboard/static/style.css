@@ -354,3 +354,114 @@ body {
     text-align: center;
     padding: 2rem;
 }
+
+/* Data grid */
+.data-grid-container {
+    flex: 1;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+}
+
+.data-grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.data-grid th, .data-grid td {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.data-grid th {
+    background: var(--bg-secondary);
+    font-weight: 500;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.col-type {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: normal;
+}
+
+.data-grid tbody tr:hover {
+    background: var(--bg-tertiary);
+}
+
+.data-grid tbody tr.selected {
+    background: var(--accent-muted);
+}
+
+.checkbox-col {
+    width: 40px;
+    text-align: center;
+}
+
+.actions-col {
+    width: 100px;
+    text-align: right;
+}
+
+.data-cell {
+    cursor: pointer;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.null-value {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.json-value {
+    color: var(--accent);
+}
+
+.btn-icon {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+.btn-icon:hover {
+    color: var(--text-primary);
+}
+
+/* Pagination */
+.pagination {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 0;
+    margin-top: 0.5rem;
+}
+
+.pagination-info {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.pagination-controls select {
+    padding: 0.375rem;
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
