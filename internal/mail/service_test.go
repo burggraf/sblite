@@ -3,6 +3,7 @@ package mail
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,7 @@ func TestEmailService_SendConfirmation(t *testing.T) {
 		SiteURL: "https://example.com",
 	})
 
-	err := svc.SendConfirmation("user-123", "user@example.com", "token123")
+	err := svc.SendConfirmation(context.Background(), "user-123", "user@example.com", "token123")
 	if err != nil {
 		t.Fatalf("SendConfirmation() error = %v", err)
 	}
@@ -43,7 +44,7 @@ func TestEmailService_SendRecovery(t *testing.T) {
 		SiteURL: "https://example.com",
 	})
 
-	err := svc.SendRecovery("user-123", "user@example.com", "token456")
+	err := svc.SendRecovery(context.Background(), "user-123", "user@example.com", "token456")
 	if err != nil {
 		t.Fatalf("SendRecovery() error = %v", err)
 	}
@@ -65,7 +66,7 @@ func TestEmailService_SendMagicLink(t *testing.T) {
 		SiteURL: "https://example.com",
 	})
 
-	err := svc.SendMagicLink("user@example.com", "token789")
+	err := svc.SendMagicLink(context.Background(), "user@example.com", "token789")
 	if err != nil {
 		t.Fatalf("SendMagicLink() error = %v", err)
 	}
@@ -87,7 +88,7 @@ func TestEmailService_SendEmailChange(t *testing.T) {
 		SiteURL: "https://example.com",
 	})
 
-	err := svc.SendEmailChange("user-123", "new@example.com", "tokenABC")
+	err := svc.SendEmailChange(context.Background(), "user-123", "new@example.com", "tokenABC")
 	if err != nil {
 		t.Fatalf("SendEmailChange() error = %v", err)
 	}
@@ -112,7 +113,7 @@ func TestEmailService_SendInvite(t *testing.T) {
 		SiteURL: "https://example.com",
 	})
 
-	err := svc.SendInvite("invited@example.com", "tokenXYZ")
+	err := svc.SendInvite(context.Background(), "invited@example.com", "tokenXYZ")
 	if err != nil {
 		t.Fatalf("SendInvite() error = %v", err)
 	}

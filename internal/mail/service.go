@@ -4,6 +4,7 @@ package mail
 import (
 	"context"
 	"fmt"
+	"net/url"
 )
 
 // EmailService provides high-level email sending operations.
@@ -23,8 +24,8 @@ func NewEmailService(mailer Mailer, templates *TemplateService, config *Config) 
 }
 
 // SendConfirmation sends an email confirmation message.
-func (s *EmailService) SendConfirmation(userID, email, token string) error {
-	confirmURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=signup", s.config.SiteURL, token)
+func (s *EmailService) SendConfirmation(ctx context.Context, userID, email, token string) error {
+	confirmURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=signup", s.config.SiteURL, url.QueryEscape(token))
 
 	data := TemplateData{
 		SiteURL:         s.config.SiteURL,
@@ -49,12 +50,12 @@ func (s *EmailService) SendConfirmation(userID, email, token string) error {
 		UserID:   userID,
 	}
 
-	return s.mailer.Send(context.Background(), msg)
+	return s.mailer.Send(ctx, msg)
 }
 
 // SendRecovery sends a password recovery email.
-func (s *EmailService) SendRecovery(userID, email, token string) error {
-	confirmURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=recovery", s.config.SiteURL, token)
+func (s *EmailService) SendRecovery(ctx context.Context, userID, email, token string) error {
+	confirmURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=recovery", s.config.SiteURL, url.QueryEscape(token))
 
 	data := TemplateData{
 		SiteURL:         s.config.SiteURL,
@@ -79,12 +80,12 @@ func (s *EmailService) SendRecovery(userID, email, token string) error {
 		UserID:   userID,
 	}
 
-	return s.mailer.Send(context.Background(), msg)
+	return s.mailer.Send(ctx, msg)
 }
 
 // SendMagicLink sends a magic link email.
-func (s *EmailService) SendMagicLink(email, token string) error {
-	confirmURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=magiclink", s.config.SiteURL, token)
+func (s *EmailService) SendMagicLink(ctx context.Context, email, token string) error {
+	confirmURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=magiclink", s.config.SiteURL, url.QueryEscape(token))
 
 	data := TemplateData{
 		SiteURL:         s.config.SiteURL,
@@ -108,12 +109,12 @@ func (s *EmailService) SendMagicLink(email, token string) error {
 		Type:     TypeMagicLink,
 	}
 
-	return s.mailer.Send(context.Background(), msg)
+	return s.mailer.Send(ctx, msg)
 }
 
 // SendEmailChange sends an email change verification.
-func (s *EmailService) SendEmailChange(userID, newEmail, token string) error {
-	confirmURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=email_change", s.config.SiteURL, token)
+func (s *EmailService) SendEmailChange(ctx context.Context, userID, newEmail, token string) error {
+	confirmURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=email_change", s.config.SiteURL, url.QueryEscape(token))
 
 	data := TemplateData{
 		SiteURL:         s.config.SiteURL,
@@ -138,12 +139,12 @@ func (s *EmailService) SendEmailChange(userID, newEmail, token string) error {
 		UserID:   userID,
 	}
 
-	return s.mailer.Send(context.Background(), msg)
+	return s.mailer.Send(ctx, msg)
 }
 
 // SendInvite sends an invitation email.
-func (s *EmailService) SendInvite(email, token string) error {
-	confirmURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=invite", s.config.SiteURL, token)
+func (s *EmailService) SendInvite(ctx context.Context, email, token string) error {
+	confirmURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=invite", s.config.SiteURL, url.QueryEscape(token))
 
 	data := TemplateData{
 		SiteURL:         s.config.SiteURL,
@@ -167,5 +168,5 @@ func (s *EmailService) SendInvite(email, token string) error {
 		Type:     TypeInvite,
 	}
 
-	return s.mailer.Send(context.Background(), msg)
+	return s.mailer.Send(ctx, msg)
 }
