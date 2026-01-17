@@ -338,24 +338,33 @@ describe('Modifiers', () => {
     /**
      * Example 1: Basic explain
      */
-    it.skip('should return query execution plan', async () => {
-      // Requires EXPLAIN support
+    it('should return query execution plan', async () => {
       const { data, error } = await supabase.from('characters').select().explain()
 
       expect(error).toBeNull()
       expect(data).toBeDefined()
+      // Data is returned as a string containing JSON with sql, args, and plan
+      expect(typeof data).toBe('string')
+      const parsed = JSON.parse(data as unknown as string)
+      expect(parsed).toHaveProperty('sql')
+      expect(parsed).toHaveProperty('plan')
+      expect(Array.isArray(parsed.plan)).toBe(true)
     })
 
     /**
-     * Example 2: Explain with analyze and verbose
+     * Example 2: Explain with options (SQLite ignores analyze/verbose but still returns plan)
      */
-    it.skip('should return detailed execution plan', async () => {
+    it('should return execution plan with options', async () => {
       const { data, error } = await supabase
         .from('characters')
         .select()
         .explain({ analyze: true, verbose: true })
 
       expect(error).toBeNull()
+      expect(data).toBeDefined()
+      // SQLite doesn't support analyze/verbose, but still returns a plan
+      const parsed = JSON.parse(data as unknown as string)
+      expect(parsed).toHaveProperty('plan')
     })
   })
 
@@ -398,9 +407,9 @@ describe('Modifiers', () => {
  * - single(): Return single object (errors on 0 or >1 results)
  * - maybeSingle(): Return object or null (errors on >1 results)
  * - csv(): Return as CSV format
+ * - explain(): Query execution plan (SQLite EXPLAIN QUERY PLAN)
  *
  * NOT IMPLEMENTED:
  * - order() on referenced tables
  * - limit() on referenced tables
- * - explain(): Query execution plan
  */

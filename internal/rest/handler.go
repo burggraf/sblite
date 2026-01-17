@@ -244,6 +244,12 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	prefer := r.Header.Get("Prefer")
 	countType, _, explainMode := parsePreferHeader(prefer)
 
+	// Also check Accept header for explain (supabase-js uses this format)
+	accept := r.Header.Get("Accept")
+	if strings.Contains(accept, "application/vnd.pgrst.plan") {
+		explainMode = true
+	}
+
 	// Handle explain mode - return query plan instead of results
 	if explainMode {
 		h.handleExplain(w, r, q)
@@ -269,8 +275,7 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check Accept header for response format preferences
-	accept := r.Header.Get("Accept")
+	// Check Accept header for response format preferences (accept already parsed above for explain)
 	wantCSV := strings.Contains(accept, "text/csv")
 	wantSingle := strings.Contains(accept, "application/vnd.pgrst.object+json")
 

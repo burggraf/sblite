@@ -311,7 +311,8 @@ func parseNotFilter(quotedColumn, value string) (string, []any) {
 	}
 }
 
-// parseInValues parses "(val1,val2,val3)" format into slice of values
+// parseInValues parses "(val1,val2,val3)" or "("val1","val2")" format into slice of values
+// Supports both unquoted values and double-quoted values (for values containing commas)
 func parseInValues(value string) []string {
 	// Remove surrounding parentheses
 	value = strings.TrimPrefix(value, "(")
@@ -321,15 +322,36 @@ func parseInValues(value string) []string {
 		return nil
 	}
 
-	// Split by comma, handling potential whitespace
-	parts := strings.Split(value, ",")
-	result := make([]string, 0, len(parts))
-	for _, p := range parts {
-		trimmed := strings.TrimSpace(p)
-		if trimmed != "" {
-			result = append(result, trimmed)
+	// Check if values are quoted (PostgREST allows "quoted,values")
+	// Parse carefully to handle quoted strings with commas inside
+	var result []string
+	var current strings.Builder
+	inQuotes := false
+
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if ch == '"' {
+			inQuotes = !inQuotes
+			// Don't include the quotes in the value
+			continue
 		}
+		if ch == ',' && !inQuotes {
+			trimmed := strings.TrimSpace(current.String())
+			if trimmed != "" {
+				result = append(result, trimmed)
+			}
+			current.Reset()
+			continue
+		}
+		current.WriteByte(ch)
 	}
+
+	// Don't forget the last value
+	trimmed := strings.TrimSpace(current.String())
+	if trimmed != "" {
+		result = append(result, trimmed)
+	}
+
 	return result
 }
 

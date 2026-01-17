@@ -159,8 +159,7 @@ describe('Filters - Logical Operators', () => {
     /**
      * Example 1: Basic filter
      */
-    it.skip('should apply raw PostgREST filter', async () => {
-      // Requires filter() support
+    it('should apply raw PostgREST filter', async () => {
       const { data, error } = await supabase
         .from('characters')
         .select()
@@ -168,6 +167,8 @@ describe('Filters - Logical Operators', () => {
 
       expect(error).toBeNull()
       expect(data!.length).toBe(2)
+      const names = data!.map((c) => c.name).sort()
+      expect(names).toEqual(['Han', 'Yoda'])
     })
 
     /**

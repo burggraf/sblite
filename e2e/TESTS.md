@@ -19,8 +19,8 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | REST - DELETE | 10 | 10 | 0 | 0 |
 | Filters - Basic | 24 | 22 | 0 | 2 |
 | Filters - Advanced | 15 | 0 | 0 | 15 |
-| Filters - Logical | 11 | 3 | 0 | 8 |
-| Modifiers | 18 | 18 | 0 | 0 |
+| Filters - Logical | 12 | 10 | 0 | 2 |
+| Modifiers | 23 | 20 | 0 | 3 |
 | Modifiers - Count | 12 | 12 | 0 | 0 |
 | Modifiers - CSV | 6 | 6 | 0 | 0 |
 | Auth - Sign Up | 11 | 8 | 0 | 3 |
@@ -36,7 +36,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Relations | 10 | 10 | 0 | 0 |
 | RLS | 9 | 9 | 0 | 0 |
 | API Key | 12 | 12 | 0 | 0 |
-| **TOTAL** | **288** | **222** | **0** | **65** |
+| **TOTAL** | **288** | **225** | **0** | **62** |
 
 *Last tested: 2026-01-17*
 
@@ -275,20 +275,21 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 ### `tests/filters/logical-filters.test.ts`
 
 **match() - Match Multiple Columns**
-- ⏭️ should match rows where all columns match their values
+- ✅ should match rows where all columns match their values
 - ✅ should work with multiple eq() calls (equivalent)
 
 **not() - Negate Filter**
-- ⏭️ should negate is null filter
-- ⏭️ should negate in filter
+- ✅ should negate is null filter
+- ✅ should negate eq filter
+- ✅ should negate in filter
 
 **or() - OR Logic**
-- ⏭️ should match rows satisfying any condition
-- ⏭️ should combine or with and logic
+- ✅ should match rows satisfying any condition
+- ✅ should match multiple OR conditions on different columns
 - ⏭️ should apply or filter to referenced tables
 
 **filter() - Generic Filter**
-- ⏭️ should apply raw PostgREST filter
+- ✅ should apply raw PostgREST filter
 - ⏭️ should apply filter on referenced tables
 
 **Workarounds for OR logic**
@@ -332,11 +333,11 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should error when multiple rows returned
 
 **csv() - Return as CSV**
-- ⏭️ should return data as CSV string
+- ✅ should return data as CSV string
 
 **explain() - Query Execution Plan**
-- ⏭️ should return query execution plan
-- ⏭️ should return detailed execution plan
+- ✅ should return query execution plan
+- ✅ should return execution plan with options
 
 **Combined Modifiers**
 - ✅ should combine order and limit

@@ -255,9 +255,17 @@ These Supabase features are not applicable to sblite:
 - Realtime subscriptions (WebSocket)
 - Storage API (file storage)
 - Postgres extensions
-- Row Level Security policies
 - Database triggers
 - pg_net / pg_cron
+
+### Implemented Features (sblite-specific)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Row Level Security (RLS) | ✅ | Policy-based query rewriting |
+| API Key authentication | ✅ | `anon` and `service_role` keys |
+| Email verification flows | ✅ | Magic link, password reset, invite |
+| Mail catch mode | ✅ | Development email capture |
 
 ---
 
