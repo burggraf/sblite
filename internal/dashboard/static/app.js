@@ -633,6 +633,10 @@ const App = {
             case 'createTable':
                 content = this.renderCreateTableModal();
                 break;
+            case 'addRow':
+            case 'editRow':
+                content = this.renderRowModal();
+                break;
             // Other modal types will be added in later tasks
         }
 
@@ -687,15 +691,103 @@ const App = {
         `;
     },
 
-    // Placeholder methods for other modals (to be implemented in later tasks)
+    // Row modal methods
     showAddRowModal() {
-        alert('Add row modal coming soon');
+        const { schema } = this.state.tables;
+        if (!schema) return;
+
+        const data = {};
+        schema.columns.forEach(col => {
+            data[col.name] = col.type === 'uuid' ? crypto.randomUUID() : '';
+        });
+
+        this.state.modal = { type: 'addRow', data };
+        this.render();
     },
 
     showEditRowModal(rowId) {
-        alert('Edit row modal coming soon');
+        const { data, schema } = this.state.tables;
+        const primaryKey = schema.columns.find(c => c.primary)?.name || schema.columns[0]?.name;
+        const row = data.find(r => r[primaryKey] === rowId);
+
+        if (row) {
+            this.state.modal = { type: 'editRow', data: { ...row, _rowId: rowId } };
+            this.render();
+        }
     },
 
+    async saveRow() {
+        const { type, data } = this.state.modal;
+        const { selected } = this.state.tables;
+        const isNew = type === 'addRow';
+
+        const rowData = { ...data };
+        delete rowData._rowId;
+
+        try {
+            let res;
+            if (isNew) {
+                res = await fetch(`/_/api/data/${selected}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(rowData)
+                });
+            } else {
+                const { schema } = this.state.tables;
+                const primaryKey = schema.columns.find(c => c.primary)?.name || schema.columns[0]?.name;
+                res = await fetch(`/_/api/data/${selected}?${primaryKey}=eq.${data._rowId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(rowData)
+                });
+            }
+
+            if (res.ok) {
+                this.closeModal();
+                await this.loadTableData();
+            } else {
+                const err = await res.json();
+                this.state.error = err.error || 'Failed to save';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to save';
+            this.render();
+        }
+    },
+
+    updateRowField(field, value) {
+        this.state.modal.data[field] = value;
+    },
+
+    renderRowModal() {
+        const { type, data } = this.state.modal;
+        const { schema } = this.state.tables;
+        const isNew = type === 'addRow';
+
+        return `
+            <div class="modal-header">
+                <h3>${isNew ? 'Add Row' : 'Edit Row'}</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                ${schema.columns.map(col => `
+                    <div class="form-group">
+                        <label class="form-label">${col.name} <span class="col-type">${col.type}</span></label>
+                        <input type="text" class="form-input" value="${data[col.name] ?? ''}"
+                            onchange="App.updateRowField('${col.name}', this.value)"
+                            ${col.primary && !isNew ? 'disabled' : ''}>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="App.saveRow()">${isNew ? 'Add' : 'Save'}</button>
+            </div>
+        `;
+    },
+
+    // Placeholder methods for other modals (to be implemented in later tasks)
     showSchemaModal() {
         alert('Schema modal coming soon');
     },
