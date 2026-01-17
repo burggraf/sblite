@@ -27,7 +27,9 @@ sblite/
 │   ├── root.go               # Root command
 │   ├── init.go               # `sblite init` - create database
 │   ├── serve.go              # `sblite serve` - start server
-│   └── migrate.go            # `sblite migrate` - export to PostgreSQL
+│   ├── migrate.go            # `sblite migrate` - export to PostgreSQL
+│   ├── migration.go          # `sblite migration` - manage migrations
+│   └── db.go                 # `sblite db` - database operations
 ├── internal/
 │   ├── auth/                 # Authentication service
 │   │   ├── jwt.go            # JWT generation/validation, sessions
@@ -42,8 +44,11 @@ sblite/
 │   │   └── schema.go         # Column metadata operations (_columns table)
 │   ├── admin/                # Admin API
 │   │   └── handler.go        # Table management endpoints
-│   ├── migrate/              # Migration tools
+│   ├── migrate/              # Migration tools (Supabase export)
 │   │   └── export.go         # PostgreSQL DDL export
+│   ├── migration/            # Schema migration system
+│   │   ├── migration.go      # Migration types, filename parsing
+│   │   └── runner.go         # Apply, GetApplied, GetPending, ReadFromDir
 │   ├── rest/                 # REST API (PostgREST-compatible)
 │   │   ├── handler.go        # HTTP handlers for CRUD
 │   │   ├── query.go          # Query parsing (filters, modifiers)
@@ -86,6 +91,11 @@ go test ./...
 # Export schema for Supabase migration
 ./sblite migrate export --db data.db           # Output to stdout
 ./sblite migrate export --db data.db -o schema.sql  # Output to file
+
+# Schema migrations (Supabase CLI-compatible)
+./sblite migration new create_users           # Create new migration file
+./sblite migration list --db data.db          # List all migrations and status
+./sblite db push --db data.db                 # Apply pending migrations
 
 # Run E2E tests (requires Node.js 18+)
 cd e2e
@@ -220,6 +230,31 @@ sblite tracks intended PostgreSQL types for SQLite-stored data, enabling clean m
 - REST API validates writes against registered schemas
 - `sblite migrate export` generates PostgreSQL DDL from metadata
 
+### Migration System
+
+sblite includes a Supabase CLI-compatible migration system for managing schema changes.
+
+**File Format:**
+- Migrations stored as `.sql` files in `./migrations/` directory (configurable)
+- Filename format: `YYYYMMDDHHmmss_name.sql` (e.g., `20260117143022_create_users.sql`)
+- Forward-only (no rollback support)
+
+**Tracking:**
+- Applied migrations tracked in `_schema_migrations` table
+- Each migration runs in a transaction (rolls back on failure)
+
+**CLI Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `sblite migration new <name>` | Create timestamped migration file |
+| `sblite migration list` | Show all migrations with applied/pending status |
+| `sblite db push` | Apply all pending migrations |
+
+**Flags:**
+- `--db` - Database path (default: `./data.db`)
+- `--migrations-dir` - Migrations directory (default: `./migrations`)
+
 ## Testing
 
 ### Go Unit Tests
@@ -255,6 +290,7 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Type system with PostgreSQL type tracking
 - Admin API for typed table creation
 - PostgreSQL DDL export for Supabase migration
+- Schema migration system (Supabase CLI-compatible)
 
 ### Planned
 - Row Level Security (RLS) via query rewriting
