@@ -51,6 +51,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/", h.handleListTables)
 			r.Post("/", h.handleCreateTable)
 			r.Get("/{name}", h.handleGetTableSchema)
+			r.Delete("/{name}", h.handleDeleteTable)
 		})
 	})
 
@@ -402,4 +403,48 @@ func pgTypeToSQLite(pgType string) string {
 	default:
 		return "TEXT"
 	}
+}
+
+func (h *Handler) handleDeleteTable(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	if tableName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
+		return
+	}
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to start transaction"})
+		return
+	}
+	defer tx.Rollback()
+
+	// Drop the table
+	if _, err := tx.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS "%s"`, tableName)); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Remove metadata
+	if _, err := tx.Exec(`DELETE FROM _columns WHERE table_name = ?`, tableName); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to remove metadata"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to commit"})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

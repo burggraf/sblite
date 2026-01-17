@@ -376,3 +376,32 @@ func TestHandlerCreateTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
 }
+
+func TestHandlerDeleteTable(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	// Create table first
+	_, err := h.db.Exec(`CREATE TABLE to_delete (id TEXT)`)
+	require.NoError(t, err)
+	_, err = h.db.Exec(`INSERT INTO _columns (table_name, column_name, pg_type, is_nullable, is_primary) VALUES ('to_delete', 'id', 'text', true, false)`)
+	require.NoError(t, err)
+
+	token := setupTestSession(t, h)
+
+	req := httptest.NewRequest("DELETE", "/api/tables/to_delete", nil)
+	req.AddCookie(&http.Cookie{Name: "_sblite_session", Value: token})
+	w := httptest.NewRecorder()
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+
+	// Verify table is gone
+	var count int
+	err = h.db.QueryRow(`SELECT COUNT(*) FROM _columns WHERE table_name = 'to_delete'`).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 0, count)
+}
