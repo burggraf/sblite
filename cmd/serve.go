@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
 	"github.com/markb/sblite/internal/server"
 	"github.com/spf13/cobra"
@@ -17,6 +19,12 @@ var serveCmd = &cobra.Command{
 	Short: "Start the Supabase Lite server",
 	Long:  `Starts the HTTP server with auth and REST API endpoints.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Initialize logging first
+		logConfig := buildLogConfig(cmd)
+		if err := log.Init(logConfig); err != nil {
+			return fmt.Errorf("failed to initialize logging: %w", err)
+		}
+
 		dbPath, _ := cmd.Flags().GetString("db")
 		port, _ := cmd.Flags().GetInt("port")
 		host, _ := cmd.Flags().GetString("host")
@@ -104,6 +112,78 @@ func buildMailConfig(cmd *cobra.Command) *mail.Config {
 	return cfg
 }
 
+// buildLogConfig creates a log.Config from environment variables and CLI flags.
+// Priority: CLI flags > environment variables > defaults
+func buildLogConfig(cmd *cobra.Command) *log.Config {
+	cfg := log.DefaultConfig()
+
+	// Read environment variables first
+	if mode := os.Getenv("SBLITE_LOG_MODE"); mode != "" {
+		cfg.Mode = mode
+	}
+	if level := os.Getenv("SBLITE_LOG_LEVEL"); level != "" {
+		cfg.Level = level
+	}
+	if format := os.Getenv("SBLITE_LOG_FORMAT"); format != "" {
+		cfg.Format = format
+	}
+	if filePath := os.Getenv("SBLITE_LOG_FILE"); filePath != "" {
+		cfg.FilePath = filePath
+	}
+	if dbPath := os.Getenv("SBLITE_LOG_DB"); dbPath != "" {
+		cfg.DBPath = dbPath
+	}
+	if maxSize := os.Getenv("SBLITE_LOG_MAX_SIZE"); maxSize != "" {
+		if v, err := strconv.Atoi(maxSize); err == nil {
+			cfg.MaxSizeMB = v
+		}
+	}
+	if maxAge := os.Getenv("SBLITE_LOG_MAX_AGE"); maxAge != "" {
+		if v, err := strconv.Atoi(maxAge); err == nil {
+			cfg.MaxAgeDays = v
+		}
+	}
+	if maxBackups := os.Getenv("SBLITE_LOG_MAX_BACKUPS"); maxBackups != "" {
+		if v, err := strconv.Atoi(maxBackups); err == nil {
+			cfg.MaxBackups = v
+		}
+	}
+	if fields := os.Getenv("SBLITE_LOG_FIELDS"); fields != "" {
+		cfg.Fields = strings.Split(fields, ",")
+	}
+
+	// CLI flags override environment variables
+	if mode, _ := cmd.Flags().GetString("log-mode"); mode != "" {
+		cfg.Mode = mode
+	}
+	if level, _ := cmd.Flags().GetString("log-level"); level != "" {
+		cfg.Level = level
+	}
+	if format, _ := cmd.Flags().GetString("log-format"); format != "" {
+		cfg.Format = format
+	}
+	if filePath, _ := cmd.Flags().GetString("log-file"); filePath != "" {
+		cfg.FilePath = filePath
+	}
+	if dbPath, _ := cmd.Flags().GetString("log-db"); dbPath != "" {
+		cfg.DBPath = dbPath
+	}
+	if maxSize, _ := cmd.Flags().GetInt("log-max-size"); maxSize > 0 {
+		cfg.MaxSizeMB = maxSize
+	}
+	if maxAge, _ := cmd.Flags().GetInt("log-max-age"); maxAge > 0 {
+		cfg.MaxAgeDays = maxAge
+	}
+	if maxBackups, _ := cmd.Flags().GetInt("log-max-backups"); maxBackups > 0 {
+		cfg.MaxBackups = maxBackups
+	}
+	if fields, _ := cmd.Flags().GetStringSlice("log-fields"); len(fields) > 0 {
+		cfg.Fields = fields
+	}
+
+	return cfg
+}
+
 func init() {
 	rootCmd.AddCommand(serveCmd)
 	serveCmd.Flags().String("db", "data.db", "Path to database file")
@@ -112,4 +192,15 @@ func init() {
 	serveCmd.Flags().String("mail-mode", "", "Email mode: log, catch, or smtp (default: log)")
 	serveCmd.Flags().String("mail-from", "", "Default sender email address")
 	serveCmd.Flags().String("site-url", "", "Base URL for email links")
+
+	// Logging flags
+	serveCmd.Flags().String("log-mode", "", "Logging output: console, file, database (default: console)")
+	serveCmd.Flags().String("log-level", "", "Log level: debug, info, warn, error (default: info)")
+	serveCmd.Flags().String("log-format", "", "Log format: text, json (default: text)")
+	serveCmd.Flags().String("log-file", "", "Log file path (default: sblite.log)")
+	serveCmd.Flags().String("log-db", "", "Log database path (default: log.db)")
+	serveCmd.Flags().Int("log-max-size", 0, "Max log file size in MB (default: 100)")
+	serveCmd.Flags().Int("log-max-age", 0, "Max age of logs in days (default: 7)")
+	serveCmd.Flags().Int("log-max-backups", 0, "Max backup files to keep (default: 3)")
+	serveCmd.Flags().StringSlice("log-fields", nil, "DB log fields: source,request_id,user_id,extra")
 }
