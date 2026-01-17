@@ -26,14 +26,24 @@ sblite/
 ├── cmd/                       # CLI commands (Cobra)
 │   ├── root.go               # Root command
 │   ├── init.go               # `sblite init` - create database
-│   └── serve.go              # `sblite serve` - start server
+│   ├── serve.go              # `sblite serve` - start server
+│   └── migrate.go            # `sblite migrate` - export to PostgreSQL
 ├── internal/
 │   ├── auth/                 # Authentication service
 │   │   ├── jwt.go            # JWT generation/validation, sessions
 │   │   └── user.go           # User management, password hashing
 │   ├── db/                   # Database layer
 │   │   ├── db.go             # SQLite connection, WAL mode
-│   │   └── migrations.go     # Auth schema tables
+│   │   └── migrations.go     # Auth schema tables, _columns metadata
+│   ├── types/                # Type system
+│   │   ├── types.go          # PostgreSQL type definitions
+│   │   └── validate.go       # Type validators (uuid, text, integer, etc.)
+│   ├── schema/               # Schema metadata
+│   │   └── schema.go         # Column metadata operations (_columns table)
+│   ├── admin/                # Admin API
+│   │   └── handler.go        # Table management endpoints
+│   ├── migrate/              # Migration tools
+│   │   └── export.go         # PostgreSQL DDL export
 │   ├── rest/                 # REST API (PostgREST-compatible)
 │   │   ├── handler.go        # HTTP handlers for CRUD
 │   │   ├── query.go          # Query parsing (filters, modifiers)
@@ -72,6 +82,10 @@ go build -o sblite .
 
 # Run Go tests
 go test ./...
+
+# Export schema for Supabase migration
+./sblite migrate export --db data.db           # Output to stdout
+./sblite migrate export --db data.db -o schema.sql  # Output to file
 
 # Run E2E tests (requires Node.js 18+)
 cd e2e
@@ -134,9 +148,18 @@ npm test         # Run all tests (server must be running)
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/rest/v1/{table}` | GET | Select rows with filters |
-| `/rest/v1/{table}` | POST | Insert rows |
-| `/rest/v1/{table}` | PATCH | Update rows matching filters |
+| `/rest/v1/{table}` | POST | Insert rows (validates against type schema) |
+| `/rest/v1/{table}` | PATCH | Update rows (validates against type schema) |
 | `/rest/v1/{table}` | DELETE | Delete rows matching filters |
+
+### Admin API (`/admin/v1`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/admin/v1/tables` | POST | Create table with typed schema |
+| `/admin/v1/tables` | GET | List all user tables |
+| `/admin/v1/tables/{name}` | GET | Get table schema |
+| `/admin/v1/tables/{name}` | DELETE | Drop table |
 
 ### Query Operators
 
@@ -174,6 +197,29 @@ JWTs match Supabase format exactly:
 - Pure Go driver (no CGO) for easy cross-compilation
 - All timestamps stored as ISO 8601 strings
 
+### Type System
+
+sblite tracks intended PostgreSQL types for SQLite-stored data, enabling clean migration to Supabase.
+
+**Supported Types:**
+
+| sblite Type | SQLite Storage | PostgreSQL Type | Validation |
+|-------------|----------------|-----------------|------------|
+| `uuid` | TEXT | uuid | RFC 4122 format |
+| `text` | TEXT | text | None |
+| `integer` | INTEGER | integer | 32-bit signed |
+| `numeric` | TEXT | numeric | Valid decimal string |
+| `boolean` | INTEGER | boolean | 0 or 1 |
+| `timestamptz` | TEXT | timestamptz | ISO 8601 UTC |
+| `jsonb` | TEXT | jsonb | json_valid() |
+| `bytea` | BLOB | bytea | Valid base64 |
+
+**Schema Metadata:**
+- Column types stored in `_columns` table
+- Tables created via Admin API automatically register metadata
+- REST API validates writes against registered schemas
+- `sblite migrate export` generates PostgreSQL DDL from metadata
+
 ## Testing
 
 ### Go Unit Tests
@@ -206,6 +252,9 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Query modifiers (select, order, limit, offset)
 - single() and maybeSingle() response modifiers
 - Configurable logging (console, file, database backends)
+- Type system with PostgreSQL type tracking
+- Admin API for typed table creation
+- PostgreSQL DDL export for Supabase migration
 
 ### Planned
 - Row Level Security (RLS) via query rewriting
@@ -244,3 +293,19 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 1. Create new file in `cmd/` (e.g., `cmd/backup.go`)
 2. Define command with `cobra.Command`
 3. Add to root command via `init()` function
+
+### Adding a new type to the type system
+
+1. Add type constant in `internal/types/types.go`
+2. Add SQLite storage mapping in `SQLiteType()` method
+3. Add validator function in `internal/types/validate.go`
+4. Register validator in `validators` map
+5. Add tests in `internal/types/validate_test.go`
+6. Update `_columns` CHECK constraint in `internal/db/migrations.go`
+7. Add PostgreSQL DDL mapping in `internal/migrate/export.go`
+
+### Adding a new admin endpoint
+
+1. Add handler method in `internal/admin/handler.go`
+2. Register route in `internal/server/server.go` setupRoutes()
+3. Add tests in `internal/admin/handler_test.go`
