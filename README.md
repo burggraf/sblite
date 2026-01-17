@@ -173,6 +173,7 @@ See [Email System Documentation](docs/EMAIL.md) for detailed configuration and u
 
 ### Guides
 - [Email System](docs/EMAIL.md) - Complete guide to email modes, configuration, and authentication flows
+- [Logging System](docs/LOGGING.md) - Logging modes, rotation, database queries, and configuration
 
 ### Design & Implementation
 - [Design Document](docs/plans/2026-01-16-supabase-lite-design.md) - Architecture, schema design, and roadmap
