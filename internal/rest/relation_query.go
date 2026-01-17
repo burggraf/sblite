@@ -362,8 +362,27 @@ func (rqe *RelationQueryExecutor) embedOneToMany(results *[]map[string]any, relD
 		relDef.ForeignColumn,
 		strings.Join(placeholders, ", "))
 
-	// Apply relation-specific modifiers (ORDER BY, LIMIT)
+	// Collect all query arguments (starts with pkValues)
+	args := make([]any, len(pkValues))
+	copy(args, pkValues)
+
+	// Apply relation-specific filters
 	if mods != nil {
+		// Apply regular filters
+		for _, f := range mods.Filters {
+			condition, filterArgs := f.ToSQL()
+			sqlStr += " AND " + condition
+			args = append(args, filterArgs...)
+		}
+
+		// Apply logical filters (OR/AND)
+		for _, lf := range mods.LogicalFilters {
+			condition, lfArgs := lf.ToSQL()
+			sqlStr += " AND (" + condition + ")"
+			args = append(args, lfArgs...)
+		}
+
+		// Apply ORDER BY
 		if len(mods.Order) > 0 {
 			orderParts := make([]string, len(mods.Order))
 			for i, o := range mods.Order {
@@ -378,7 +397,7 @@ func (rqe *RelationQueryExecutor) embedOneToMany(results *[]map[string]any, relD
 		// Note: LIMIT on relation applies per-parent-row, handled in grouping below
 	}
 
-	rows, err := rqe.db.Query(sqlStr, pkValues...)
+	rows, err := rqe.db.Query(sqlStr, args...)
 	if err != nil {
 		return fmt.Errorf("relation query failed: %w", err)
 	}

@@ -134,7 +134,7 @@ describe('Filters - Logical Operators', () => {
     /**
      * Example 3: OR on referenced tables
      */
-    it.skip('should apply or filter to referenced tables', async () => {
+    it('should apply or filter to referenced tables', async () => {
       const { data, error } = await supabase
         .from('orchestral_sections')
         .select(`
@@ -143,9 +143,14 @@ describe('Filters - Logical Operators', () => {
             name
           )
         `)
-        .or('section_id.eq.1,name.eq.guzheng', { referencedTable: 'instruments' })
+        .or('section_id.eq.1,name.eq.piano', { referencedTable: 'instruments' })
 
       expect(error).toBeNull()
+      expect(data).toBeDefined()
+      // Should return strings (section_id=1) and percussion (has piano)
+      expect(data!.length).toBe(2)
+      const sectionNames = data!.map((s) => s.name).sort()
+      expect(sectionNames).toEqual(['percussion', 'strings'])
     })
   })
 
@@ -174,7 +179,7 @@ describe('Filters - Logical Operators', () => {
     /**
      * Example 2: Filter on referenced table
      */
-    it.skip('should apply filter on referenced tables', async () => {
+    it('should apply filter on referenced tables', async () => {
       const { data, error } = await supabase
         .from('orchestral_sections')
         .select(`
@@ -186,6 +191,12 @@ describe('Filters - Logical Operators', () => {
         .filter('instruments.name', 'eq', 'flute')
 
       expect(error).toBeNull()
+      expect(data).toBeDefined()
+      // Should only return woodwinds section with only flute
+      expect(data!.length).toBe(1)
+      expect(data![0].name).toBe('woodwinds')
+      expect(data![0].instruments.length).toBe(1)
+      expect(data![0].instruments[0].name).toBe('flute')
     })
   })
 

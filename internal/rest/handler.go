@@ -184,50 +184,62 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 			continue
 		}
 
-		// Check for relation-prefixed modifiers (e.g., "instruments.order", "instruments.limit")
+		// Check for relation-prefixed params (e.g., "instruments.order", "instruments.or", "instruments.name")
 		if strings.Contains(key, ".") {
 			parts := strings.SplitN(key, ".", 2)
 			if len(parts) == 2 {
 				relName := parts[0]
 				modifier := parts[1]
 
-				// Skip if it looks like a filter on related table (has operator)
-				if strings.Contains(values[0], ".") && !isRelationModifier(modifier) {
-					// This is a related table filter like "country.name=eq.Canada"
-					for _, value := range values {
-						filterStr := fmt.Sprintf("%s=%s", key, value)
-						if filter, err := ParseFilter(filterStr); err == nil {
-							q.Filters = append(q.Filters, filter)
-						}
-					}
-					continue
-				}
-
-				// Handle relation-specific modifiers
+				// Handle relation-specific modifiers and filters
 				mods := q.RelationModifiers[relName]
 				switch modifier {
 				case "order":
 					mods.Order = ParseOrder(values[0])
+					q.RelationModifiers[relName] = mods
+					continue
 				case "limit":
 					mods.Limit, _ = strconv.Atoi(values[0])
+					q.RelationModifiers[relName] = mods
+					continue
 				case "offset":
 					mods.Offset, _ = strconv.Atoi(values[0])
-				default:
-					// Not a recognized modifier, treat as filter
+					q.RelationModifiers[relName] = mods
+					continue
+				case "or":
+					// Relation-specific OR filter: instruments.or=(col.eq.val,col.eq.val)
 					for _, value := range values {
-						filterStr := fmt.Sprintf("%s=%s", key, value)
-						if filter, err := ParseFilter(filterStr); err == nil {
-							q.Filters = append(q.Filters, filter)
+						if lf, err := ParseLogicalFilter("or", value); err == nil {
+							mods.LogicalFilters = append(mods.LogicalFilters, lf)
 						}
 					}
+					q.RelationModifiers[relName] = mods
+					continue
+				case "and":
+					// Relation-specific AND filter
+					for _, value := range values {
+						if lf, err := ParseLogicalFilter("and", value); err == nil {
+							mods.LogicalFilters = append(mods.LogicalFilters, lf)
+						}
+					}
+					q.RelationModifiers[relName] = mods
+					continue
+				default:
+					// This is a filter on relation column: instruments.name=eq.flute
+					// Store in relation modifiers, not main query
+					for _, value := range values {
+						filterStr := fmt.Sprintf("%s=%s", modifier, value)
+						if filter, err := ParseFilter(filterStr); err == nil {
+							mods.Filters = append(mods.Filters, filter)
+						}
+					}
+					q.RelationModifiers[relName] = mods
 					continue
 				}
-				q.RelationModifiers[relName] = mods
-				continue
 			}
 		}
 
-		// Regular filter
+		// Regular filter on main table
 		for _, value := range values {
 			filterStr := fmt.Sprintf("%s=%s", key, value)
 			if filter, err := ParseFilter(filterStr); err == nil {
@@ -236,7 +248,7 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 		}
 	}
 
-	// Parse logical filters (or/and)
+	// Parse logical filters (or/and) for main table
 	for _, orValue := range r.URL.Query()["or"] {
 		if lf, err := ParseLogicalFilter("or", orValue); err == nil {
 			q.LogicalFilters = append(q.LogicalFilters, lf)

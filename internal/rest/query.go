@@ -24,11 +24,13 @@ type LogicalFilter struct {
 	Filters  []Filter
 }
 
-// RelationModifiers holds order/limit/offset modifiers for a specific related table
+// RelationModifiers holds order/limit/offset/filter modifiers for a specific related table
 type RelationModifiers struct {
-	Order  []OrderBy
-	Limit  int
-	Offset int
+	Order          []OrderBy
+	Limit          int
+	Offset         int
+	Filters        []Filter        // Filters to apply to the relation
+	LogicalFilters []LogicalFilter // OR/AND filters to apply to the relation
 }
 
 type Query struct {
