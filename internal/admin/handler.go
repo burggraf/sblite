@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -13,6 +14,22 @@ import (
 	"github.com/markb/sblite/internal/schema"
 	"github.com/markb/sblite/internal/types"
 )
+
+// reservedTableNames is a set of table names that cannot be created by users.
+var reservedTableNames = map[string]bool{
+	"auth_users":          true,
+	"auth_sessions":       true,
+	"auth_refresh_tokens": true,
+	"_columns":            true,
+	"_rls_policies":       true,
+}
+
+// reservedTablePrefixes are prefixes that cannot be used for table names.
+var reservedTablePrefixes = []string{"auth_", "_", "sqlite_"}
+
+// validColumnNameRegex matches valid column names: starts with letter or underscore,
+// contains only alphanumeric and underscore characters.
+var validColumnNameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // ColumnDef defines a column in a table creation request.
 type ColumnDef struct {
@@ -55,6 +72,43 @@ func NewHandler(database *db.DB, sch *schema.Schema) *Handler {
 	}
 }
 
+// isReservedTableName checks if a table name is reserved or uses a reserved prefix.
+func isReservedTableName(name string) (bool, string) {
+	// Check exact reserved names
+	if reservedTableNames[name] {
+		return true, fmt.Sprintf("Table name '%s' is reserved", name)
+	}
+
+	// Check reserved prefixes
+	for _, prefix := range reservedTablePrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true, fmt.Sprintf("Table names starting with '%s' are reserved", prefix)
+		}
+	}
+
+	return false, ""
+}
+
+// validateColumnName checks if a column name is valid.
+func validateColumnName(name string) (bool, string) {
+	// Must not be empty
+	if name == "" {
+		return false, "Column name is required"
+	}
+
+	// Must not be SQLite reserved
+	if strings.EqualFold(name, "rowid") {
+		return false, "Column name 'rowid' is reserved by SQLite"
+	}
+
+	// Must match valid identifier pattern (starts with letter/underscore, alphanumeric+underscore)
+	if !validColumnNameRegex.MatchString(name) {
+		return false, fmt.Sprintf("Column name '%s' is invalid: must start with a letter or underscore and contain only alphanumeric characters and underscores", name)
+	}
+
+	return true, ""
+}
+
 // CreateTable handles POST /admin/v1/tables.
 // It creates a new SQLite table and registers column metadata.
 func (h *Handler) CreateTable(w http.ResponseWriter, r *http.Request) {
@@ -70,16 +124,22 @@ func (h *Handler) CreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for reserved table names
+	if reserved, msg := isReservedTableName(req.Name); reserved {
+		h.writeError(w, http.StatusBadRequest, "validation_failed", msg)
+		return
+	}
+
 	// Validate columns
 	if len(req.Columns) == 0 {
 		h.writeError(w, http.StatusBadRequest, "validation_failed", "At least one column is required")
 		return
 	}
 
-	// Validate all column types before doing anything
+	// Validate all column names and types before doing anything
 	for _, col := range req.Columns {
-		if col.Name == "" {
-			h.writeError(w, http.StatusBadRequest, "validation_failed", "Column name is required")
+		if valid, msg := validateColumnName(col.Name); !valid {
+			h.writeError(w, http.StatusBadRequest, "validation_failed", msg)
 			return
 		}
 		if !types.IsValidType(col.Type) {
@@ -105,13 +165,7 @@ func (h *Handler) CreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Commit the transaction
-	if err := tx.Commit(); err != nil {
-		h.writeError(w, http.StatusInternalServerError, "server_error", "Failed to commit transaction")
-		return
-	}
-
-	// Register column metadata (after table is created successfully)
+	// Register column metadata within the same transaction
 	for _, col := range req.Columns {
 		schemCol := schema.Column{
 			TableName:    req.Name,
@@ -121,12 +175,16 @@ func (h *Handler) CreateTable(w http.ResponseWriter, r *http.Request) {
 			DefaultValue: col.Default,
 			IsPrimary:    col.Primary,
 		}
-		if err := h.schema.RegisterColumn(schemCol); err != nil {
-			// Table was created but metadata registration failed
-			// This is a partial failure state
+		if err := h.schema.RegisterColumnTx(tx, schemCol); err != nil {
 			h.writeError(w, http.StatusInternalServerError, "server_error", fmt.Sprintf("Failed to register column metadata: %v", err))
 			return
 		}
+	}
+
+	// Commit the transaction (both table creation and metadata registration)
+	if err := tx.Commit(); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "server_error", "Failed to commit transaction")
+		return
 	}
 
 	// Build response

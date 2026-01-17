@@ -412,3 +412,251 @@ func TestMapDefaultValue(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateTable_ReservedTableNames(t *testing.T) {
+	handler, _ := setupTestHandler(t)
+
+	r := chi.NewRouter()
+	r.Post("/admin/v1/tables", handler.CreateTable)
+
+	tests := []struct {
+		name        string
+		tableName   string
+		wantMessage string
+	}{
+		{
+			name:        "auth_users is reserved",
+			tableName:   "auth_users",
+			wantMessage: "Table name 'auth_users' is reserved",
+		},
+		{
+			name:        "auth_sessions is reserved",
+			tableName:   "auth_sessions",
+			wantMessage: "Table name 'auth_sessions' is reserved",
+		},
+		{
+			name:        "auth_refresh_tokens is reserved",
+			tableName:   "auth_refresh_tokens",
+			wantMessage: "Table name 'auth_refresh_tokens' is reserved",
+		},
+		{
+			name:        "_columns is reserved",
+			tableName:   "_columns",
+			wantMessage: "Table name '_columns' is reserved",
+		},
+		{
+			name:        "_rls_policies is reserved",
+			tableName:   "_rls_policies",
+			wantMessage: "Table name '_rls_policies' is reserved",
+		},
+		{
+			name:        "auth_ prefix is reserved",
+			tableName:   "auth_custom",
+			wantMessage: "Table names starting with 'auth_' are reserved",
+		},
+		{
+			name:        "_ prefix is reserved",
+			tableName:   "_custom_table",
+			wantMessage: "Table names starting with '_' are reserved",
+		},
+		{
+			name:        "sqlite_ prefix is reserved",
+			tableName:   "sqlite_master_copy",
+			wantMessage: "Table names starting with 'sqlite_' are reserved",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{
+				"name": "` + tt.tableName + `",
+				"columns": [
+					{"name": "id", "type": "uuid", "nullable": false}
+				]
+			}`
+			req := httptest.NewRequest("POST", "/admin/v1/tables", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("expected status 400, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var response ErrorResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatalf("failed to parse response: %v", err)
+			}
+
+			if response.Message != tt.wantMessage {
+				t.Errorf("expected message %q, got %q", tt.wantMessage, response.Message)
+			}
+		})
+	}
+}
+
+func TestCreateTable_InvalidColumnNames(t *testing.T) {
+	handler, _ := setupTestHandler(t)
+
+	r := chi.NewRouter()
+	r.Post("/admin/v1/tables", handler.CreateTable)
+
+	tests := []struct {
+		name           string
+		columnName     string
+		wantContains   string
+	}{
+		{
+			name:         "column name starting with digit",
+			columnName:   "1invalid",
+			wantContains: "must start with a letter or underscore",
+		},
+		{
+			name:         "column name with special characters",
+			columnName:   "col-name",
+			wantContains: "must start with a letter or underscore",
+		},
+		{
+			name:         "column name with space",
+			columnName:   "col name",
+			wantContains: "must start with a letter or underscore",
+		},
+		{
+			name:         "rowid is reserved",
+			columnName:   "rowid",
+			wantContains: "'rowid' is reserved by SQLite",
+		},
+		{
+			name:         "ROWID is reserved (case insensitive)",
+			columnName:   "ROWID",
+			wantContains: "'rowid' is reserved by SQLite",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{
+				"name": "test_table",
+				"columns": [
+					{"name": "` + tt.columnName + `", "type": "text", "nullable": false}
+				]
+			}`
+			req := httptest.NewRequest("POST", "/admin/v1/tables", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("expected status 400, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var response ErrorResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatalf("failed to parse response: %v", err)
+			}
+
+			if !bytes.Contains([]byte(response.Message), []byte(tt.wantContains)) {
+				t.Errorf("expected message to contain %q, got %q", tt.wantContains, response.Message)
+			}
+		})
+	}
+}
+
+func TestCreateTable_ValidColumnNames(t *testing.T) {
+	handler, _ := setupTestHandler(t)
+
+	r := chi.NewRouter()
+	r.Post("/admin/v1/tables", handler.CreateTable)
+
+	validNames := []string{
+		"id",
+		"user_id",
+		"_private",
+		"Column1",
+		"camelCase",
+		"UPPERCASE",
+		"a1b2c3",
+	}
+
+	for _, colName := range validNames {
+		t.Run(colName, func(t *testing.T) {
+			// Use a unique table name for each test
+			tableName := "test_" + colName
+			body := `{
+				"name": "` + tableName + `",
+				"columns": [
+					{"name": "` + colName + `", "type": "text", "nullable": false}
+				]
+			}`
+			req := httptest.NewRequest("POST", "/admin/v1/tables", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusCreated {
+				t.Errorf("expected status 201 for column name %q, got %d: %s", colName, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestIsReservedTableName(t *testing.T) {
+	tests := []struct {
+		name       string
+		tableName  string
+		isReserved bool
+	}{
+		{"auth_users", "auth_users", true},
+		{"auth_sessions", "auth_sessions", true},
+		{"auth_refresh_tokens", "auth_refresh_tokens", true},
+		{"_columns", "_columns", true},
+		{"_rls_policies", "_rls_policies", true},
+		{"auth_custom", "auth_custom", true},
+		{"_custom", "_custom", true},
+		{"sqlite_sequence", "sqlite_sequence", true},
+		{"regular_table", "regular_table", false},
+		{"users", "users", false},
+		{"my_auth_table", "my_auth_table", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reserved, _ := isReservedTableName(tt.tableName)
+			if reserved != tt.isReserved {
+				t.Errorf("isReservedTableName(%q) = %v, want %v", tt.tableName, reserved, tt.isReserved)
+			}
+		})
+	}
+}
+
+func TestValidateColumnName(t *testing.T) {
+	tests := []struct {
+		name     string
+		colName  string
+		isValid  bool
+	}{
+		{"valid lowercase", "name", true},
+		{"valid with underscore", "user_id", true},
+		{"valid starting with underscore", "_id", true},
+		{"valid uppercase", "NAME", true},
+		{"valid mixed case", "userName", true},
+		{"valid with numbers", "col1", true},
+		{"empty name", "", false},
+		{"starts with digit", "1col", false},
+		{"contains hyphen", "col-name", false},
+		{"contains space", "col name", false},
+		{"contains dot", "col.name", false},
+		{"rowid lowercase", "rowid", false},
+		{"rowid uppercase", "ROWID", false},
+		{"rowid mixed case", "RowId", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			valid, _ := validateColumnName(tt.colName)
+			if valid != tt.isValid {
+				t.Errorf("validateColumnName(%q) = %v, want %v", tt.colName, valid, tt.isValid)
+			}
+		})
+	}
+}

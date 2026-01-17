@@ -30,9 +30,25 @@ func New(db *sql.DB) *Schema {
 	return &Schema{db: db}
 }
 
+// Execer is an interface that both *sql.DB and *sql.Tx implement.
+type Execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 // RegisterColumn inserts or updates a column definition in the _columns table.
 // Returns an error if the PgType is not a valid supported type.
 func (s *Schema) RegisterColumn(col Column) error {
+	return s.registerColumnWithExecer(s.db, col)
+}
+
+// RegisterColumnTx inserts or updates a column definition within an existing transaction.
+// Returns an error if the PgType is not a valid supported type.
+func (s *Schema) RegisterColumnTx(tx *sql.Tx, col Column) error {
+	return s.registerColumnWithExecer(tx, col)
+}
+
+// registerColumnWithExecer is the internal implementation that works with any Execer.
+func (s *Schema) registerColumnWithExecer(exec Execer, col Column) error {
 	// Validate the PostgreSQL type first
 	if !types.IsValidType(col.PgType) {
 		return fmt.Errorf("invalid PostgreSQL type: %s", col.PgType)
@@ -49,7 +65,7 @@ func (s *Schema) RegisterColumn(col Column) error {
 			is_primary = excluded.is_primary
 	`
 
-	_, err := s.db.Exec(query,
+	_, err := exec.Exec(query,
 		col.TableName,
 		col.ColumnName,
 		col.PgType,
