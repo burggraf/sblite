@@ -313,12 +313,28 @@ describe('Filters - Basic Operators', () => {
       }
     })
 
-    it.skip('should match rows where boolean column is true', async () => {
-      // Requires a table with boolean column
+    it('should match rows where boolean column is true', async () => {
+      const { data, error } = await supabase
+        .from('characters')
+        .select('name, is_jedi')
+        .is('is_jedi', true)
+
+      expect(error).toBeNull()
+      expect(data!.length).toBe(2) // Luke and Yoda
+      expect(data!.every((c) => c.is_jedi === 1)).toBe(true)
+      const names = data!.map((c) => c.name).sort()
+      expect(names).toEqual(['Luke', 'Yoda'])
     })
 
-    it.skip('should match rows where boolean column is false', async () => {
-      // Requires a table with boolean column
+    it('should match rows where boolean column is false', async () => {
+      const { data, error } = await supabase
+        .from('characters')
+        .select('name, is_jedi')
+        .is('is_jedi', false)
+
+      expect(error).toBeNull()
+      expect(data!.length).toBe(3) // Leia, Han, Chewbacca
+      expect(data!.every((c) => c.is_jedi === 0)).toBe(true)
     })
   })
 

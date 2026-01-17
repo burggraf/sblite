@@ -191,6 +191,13 @@ func (f Filter) ToSQL() (string, []any) {
 		if f.Value == "not.null" {
 			return fmt.Sprintf("%s IS NOT NULL", quotedColumn), nil
 		}
+		// Handle boolean values (SQLite stores booleans as 0/1)
+		if f.Value == "true" {
+			return fmt.Sprintf("%s = 1", quotedColumn), nil
+		}
+		if f.Value == "false" {
+			return fmt.Sprintf("%s = 0", quotedColumn), nil
+		}
 		return fmt.Sprintf("%s IS ?", quotedColumn), []any{f.Value}
 
 	case "in":
@@ -545,6 +552,13 @@ func (f Filter) ToRelatedSQL() (string, []any) {
 		}
 		if f.Value == "not.null" {
 			return fmt.Sprintf("%s IS NOT NULL", quotedColumn), nil
+		}
+		// Handle boolean values (SQLite stores booleans as 0/1)
+		if f.Value == "true" {
+			return fmt.Sprintf("%s = 1", quotedColumn), nil
+		}
+		if f.Value == "false" {
+			return fmt.Sprintf("%s = 0", quotedColumn), nil
 		}
 		return fmt.Sprintf("%s IS ?", quotedColumn), []any{f.Value}
 

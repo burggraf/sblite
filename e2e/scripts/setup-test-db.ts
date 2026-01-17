@@ -56,7 +56,8 @@ const createTablesSQL = `
 CREATE TABLE IF NOT EXISTS characters (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
-  homeworld TEXT
+  homeworld TEXT,
+  is_jedi INTEGER  -- Boolean: 0=false, 1=true, NULL=unknown
 );
 
 -- Countries table
@@ -156,12 +157,12 @@ CREATE TABLE IF NOT EXISTS rls_test (
 );
 
 -- Insert test data
-INSERT OR REPLACE INTO characters (id, name, homeworld) VALUES
-  (1, 'Luke', 'Tatooine'),
-  (2, 'Leia', 'Alderaan'),
-  (3, 'Han', 'Corellia'),
-  (4, 'Yoda', 'Dagobah'),
-  (5, 'Chewbacca', 'Kashyyyk');
+INSERT OR REPLACE INTO characters (id, name, homeworld, is_jedi) VALUES
+  (1, 'Luke', 'Tatooine', 1),      -- true
+  (2, 'Leia', 'Alderaan', 0),      -- false (not trained as Jedi in original trilogy)
+  (3, 'Han', 'Corellia', 0),       -- false
+  (4, 'Yoda', 'Dagobah', 1),       -- true
+  (5, 'Chewbacca', 'Kashyyyk', 0); -- false
 
 INSERT OR REPLACE INTO countries (id, name, code) VALUES
   (1, 'United States', 'US'),
