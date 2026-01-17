@@ -2,6 +2,8 @@
 package migration
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/markb/sblite/internal/db"
@@ -143,5 +145,69 @@ func TestRunnerApply_Rollback(t *testing.T) {
 	applied, _ := runner.GetApplied()
 	if len(applied) != 0 {
 		t.Errorf("expected 0 applied migrations after rollback, got %d", len(applied))
+	}
+}
+
+func TestRunnerReadFromDir(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create test migration files
+	files := map[string]string{
+		"20260117100000_create_posts.sql": "CREATE TABLE posts (id TEXT);",
+		"20260117110000_create_users.sql": "CREATE TABLE users (id TEXT);",
+		"not_a_migration.txt":             "should be ignored",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write test file: %v", err)
+		}
+	}
+
+	migrations, err := ReadFromDir(dir)
+	if err != nil {
+		t.Fatalf("ReadFromDir() error: %v", err)
+	}
+
+	if len(migrations) != 2 {
+		t.Fatalf("expected 2 migrations, got %d", len(migrations))
+	}
+
+	// Verify order (by version)
+	if migrations[0].Version != "20260117100000" {
+		t.Errorf("expected first version 20260117100000, got %s", migrations[0].Version)
+	}
+	if migrations[0].Name != "create_posts" {
+		t.Errorf("expected first name create_posts, got %s", migrations[0].Name)
+	}
+	if migrations[0].SQL != "CREATE TABLE posts (id TEXT);" {
+		t.Errorf("unexpected SQL content: %s", migrations[0].SQL)
+	}
+
+	if migrations[1].Version != "20260117110000" {
+		t.Errorf("expected second version 20260117110000, got %s", migrations[1].Version)
+	}
+}
+
+func TestRunnerReadFromDir_Empty(t *testing.T) {
+	dir := t.TempDir()
+
+	migrations, err := ReadFromDir(dir)
+	if err != nil {
+		t.Fatalf("ReadFromDir() error: %v", err)
+	}
+
+	if len(migrations) != 0 {
+		t.Errorf("expected 0 migrations, got %d", len(migrations))
+	}
+}
+
+func TestRunnerReadFromDir_NotExists(t *testing.T) {
+	migrations, err := ReadFromDir("/nonexistent/path")
+	if err != nil {
+		t.Fatalf("ReadFromDir() should not error for nonexistent dir: %v", err)
+	}
+
+	if len(migrations) != 0 {
+		t.Errorf("expected 0 migrations, got %d", len(migrations))
 	}
 }

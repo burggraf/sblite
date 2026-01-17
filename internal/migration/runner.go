@@ -4,6 +4,9 @@ package migration
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -116,4 +119,43 @@ func splitStatements(sql string) []string {
 	}
 
 	return statements
+}
+
+// ReadFromDir reads all migration files from a directory
+func ReadFromDir(dir string) ([]Migration, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read migrations directory: %w", err)
+	}
+
+	var migrations []Migration
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		m, err := ParseFilename(entry.Name())
+		if err != nil {
+			// Skip files that don't match migration pattern
+			continue
+		}
+
+		content, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read migration file %s: %w", entry.Name(), err)
+		}
+		m.SQL = string(content)
+
+		migrations = append(migrations, m)
+	}
+
+	// Sort by version
+	sort.Slice(migrations, func(i, j int) bool {
+		return migrations[i].Version < migrations[j].Version
+	})
+
+	return migrations, nil
 }
