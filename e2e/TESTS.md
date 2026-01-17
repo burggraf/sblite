@@ -30,8 +30,8 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Email - Mail API | 13 | 13 | 0 | 0 |
 | Email - Flows | 11 | 8 | 0 | 3 |
 | Email - Verification | 11 | 9 | 0 | 2 |
-| Email - SMTP | 4 | 0 | 0 | 4 |
-| **TOTAL** | **212** | **126** | **19** | **67** |
+| Email - SMTP | 4 | 3 | 0 | 1 |
+| **TOTAL** | **212** | **129** | **19** | **64** |
 
 *Last tested: 2026-01-16*
 
@@ -585,19 +585,46 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 ### `tests/email/smtp.test.ts`
 
-*Note: These tests are skipped by default. Enable with `SBLITE_TEST_SMTP=true`.*
+*Note: These tests are skipped by default. See setup instructions below.*
+
+#### SMTP Test Setup
+
+1. **Start Mailpit** (local SMTP test server with auth support):
+   ```bash
+   docker run -d --name mailpit -p 8025:8025 -p 1025:1025 axllent/mailpit --smtp-auth-accept-any --smtp-auth-allow-insecure
+   ```
+   Note: The `--smtp-auth-*` flags are required because sblite's SMTP client uses authentication.
+
+2. **Start sblite in SMTP mode**:
+   ```bash
+   SBLITE_SMTP_HOST=localhost SBLITE_SMTP_PORT=1025 SBLITE_SMTP_USER=test SBLITE_SMTP_PASS=test ./sblite serve --mail-mode=smtp --db test.db
+   ```
+   Note: SMTP_USER and SMTP_PASS are required even for Mailpit (use any dummy values).
+
+3. **Run SMTP tests**:
+   ```bash
+   cd e2e
+   SBLITE_TEST_SMTP=true npm run test:email:smtp
+   ```
+
+4. **View emails** (optional): Open http://localhost:8025
+
+5. **Cleanup**:
+   ```bash
+   docker stop mailpit && docker rm mailpit
+   ```
 
 **Password Recovery via SMTP**
-- ⏭️ should send recovery email through SMTP
+- ✅ should send recovery email through SMTP
 
 **Magic Link via SMTP**
-- ⏭️ should send magic link email through SMTP
+- ✅ should send magic link email through SMTP
 
 **User Invite via SMTP**
-- ⏭️ should send invite email through SMTP
+- ⏭️ should send invite email through SMTP (skipped - requires service_role auth fix)
 
 **SMTP Configuration**
-- ⏭️ should include correct sender address
+- ✅ should include correct sender address
 
 ---
 
