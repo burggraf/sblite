@@ -45,12 +45,14 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Post("/auth/logout", h.handleLogout)
 	})
 
-	// Static files
-	r.Get("/static/*", h.handleStatic)
+	// Static files - use Route group to ensure priority
+	r.Route("/static", func(r chi.Router) {
+		r.Get("/*", h.handleStatic)
+	})
 
-	// SPA - serve index.html for all other routes
-	r.Get("/*", h.handleIndex)
+	// SPA - serve index.html for root and use NotFound for other routes
 	r.Get("/", h.handleIndex)
+	r.NotFound(h.handleIndex)
 }
 
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -64,8 +66,8 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleStatic(w http.ResponseWriter, r *http.Request) {
-	// Get the file path from URL
-	path := strings.TrimPrefix(r.URL.Path, "/static/")
+	// Get the file path from chi wildcard parameter
+	path := chi.URLParam(r, "*")
 
 	content, err := staticFS.ReadFile("static/" + path)
 	if err != nil {
