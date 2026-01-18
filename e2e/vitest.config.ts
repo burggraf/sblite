@@ -9,7 +9,14 @@ export default defineConfig({
     setupFiles: ['./setup/global-setup.ts'],
     include: ['**/*.test.ts'],
     // Run test files sequentially to avoid database state conflicts
+    // Note: Run with --no-file-parallelism --max-workers=1 for storage tests
     fileParallelism: false,
+    pool: 'threads',
+    poolOptions: {
+      threads: {
+        singleThread: true,
+      },
+    },
     sequence: {
       shuffle: false,
     },

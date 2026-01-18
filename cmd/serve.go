@@ -12,6 +12,7 @@ import (
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
 	"github.com/markb/sblite/internal/server"
+	"github.com/markb/sblite/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -56,7 +57,15 @@ var serveCmd = &cobra.Command{
 		mailConfig := buildMailConfig(cmd)
 		migrationsDir, _ := cmd.Flags().GetString("migrations-dir")
 
-		srv := server.New(database, jwtSecret, mailConfig, migrationsDir)
+		// Build storage configuration
+		storageConfig := buildStorageConfig(cmd)
+
+		srv := server.NewWithConfig(database, server.ServerConfig{
+			JWTSecret:     jwtSecret,
+			MailConfig:    mailConfig,
+			MigrationsDir: migrationsDir,
+			StorageConfig: storageConfig,
+		})
 
 		// Set dashboard config for settings display
 		srv.SetDashboardConfig(&dashboard.ServerConfig{
@@ -200,12 +209,87 @@ func buildLogConfig(cmd *cobra.Command) *log.Config {
 	return cfg
 }
 
+// buildStorageConfig creates a storage.Config from environment variables and CLI flags.
+// Priority: CLI flags > environment variables > defaults
+func buildStorageConfig(cmd *cobra.Command) *storage.Config {
+	cfg := &storage.Config{
+		Backend:   "local",
+		LocalPath: "./storage",
+	}
+
+	// Read environment variables first
+	if backend := os.Getenv("SBLITE_STORAGE_BACKEND"); backend != "" {
+		cfg.Backend = backend
+	}
+	if localPath := os.Getenv("SBLITE_STORAGE_PATH"); localPath != "" {
+		cfg.LocalPath = localPath
+	}
+	if s3Endpoint := os.Getenv("SBLITE_S3_ENDPOINT"); s3Endpoint != "" {
+		cfg.S3Endpoint = s3Endpoint
+	}
+	if s3Region := os.Getenv("SBLITE_S3_REGION"); s3Region != "" {
+		cfg.S3Region = s3Region
+	}
+	if s3Bucket := os.Getenv("SBLITE_S3_BUCKET"); s3Bucket != "" {
+		cfg.S3Bucket = s3Bucket
+	}
+	if s3AccessKey := os.Getenv("SBLITE_S3_ACCESS_KEY"); s3AccessKey != "" {
+		cfg.S3AccessKey = s3AccessKey
+	}
+	if s3SecretKey := os.Getenv("SBLITE_S3_SECRET_KEY"); s3SecretKey != "" {
+		cfg.S3SecretKey = s3SecretKey
+	}
+	if pathStyle := os.Getenv("SBLITE_S3_PATH_STYLE"); pathStyle == "true" || pathStyle == "1" {
+		cfg.S3ForcePathStyle = true
+	}
+
+	// CLI flags override environment variables
+	if backend, _ := cmd.Flags().GetString("storage-backend"); backend != "" {
+		cfg.Backend = backend
+	}
+	if localPath, _ := cmd.Flags().GetString("storage-path"); localPath != "" {
+		cfg.LocalPath = localPath
+	}
+	if s3Endpoint, _ := cmd.Flags().GetString("s3-endpoint"); s3Endpoint != "" {
+		cfg.S3Endpoint = s3Endpoint
+	}
+	if s3Region, _ := cmd.Flags().GetString("s3-region"); s3Region != "" {
+		cfg.S3Region = s3Region
+	}
+	if s3Bucket, _ := cmd.Flags().GetString("s3-bucket"); s3Bucket != "" {
+		cfg.S3Bucket = s3Bucket
+	}
+	if s3AccessKey, _ := cmd.Flags().GetString("s3-access-key"); s3AccessKey != "" {
+		cfg.S3AccessKey = s3AccessKey
+	}
+	if s3SecretKey, _ := cmd.Flags().GetString("s3-secret-key"); s3SecretKey != "" {
+		cfg.S3SecretKey = s3SecretKey
+	}
+	if pathStyle, _ := cmd.Flags().GetBool("s3-path-style"); pathStyle {
+		cfg.S3ForcePathStyle = true
+	}
+
+	return cfg
+}
+
 func init() {
 	rootCmd.AddCommand(serveCmd)
 	serveCmd.Flags().String("db", "data.db", "Path to database file")
 	serveCmd.Flags().IntP("port", "p", 8080, "Port to listen on")
 	serveCmd.Flags().String("host", "0.0.0.0", "Host to bind to")
 	serveCmd.Flags().String("migrations-dir", "./migrations", "Path to migrations directory")
+
+	// Storage flags
+	serveCmd.Flags().String("storage-backend", "local", "Storage backend: local or s3")
+	serveCmd.Flags().String("storage-path", "./storage", "Path to storage directory (local backend)")
+	serveCmd.Flags().String("s3-endpoint", "", "S3 endpoint URL (for S3-compatible services like MinIO)")
+	serveCmd.Flags().String("s3-region", "", "S3 region (e.g., us-east-1)")
+	serveCmd.Flags().String("s3-bucket", "", "S3 bucket name")
+	serveCmd.Flags().String("s3-access-key", "", "S3 access key ID")
+	serveCmd.Flags().String("s3-secret-key", "", "S3 secret access key")
+	serveCmd.Flags().Bool("s3-path-style", false, "Use path-style addressing (required for MinIO)")
+
+	// Mail flags
 	serveCmd.Flags().String("mail-mode", "", "Email mode: log, catch, or smtp (default: log)")
 	serveCmd.Flags().String("mail-from", "", "Default sender email address")
 	serveCmd.Flags().String("site-url", "", "Base URL for email links")

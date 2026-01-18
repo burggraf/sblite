@@ -3,6 +3,7 @@ package rls
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -71,4 +72,67 @@ func toString(v any) string {
 	default:
 		return fmt.Sprintf("%v", val)
 	}
+}
+
+// SubstituteStorageFunctions replaces storage.filename(col), storage.foldername(col), storage.extension(col)
+// with SQL expressions that extract the relevant parts from the object name column.
+// These functions are used in RLS policies on the storage_objects table.
+func SubstituteStorageFunctions(expr string) string {
+	// Replace storage.filename(name) - extracts filename from path
+	// 'folder/subfolder/file.txt' -> 'file.txt'
+	filenamePattern := regexp.MustCompile(`storage\.filename\(\s*(\w+)\s*\)`)
+	expr = filenamePattern.ReplaceAllString(expr, "substr($1, length($1) - length(replace($1, '/', '')) + 1)")
+
+	// Replace storage.foldername(name) - extracts folder path from path
+	// 'folder/subfolder/file.txt' -> 'folder/subfolder'
+	foldernamePattern := regexp.MustCompile(`storage\.foldername\(\s*(\w+)\s*\)`)
+	expr = foldernamePattern.ReplaceAllStringFunc(expr, func(match string) string {
+		submatches := foldernamePattern.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+		col := submatches[1]
+		// CASE for handling paths with/without folders
+		return fmt.Sprintf("CASE WHEN instr(%s, '/') > 0 THEN substr(%s, 1, length(%s) - length(substr(%s, length(%s) - length(replace(%s, '/', '')) + 1)) - 1) ELSE '' END", col, col, col, col, col, col)
+	})
+
+	// Replace storage.extension(name) - extracts file extension
+	// 'file.txt' -> 'txt', 'file' -> ''
+	extensionPattern := regexp.MustCompile(`storage\.extension\(\s*(\w+)\s*\)`)
+	expr = extensionPattern.ReplaceAllStringFunc(expr, func(match string) string {
+		submatches := extensionPattern.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+		col := submatches[1]
+		// Extract filename first, then get extension
+		filename := fmt.Sprintf("substr(%s, length(%s) - length(replace(%s, '/', '')) + 1)", col, col, col)
+		// CASE for handling files with/without extensions
+		return fmt.Sprintf("CASE WHEN instr(%s, '.') > 0 THEN lower(substr(%s, length(%s) - length(replace(%s, '.', '')) + 1)) ELSE '' END", filename, filename, filename, filename)
+	})
+
+	return expr
+}
+
+// StorageFilename extracts the filename from a path (Go implementation for testing)
+func StorageFilename(path string) string {
+	return filepath.Base(path)
+}
+
+// StorageFoldername extracts the folder path from a path (Go implementation for testing)
+func StorageFoldername(path string) string {
+	dir := filepath.Dir(path)
+	if dir == "." {
+		return ""
+	}
+	return dir
+}
+
+// StorageExtension extracts the lowercase file extension from a path (Go implementation for testing)
+func StorageExtension(path string) string {
+	ext := filepath.Ext(path)
+	if ext == "" {
+		return ""
+	}
+	return strings.ToLower(ext[1:]) // Remove leading dot
 }

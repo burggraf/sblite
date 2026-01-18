@@ -19,6 +19,7 @@ import (
 	"github.com/markb/sblite/internal/rest"
 	"github.com/markb/sblite/internal/rls"
 	"github.com/markb/sblite/internal/schema"
+	"github.com/markb/sblite/internal/storage"
 )
 
 type Server struct {
@@ -41,15 +42,40 @@ type Server struct {
 	oauthStateStore     *oauth.StateStore
 	allowedRedirectURLs []string
 	baseURL             string
+
+	// Storage fields
+	storageService *storage.Service
+	storageHandler *storage.Handler
 }
 
-func New(database *db.DB, jwtSecret string, mailConfig *mail.Config, migrationsDir string) *Server {
+// ServerConfig holds server configuration.
+type ServerConfig struct {
+	JWTSecret     string
+	MailConfig    *mail.Config
+	MigrationsDir string
+	StoragePath   string         // Path for local file storage (deprecated, use StorageConfig)
+	StorageConfig *storage.Config // Full storage configuration
+}
+
+func New(database *db.DB, jwtSecret string, mailConfig *mail.Config, migrationsDir string, storagePath string) *Server {
+	if storagePath == "" {
+		storagePath = "./storage"
+	}
+	return NewWithConfig(database, ServerConfig{
+		JWTSecret:     jwtSecret,
+		MailConfig:    mailConfig,
+		MigrationsDir: migrationsDir,
+		StoragePath:   storagePath,
+	})
+}
+
+func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 	rlsService := rls.NewService(database)
 	rlsEnforcer := rls.NewEnforcer(rlsService)
 
 	// Use default config if nil
-	if mailConfig == nil {
-		mailConfig = mail.DefaultConfig()
+	if cfg.MailConfig == nil {
+		cfg.MailConfig = mail.DefaultConfig()
 	}
 
 	// Initialize schema first (needed by REST handler)
@@ -58,11 +84,11 @@ func New(database *db.DB, jwtSecret string, mailConfig *mail.Config, migrationsD
 	s := &Server{
 		db:              database,
 		router:          chi.NewRouter(),
-		authService:     auth.NewService(database, jwtSecret),
+		authService:     auth.NewService(database, cfg.JWTSecret),
 		rlsService:      rlsService,
 		rlsEnforcer:     rlsEnforcer,
 		restHandler:     rest.NewHandler(database, rlsEnforcer, schemaInstance),
-		mailConfig:      mailConfig,
+		mailConfig:      cfg.MailConfig,
 		schema:          schemaInstance,
 		oauthRegistry:   oauth.NewRegistry(),
 		oauthStateStore: oauth.NewStateStore(database.DB),
@@ -75,8 +101,35 @@ func New(database *db.DB, jwtSecret string, mailConfig *mail.Config, migrationsD
 	s.initMail()
 
 	// Initialize dashboard handler
-	s.dashboardHandler = dashboard.NewHandler(database.DB, migrationsDir)
-	s.dashboardHandler.SetJWTSecret(jwtSecret)
+	s.dashboardHandler = dashboard.NewHandler(database.DB, cfg.MigrationsDir)
+	s.dashboardHandler.SetJWTSecret(cfg.JWTSecret)
+
+	// Initialize storage service
+	var storageCfg storage.Config
+	if cfg.StorageConfig != nil {
+		storageCfg = *cfg.StorageConfig
+	} else {
+		// Backward compatibility: use StoragePath for local storage
+		storagePath := cfg.StoragePath
+		if storagePath == "" {
+			storagePath = "./storage"
+		}
+		storageCfg = storage.Config{
+			Backend:   "local",
+			LocalPath: storagePath,
+		}
+	}
+	storageService, err := storage.NewService(database.DB, storageCfg)
+	if err == nil {
+		s.storageService = storageService
+		s.storageHandler = storage.NewHandler(storageService)
+		// Pass RLS service and enforcer to storage handler for RLS policy enforcement
+		s.storageHandler.SetRLSEnforcer(rlsService, rlsEnforcer)
+		// Pass JWT secret for signed URL generation
+		s.storageHandler.SetJWTSecret(cfg.JWTSecret)
+	} else {
+		log.Warn("failed to initialize storage service", "error", err.Error())
+	}
 
 	s.setupRoutes()
 	return s
@@ -195,6 +248,23 @@ func (s *Server) setupRoutes() {
 	s.router.Route("/_", func(r chi.Router) {
 		s.dashboardHandler.RegisterRoutes(r)
 	})
+
+	// Storage routes
+	if s.storageHandler != nil {
+		s.router.Route("/storage/v1", func(r chi.Router) {
+			// Public routes - no API key required
+			r.Get("/object/public/{bucketName}/*", s.storageHandler.GetPublicObject)
+			r.Get("/object/sign/{bucketName}/*", s.storageHandler.GetSignedObject)           // Download via signed URL
+			r.Put("/object/upload/sign/{bucketName}/*", s.storageHandler.UploadToSignedURL) // Upload via signed URL
+
+			// All other routes require API key
+			r.Group(func(r chi.Router) {
+				r.Use(s.apiKeyMiddleware)       // Validates apikey header
+				r.Use(s.optionalAuthMiddleware) // Extracts user JWT if present
+				s.storageHandler.RegisterRoutes(r)
+			})
+		})
+	}
 }
 
 func (s *Server) Router() *chi.Mux {

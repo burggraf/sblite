@@ -38,7 +38,7 @@ func setupTestServer(t *testing.T) *Server {
 	}
 	t.Cleanup(func() { database.Close() })
 
-	return New(database, testJWTSecret, mail.DefaultConfig(), t.TempDir()+"/migrations")
+	return New(database, testJWTSecret, mail.DefaultConfig(), t.TempDir()+"/migrations", t.TempDir()+"/storage")
 }
 
 func TestHealthEndpoint(t *testing.T) {
