@@ -250,6 +250,42 @@ The dashboard provides API endpoints for managing functions:
 | `/_/api/secrets` | POST | Set a secret |
 | `/_/api/secrets/{name}` | DELETE | Delete a secret |
 
+## Dashboard UI
+
+The web dashboard includes a visual interface for managing edge functions. Access it at `http://localhost:8080/_` and navigate to the "Edge Functions" section.
+
+### Features
+
+- **Functions List**: View all deployed functions with their status
+- **Runtime Status**: See if the edge runtime is running
+- **Function Details**: View endpoint URLs and configuration for each function
+- **JWT Configuration**: Toggle JWT verification per function
+- **Test Console**: Invoke functions directly from the browser with custom headers and body
+- **Secrets Management**: Add and remove secrets (values are never displayed)
+
+### Function Test Console
+
+The test console allows you to invoke functions directly from the dashboard:
+
+1. Select a function from the list
+2. Choose HTTP method (GET, POST, PUT, PATCH, DELETE)
+3. Add custom headers if needed
+4. Enter a request body (JSON format for POST/PUT/PATCH)
+5. Click "Invoke" to send the request
+6. View the response status, timing, and body
+
+API keys are automatically injected into requests when available.
+
+### Secrets Panel
+
+The secrets panel allows you to manage environment variables for your functions:
+
+- **Add Secret**: Click "+ Add Secret" and enter a name (uppercase with underscores) and value
+- **View Secrets**: Only secret names are shown; values are never exposed
+- **Delete Secret**: Remove secrets you no longer need
+
+Note: Secrets require a server restart to take effect in the edge runtime.
+
 ## Database Schema
 
 Edge functions use three database tables for configuration:
