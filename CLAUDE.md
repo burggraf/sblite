@@ -204,6 +204,34 @@ Web dashboard accessible at `http://localhost:8080/_`
 | `/_/api/data/{table}` | POST | Insert row |
 | `/_/api/data/{table}` | PATCH | Update rows |
 | `/_/api/data/{table}` | DELETE | Delete rows |
+| `/_/api/users` | GET | List users (paginated) |
+| `/_/api/users` | POST | Create user |
+| `/_/api/users/invite` | POST | Invite user by email |
+| `/_/api/users/{id}` | GET | Get user details |
+| `/_/api/users/{id}` | PATCH | Update user |
+| `/_/api/users/{id}` | DELETE | Delete user |
+| `/_/api/policies` | GET | List RLS policies |
+| `/_/api/policies` | POST | Create RLS policy |
+| `/_/api/policies/{id}` | GET | Get policy details |
+| `/_/api/policies/{id}` | PATCH | Update policy |
+| `/_/api/policies/{id}` | DELETE | Delete policy |
+| `/_/api/policies/test` | POST | Test policy expression |
+| `/_/api/rls/{table}` | GET | Get table RLS status |
+| `/_/api/rls/{table}` | PUT | Enable/disable RLS |
+| `/_/api/settings/server` | GET | Get server info |
+| `/_/api/settings/auth` | GET | Get auth settings |
+| `/_/api/settings/auth/regenerate` | POST | Regenerate JWT secret |
+| `/_/api/settings/templates` | GET | List email templates |
+| `/_/api/settings/templates/{type}` | PATCH | Update template |
+| `/_/api/settings/templates/{type}/reset` | POST | Reset to default |
+| `/_/api/export/schema` | GET | Export PostgreSQL DDL |
+| `/_/api/export/data` | GET | Export table data |
+| `/_/api/export/backup` | GET | Download database file |
+| `/_/api/logs/config` | GET | Get log configuration |
+| `/_/api/logs` | GET | Query database logs |
+| `/_/api/logs/tail` | GET | Tail file logs |
+| `/_/api/apikeys` | GET | Get API keys (anon, service_role) |
+| `/_/api/sql` | POST | Execute SQL query |
 
 ### Query Operators
 
@@ -307,9 +335,15 @@ Built-in web UI for table and data management, served at `/_`.
 - First access requires initial password setup
 
 **Features:**
-- Create/modify/delete tables with typed schemas
-- View/filter/sort/paginate row data
-- Add, rename, and remove columns
+- **Table Management:** Create/modify/delete tables with typed schemas
+- **Data Browser:** View/filter/sort/paginate row data with inline editing
+- **Schema Editor:** Add, rename, and remove columns
+- **User Management:** Create, invite, edit, and delete users
+- **RLS Policy Editor:** Create and test Row Level Security policies
+- **Settings:** View server info, manage JWT secrets, customize email templates
+- **Logs Viewer:** Query database logs or tail file logs
+- **API Console:** Interactive API testing with auto-injected API keys
+- **SQL Browser:** Execute SQL queries with syntax highlighting and results export
 - Insert, update, and delete rows
 - Dark/light theme toggle
 
@@ -337,7 +371,7 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 
 ## Implementation Status
 
-### Implemented (Phase 1)
+### Implemented
 - Email/password authentication
 - JWT sessions with refresh tokens
 - REST API CRUD operations
@@ -349,10 +383,12 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Admin API for typed table creation
 - PostgreSQL DDL export for Supabase migration
 - Schema migration system (Supabase CLI-compatible)
-- Web dashboard for table and data management
+- Row Level Security (RLS) via query rewriting
+- Web dashboard with full management UI
+- API Console for interactive API testing
+- SQL Browser for database queries
 
 ### Planned
-- Row Level Security (RLS) via query rewriting
 - Realtime subscriptions
 - File storage
 - or() / not() / match() filters

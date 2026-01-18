@@ -31,7 +31,7 @@ The API Console provides an interactive interface for testing all sblite APIs (R
 └─────────────────────────────┴───────────────────────────────┘
 ```
 
-Authentication is auto-injected from the dashboard session, with the token shown (masked) in the headers section.
+API keys are auto-injected for REST and Auth API requests, with a toggle to enable/disable and select between `anon` and `service_role` keys.
 
 ## Request Builder
 
@@ -50,11 +50,16 @@ Pre-built templates organized by category:
 
 Selecting a template populates method, URL, headers, and body with example values.
 
+### Authentication Section
+- Toggle to enable/disable API key auto-injection (enabled by default)
+- Dropdown to select key type: `anon` or `service_role`
+- API keys are auto-injected for `/rest/v1/` and `/auth/v1/` requests
+- Keys are fetched from `/_/api/apikeys` endpoint on view load
+
 ### Headers Section
 - Key-value pairs with add/remove buttons
-- `Authorization: Bearer <token>` auto-populated from session (shown masked)
 - `Content-Type: application/json` added by default for POST/PATCH/PUT
-- Common headers available via dropdown (apikey, Prefer, Range)
+- Can manually add any headers (apikey, Authorization, Prefer, Range, etc.)
 
 ### Body Section
 - JSON editor textarea with basic formatting
@@ -137,17 +142,23 @@ localStorage['sblite_api_console_history'] = JSON.stringify([
 state.apiConsole = {
   method: 'GET',
   url: '/rest/v1/',
-  headers: [{ key: 'Authorization', value: 'Bearer ...', locked: true }],
+  headers: [{ key: 'Content-Type', value: 'application/json' }],
   body: '',
-  response: null,      // { status, statusText, headers, body, time }
+  response: null,        // { status, statusText, headers, body, time }
   loading: false,
-  history: [],         // loaded from localStorage
-  activeTab: 'body'    // 'body' or 'headers'
+  history: [],           // loaded from localStorage
+  activeTab: 'body',     // 'body' or 'headers'
+  showHistory: false,
+  apiKeys: null,         // { anon_key, service_role_key }
+  selectedKeyType: 'anon', // 'anon' or 'service_role'
+  autoInjectKey: true    // auto-inject apikey header
 }
 ```
 
-### No New Backend Endpoints Needed
-The API Console is purely frontend - it makes requests to existing endpoints and displays responses. The dashboard session cookie provides authentication.
+### Backend Endpoint
+- `GET /_/api/apikeys` - Returns `{ anon_key, service_role_key }` JWT tokens
+  - Requires dashboard authentication
+  - Keys are generated on-demand using the server's JWT secret
 
 ### Key Functions
 - `loadApiConsoleHistory()` - Load from localStorage on init
@@ -197,4 +208,12 @@ E2E tests in `e2e/tests/dashboard/api-console.test.ts`:
 - history persists after page reload
 - clear history removes all entries
 
-~20 tests covering the main functionality.
+### API Key Auto-Injection
+- shows API key settings section
+- auto-inject checkbox is enabled by default
+- shows key type selector when auto-inject enabled
+- REST API request succeeds with auto-injected key
+- REST API request fails when auto-inject disabled
+- can switch between anon and service_role key
+
+26 tests covering the main functionality.
