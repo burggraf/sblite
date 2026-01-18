@@ -2,12 +2,46 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/markb/sblite/internal/oauth"
 	"github.com/stretchr/testify/assert"
 )
+
+// mockProvider implements oauth.Provider for testing
+type mockProvider struct {
+	name          string
+	exchangeErr   error
+	userInfoErr   error
+	tokens        *oauth.Tokens
+	userInfo      *oauth.UserInfo
+}
+
+func (m *mockProvider) Name() string {
+	return m.name
+}
+
+func (m *mockProvider) AuthURL(state, codeChallenge, redirectURI string) string {
+	return "https://mock-provider.com/auth?state=" + state
+}
+
+func (m *mockProvider) ExchangeCode(ctx context.Context, code, codeVerifier, redirectURI string) (*oauth.Tokens, error) {
+	if m.exchangeErr != nil {
+		return nil, m.exchangeErr
+	}
+	return m.tokens, nil
+}
+
+func (m *mockProvider) GetUserInfo(ctx context.Context, accessToken string) (*oauth.UserInfo, error) {
+	if m.userInfoErr != nil {
+		return nil, m.userInfoErr
+	}
+	return m.userInfo, nil
+}
 
 func TestAuthorizeEndpoint(t *testing.T) {
 	srv := setupTestServer(t)
@@ -108,4 +142,253 @@ func TestAuthorizeEndpointDevelopmentModeAllowsAllRedirects(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusFound, w.Code)
+}
+
+// Callback endpoint tests
+
+func TestCallbackEndpointInvalidState(t *testing.T) {
+	srv := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/auth/v1/callback?code=test-code&state=invalid-state", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCallbackEndpointMissingCode(t *testing.T) {
+	srv := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/auth/v1/callback?state=test-state", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCallbackEndpointMissingState(t *testing.T) {
+	srv := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/auth/v1/callback?code=test-code", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCallbackEndpointOAuthError(t *testing.T) {
+	srv := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/auth/v1/callback?error=access_denied&error_description=User+denied+access", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	// With no redirect_to, should return JSON error
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCallbackEndpointSuccessNewUser(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create and register mock provider
+	mock := &mockProvider{
+		name: "mock",
+		tokens: &oauth.Tokens{
+			AccessToken:  "mock-access-token",
+			RefreshToken: "mock-refresh-token",
+		},
+		userInfo: &oauth.UserInfo{
+			ProviderID:    "12345",
+			Email:         "test@example.com",
+			Name:          "Test User",
+			AvatarURL:     "https://example.com/avatar.jpg",
+			EmailVerified: true,
+		},
+	}
+	srv.oauthRegistry.Register(mock)
+
+	// Store a valid flow state
+	flowState := &oauth.FlowState{
+		ID:           "valid-state-id",
+		Provider:     "mock",
+		CodeVerifier: "test-verifier",
+		RedirectTo:   "http://localhost:3000/callback",
+	}
+	err := srv.oauthStateStore.Save(flowState)
+	assert.NoError(t, err)
+
+	// Make callback request
+	req := httptest.NewRequest("GET", "/auth/v1/callback?code=auth-code&state=valid-state-id", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	// Should redirect with tokens in fragment
+	assert.Equal(t, http.StatusFound, w.Code)
+	location := w.Header().Get("Location")
+	assert.True(t, strings.HasPrefix(location, "http://localhost:3000/callback#"))
+	assert.Contains(t, location, "access_token=")
+	assert.Contains(t, location, "refresh_token=")
+	assert.Contains(t, location, "token_type=bearer")
+	assert.Contains(t, location, "expires_in=3600")
+}
+
+func TestCallbackEndpointAutoLinkExistingUser(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// First create a user via email signup
+	_, err := srv.authService.CreateUserWithOptions("test@example.com", "password123", nil, true)
+	assert.NoError(t, err)
+
+	// Create and register mock provider
+	mock := &mockProvider{
+		name: "mock",
+		tokens: &oauth.Tokens{
+			AccessToken: "mock-access-token",
+		},
+		userInfo: &oauth.UserInfo{
+			ProviderID:    "oauth-id-12345",
+			Email:         "test@example.com", // Same email as existing user
+			Name:          "Test User",
+			EmailVerified: true,
+		},
+	}
+	srv.oauthRegistry.Register(mock)
+
+	// Store a valid flow state
+	flowState := &oauth.FlowState{
+		ID:           "valid-state-id",
+		Provider:     "mock",
+		CodeVerifier: "test-verifier",
+		RedirectTo:   "http://localhost:3000/callback",
+	}
+	err = srv.oauthStateStore.Save(flowState)
+	assert.NoError(t, err)
+
+	// Make callback request
+	req := httptest.NewRequest("GET", "/auth/v1/callback?code=auth-code&state=valid-state-id", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	// Should redirect with tokens (auto-linked to existing user)
+	assert.Equal(t, http.StatusFound, w.Code)
+	location := w.Header().Get("Location")
+	assert.Contains(t, location, "access_token=")
+
+	// Verify the identity was linked to the existing user
+	user, err := srv.authService.GetUserByEmail("test@example.com")
+	assert.NoError(t, err)
+
+	identities, err := srv.authService.GetIdentitiesByUser(user.ID)
+	assert.NoError(t, err)
+	assert.Len(t, identities, 1)
+	assert.Equal(t, "mock", identities[0].Provider)
+	assert.Equal(t, "oauth-id-12345", identities[0].ProviderID)
+}
+
+func TestCallbackEndpointExistingIdentity(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create and register mock provider
+	mock := &mockProvider{
+		name: "mock",
+		tokens: &oauth.Tokens{
+			AccessToken: "mock-access-token",
+		},
+		userInfo: &oauth.UserInfo{
+			ProviderID:    "existing-oauth-id",
+			Email:         "oauth-user@example.com",
+			Name:          "OAuth User",
+			EmailVerified: true,
+		},
+	}
+	srv.oauthRegistry.Register(mock)
+
+	// First OAuth sign-in (create user)
+	flowState1 := &oauth.FlowState{
+		ID:           "state-1",
+		Provider:     "mock",
+		CodeVerifier: "verifier-1",
+		RedirectTo:   "http://localhost:3000/callback",
+	}
+	srv.oauthStateStore.Save(flowState1)
+
+	req1 := httptest.NewRequest("GET", "/auth/v1/callback?code=code1&state=state-1", nil)
+	w1 := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w1, req1)
+	assert.Equal(t, http.StatusFound, w1.Code)
+
+	// Second OAuth sign-in (same identity, should find existing user)
+	flowState2 := &oauth.FlowState{
+		ID:           "state-2",
+		Provider:     "mock",
+		CodeVerifier: "verifier-2",
+		RedirectTo:   "http://localhost:3000/callback",
+	}
+	srv.oauthStateStore.Save(flowState2)
+
+	req2 := httptest.NewRequest("GET", "/auth/v1/callback?code=code2&state=state-2", nil)
+	w2 := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w2, req2)
+
+	// Should succeed (returning user found by identity)
+	assert.Equal(t, http.StatusFound, w2.Code)
+	location := w2.Header().Get("Location")
+	assert.Contains(t, location, "access_token=")
+}
+
+func TestCallbackEndpointProviderUnavailable(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Store flow state for a provider that will be removed
+	flowState := &oauth.FlowState{
+		ID:           "orphan-state",
+		Provider:     "nonexistent",
+		CodeVerifier: "test-verifier",
+		RedirectTo:   "http://localhost:3000/callback",
+	}
+	srv.oauthStateStore.Save(flowState)
+
+	// Make callback request - provider doesn't exist
+	req := httptest.NewRequest("GET", "/auth/v1/callback?code=auth-code&state=orphan-state", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	// Should redirect with error
+	assert.Equal(t, http.StatusFound, w.Code)
+	location := w.Header().Get("Location")
+	assert.Contains(t, location, "error=provider_error")
+}
+
+func TestCallbackEndpointOAuthErrorWithRedirect(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Register a mock provider
+	mock := &mockProvider{name: "mock"}
+	srv.oauthRegistry.Register(mock)
+
+	// Store flow state
+	flowState := &oauth.FlowState{
+		ID:           "error-state",
+		Provider:     "mock",
+		CodeVerifier: "test-verifier",
+		RedirectTo:   "http://localhost:3000/callback",
+	}
+	srv.oauthStateStore.Save(flowState)
+
+	// OAuth error with state that has redirect_to - but errors from provider come before state lookup
+	// So error without state should return JSON
+	req := httptest.NewRequest("GET", "/auth/v1/callback?error=access_denied&error_description=User+denied", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	// Without redirect_to context, returns JSON error
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

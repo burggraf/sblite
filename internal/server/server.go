@@ -130,6 +130,7 @@ func (s *Server) setupRoutes() {
 
 		// OAuth routes
 		r.Get("/authorize", s.handleAuthorize)
+		r.Get("/callback", s.handleCallback)
 
 		// Protected routes
 		r.Group(func(r chi.Router) {

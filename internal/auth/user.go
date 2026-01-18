@@ -307,3 +307,100 @@ func (s *Service) ResetPassword(token, newPassword string) (*User, error) {
 
 	return s.GetUserByID(userID)
 }
+
+// CreateOAuthUser creates a new user from OAuth sign-in (no password, email confirmed).
+func (s *Service) CreateOAuthUser(email, provider string, userMetadata map[string]interface{}) (*User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+
+	id := generateID()
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Marshal user metadata to JSON
+	userMetaJSON := "{}"
+	if userMetadata != nil {
+		metaBytes, err := json.Marshal(userMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal user metadata: %w", err)
+		}
+		userMetaJSON = string(metaBytes)
+	}
+
+	// Create app_metadata with provider info
+	appMetadata := map[string]interface{}{
+		"provider":  provider,
+		"providers": []string{provider},
+	}
+	appMetaJSON, err := json.Marshal(appMetadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal app metadata: %w", err)
+	}
+
+	// OAuth users are created with email confirmed and no password
+	_, err = s.db.Exec(`
+		INSERT INTO auth_users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+		VALUES (?, ?, '', ?, ?, ?, ?, ?)
+	`, id, email, now, string(appMetaJSON), userMetaJSON, now, now)
+
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return nil, fmt.Errorf("user with email %s already exists", email)
+		}
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	return s.GetUserByID(id)
+}
+
+// AddProviderToUser adds a provider to the user's app_metadata.providers array.
+func (s *Service) AddProviderToUser(userID, provider string) error {
+	// Get current app_metadata
+	var rawAppMetaData string
+	err := s.db.QueryRow("SELECT raw_app_meta_data FROM auth_users WHERE id = ?", userID).Scan(&rawAppMetaData)
+	if err != nil {
+		return fmt.Errorf("failed to get user app_metadata: %w", err)
+	}
+
+	// Parse existing app_metadata
+	appMeta := map[string]interface{}{}
+	if rawAppMetaData != "" {
+		if err := json.Unmarshal([]byte(rawAppMetaData), &appMeta); err != nil {
+			return fmt.Errorf("failed to parse app_metadata: %w", err)
+		}
+	}
+
+	// Get existing providers array
+	providers := []string{}
+	if existingProviders, ok := appMeta["providers"].([]interface{}); ok {
+		for _, p := range existingProviders {
+			if pStr, ok := p.(string); ok {
+				providers = append(providers, pStr)
+			}
+		}
+	}
+
+	// Check if provider already exists
+	for _, p := range providers {
+		if p == provider {
+			return nil // Already linked
+		}
+	}
+
+	// Add new provider
+	providers = append(providers, provider)
+	appMeta["providers"] = providers
+
+	// Marshal and update
+	appMetaJSON, err := json.Marshal(appMeta)
+	if err != nil {
+		return fmt.Errorf("failed to marshal app_metadata: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.Exec("UPDATE auth_users SET raw_app_meta_data = ?, updated_at = ? WHERE id = ?",
+		string(appMetaJSON), now, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update app_metadata: %w", err)
+	}
+
+	return nil
+}
