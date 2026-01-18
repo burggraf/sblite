@@ -3590,6 +3590,132 @@ func (h *Handler) handleUpdateFunctionConfig(w http.ResponseWriter, r *http.Requ
 }
 
 // ============================================================
+// Function Files Handlers
+// ============================================================
+
+// FileNode represents a file or directory in the function's file tree.
+type FileNode struct {
+	Name     string      `json:"name"`
+	Type     string      `json:"type"` // "file" or "dir"
+	Size     int64       `json:"size,omitempty"`
+	Children []*FileNode `json:"children,omitempty"`
+}
+
+// handleListFunctionFiles returns a recursive tree of files in a function directory.
+func (h *Handler) handleListFunctionFiles(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if h.functionsService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Edge functions not enabled. Start the server with --functions flag.",
+		})
+		return
+	}
+
+	// Build the function directory path
+	fnDir := filepath.Join(h.functionsService.FunctionsDir(), name)
+
+	// Check if the directory exists
+	info, err := os.Stat(fnDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("Function %q not found", name),
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Failed to access function directory: %v", err),
+		})
+		return
+	}
+
+	if !info.IsDir() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Function %q is not a directory", name),
+		})
+		return
+	}
+
+	// Build the file tree
+	tree, err := buildFileTree(fnDir, name)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Failed to build file tree: %v", err),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tree)
+}
+
+// buildFileTree recursively builds a FileNode tree from a directory.
+func buildFileTree(dir, name string) (*FileNode, error) {
+	node := &FileNode{
+		Name:     name,
+		Type:     "dir",
+		Children: []*FileNode{},
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		entryName := entry.Name()
+
+		// Skip hidden files and directories (starting with .)
+		if strings.HasPrefix(entryName, ".") {
+			continue
+		}
+
+		entryPath := filepath.Join(dir, entryName)
+
+		if entry.IsDir() {
+			// Recursively build tree for subdirectories
+			childNode, err := buildFileTree(entryPath, entryName)
+			if err != nil {
+				// Skip directories we can't read
+				continue
+			}
+			node.Children = append(node.Children, childNode)
+		} else {
+			// Check if file extension is allowed
+			ext := filepath.Ext(entryName)
+			if !IsAllowedExtension(ext) {
+				continue
+			}
+
+			// Get file info for size
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+
+			node.Children = append(node.Children, &FileNode{
+				Name: entryName,
+				Type: "file",
+				Size: info.Size(),
+			})
+		}
+	}
+
+	return node, nil
+}
+
+// ============================================================
 // Secrets Management Handlers
 // ============================================================
 
