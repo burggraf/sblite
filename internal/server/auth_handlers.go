@@ -442,11 +442,11 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	settings := map[string]any{
-		"external": map[string]any{
-			"email":    true,
+		"external": map[string]bool{
+			"email":    true, // Always enabled
 			"phone":    false,
-			"google":   false,
-			"github":   false,
+			"google":   s.oauthRegistry != nil && s.oauthRegistry.IsEnabled("google"),
+			"github":   s.oauthRegistry != nil && s.oauthRegistry.IsEnabled("github"),
 			"facebook": false,
 			"twitter":  false,
 			"apple":    false,

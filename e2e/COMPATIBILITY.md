@@ -169,7 +169,7 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 |--------|--------|-------|
 | `signInWithPassword` (email) | ✅ | |
 | `signInWithPassword` (phone) | ❌ | |
-| `signInWithOAuth` | ❌ | |
+| `signInWithOAuth` | ✅ | Google, GitHub |
 | `signInWithOtp` | ❌ | |
 | `signInWithIdToken` | ❌ | |
 | `signInWithSSO` | ❌ | |
@@ -232,6 +232,28 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 | `mfa.*` | ❌ | MFA not implemented |
 | `admin.*` | ❌ | Admin API not implemented |
 
+### OAuth / Identity Management
+
+| Method | Status | Notes |
+|--------|--------|-------|
+| `signInWithOAuth` | ✅ | Google, GitHub providers |
+| `user.identities` | ✅ | Returns linked OAuth identities |
+| `unlinkIdentity` | ✅ | Unlink OAuth provider |
+| Auth settings endpoint | ✅ | Returns enabled OAuth providers |
+
+**Supported OAuth Providers:**
+
+| Provider | Status | Notes |
+|----------|--------|-------|
+| Google | ✅ | PKCE flow supported |
+| GitHub | ✅ | PKCE flow supported |
+| Apple | ❌ | Not implemented |
+| Azure | ❌ | Not implemented |
+| Discord | ❌ | Not implemented |
+| Facebook | ❌ | Not implemented |
+| Twitter | ❌ | Not implemented |
+| Others | ❌ | Not implemented |
+
 ---
 
 ## API Differences
@@ -293,8 +315,9 @@ These Supabase features are not applicable to sblite:
 ### Future Consideration
 
 - [ ] Realtime simulation
-- [ ] OAuth providers
+- [x] OAuth providers (Google, GitHub implemented)
 - [ ] Storage API
+- [ ] Additional OAuth providers (Apple, Azure, Discord, etc.)
 
 ---
 
