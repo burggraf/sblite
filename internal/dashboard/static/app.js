@@ -981,14 +981,18 @@ const App = {
             case 'bucketSettings':
                 content = this.renderBucketSettingsModal();
                 break;
+            case 'filePreview':
+                content = this.renderFilePreviewModal();
+                break;
         }
 
         // Use larger modal for policy editing and FTS search
         const isLargeModal = type === 'createPolicy' || type === 'editPolicy' || type === 'ftsSearch';
-        const modalClass = isLargeModal ? 'modal modal-large' : 'modal';
+        const isFilePreview = type === 'filePreview';
+        const modalClass = isFilePreview ? 'modal modal-file-preview' : (isLargeModal ? 'modal modal-large' : 'modal');
 
         return `
-            <div class="modal-overlay" onclick="App.closeModal()">
+            <div class="modal-overlay${isFilePreview ? ' modal-overlay-dark' : ''}" onclick="App.closeModal()">
                 <div class="${modalClass}" onclick="event.stopPropagation()">
                     ${content}
                 </div>
@@ -5892,21 +5896,23 @@ const App = {
 
                         return `
                             <div class="file-card ${isSelected ? 'selected' : ''}"
-                                 data-filename="${this.escapeHtml(item.name)}"
-                                 onclick="App.toggleFileSelection(this.dataset.filename)"
-                                 ondblclick="App.downloadFile(this.dataset.filename)">
-                                <div class="file-select">
+                                 data-filename="${this.escapeHtml(item.name)}">
+                                <div class="file-select"
+                                     onclick="event.stopPropagation(); App.toggleFileSelection('${this.escapeJsString(item.name)}')">
                                     <input type="checkbox" ${isSelected ? 'checked' : ''}
-                                           data-filename="${this.escapeHtml(item.name)}"
-                                           onclick="event.stopPropagation(); App.toggleFileSelection(this.dataset.filename)">
+                                           onclick="event.stopPropagation();">
                                 </div>
-                                ${thumbUrl ? `
-                                    <div class="file-thumbnail" style="background-image: url('${thumbUrl}')"></div>
-                                ` : `
-                                    <div class="file-icon">${this.getFileIcon(item.displayName)}</div>
-                                `}
-                                <div class="file-name" title="${this.escapeHtml(item.displayName)}">${this.escapeHtml(item.displayName)}</div>
-                                <div class="file-size">${this.formatFileSize(item.size || 0)}</div>
+                                <div class="file-content"
+                                     onclick="App.openFilePreview('${this.escapeJsString(item.name)}')"
+                                     ondblclick="App.downloadFile('${this.escapeJsString(item.name)}')">
+                                    ${thumbUrl ? `
+                                        <div class="file-thumbnail" style="background-image: url('${thumbUrl}')"></div>
+                                    ` : `
+                                        <div class="file-icon">${this.getFileIcon(item.displayName)}</div>
+                                    `}
+                                    <div class="file-name" title="${this.escapeHtml(item.displayName)}">${this.escapeHtml(item.displayName)}</div>
+                                    <div class="file-size">${this.formatFileSize(item.size || 0)}</div>
+                                </div>
                             </div>
                         `;
                     }
@@ -5950,15 +5956,15 @@ const App = {
                                 const isSelected = selectedFiles.includes(item.name);
                                 return `
                                     <tr class="file-row ${isSelected ? 'selected' : ''}"
-                                        data-filename="${this.escapeHtml(item.name)}"
-                                        onclick="App.toggleFileSelection(this.dataset.filename)"
-                                        ondblclick="App.downloadFile(this.dataset.filename)">
-                                        <td class="col-checkbox">
+                                        data-filename="${this.escapeHtml(item.name)}">
+                                        <td class="col-checkbox"
+                                            onclick="event.stopPropagation(); App.toggleFileSelection('${this.escapeJsString(item.name)}')">
                                             <input type="checkbox" ${isSelected ? 'checked' : ''}
-                                                   data-filename="${this.escapeHtml(item.name)}"
-                                                   onclick="event.stopPropagation(); App.toggleFileSelection(this.dataset.filename)">
+                                                   onclick="event.stopPropagation();">
                                         </td>
-                                        <td class="col-name">
+                                        <td class="col-name clickable"
+                                            onclick="App.openFilePreview('${this.escapeJsString(item.name)}')"
+                                            ondblclick="App.downloadFile('${this.escapeJsString(item.name)}')">
                                             <span class="file-icon">${this.getFileIcon(item.displayName)}</span>
                                             ${this.escapeHtml(item.displayName)}
                                         </td>
@@ -6038,6 +6044,105 @@ const App = {
     isImageFile(filename) {
         const ext = filename.split('.').pop().toLowerCase();
         return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext);
+    },
+
+    isVideoFile(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        return ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext);
+    },
+
+    isAudioFile(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        return ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'].includes(ext);
+    },
+
+    isPdfFile(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        return ext === 'pdf';
+    },
+
+    isTextFile(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        return ['txt', 'md', 'json', 'js', 'ts', 'css', 'html', 'xml', 'yaml', 'yml', 'py', 'go', 'java', 'c', 'cpp', 'h', 'sh', 'sql', 'log'].includes(ext);
+    },
+
+    openFilePreview(filename) {
+        const { selectedBucket, currentPath, objects } = this.state.storage;
+        const item = objects.find(o => o.name === filename);
+        if (!item) return;
+
+        const path = currentPath + filename;
+        const url = selectedBucket.public
+            ? `/storage/v1/object/public/${selectedBucket.name}/${path}`
+            : `/_/api/storage/objects/download?bucket=${encodeURIComponent(selectedBucket.name)}&path=${encodeURIComponent(path)}`;
+
+        this.state.modal = {
+            type: 'filePreview',
+            data: {
+                filename: item.displayName || filename,
+                fullPath: path,
+                url: url,
+                size: item.size,
+                mimeType: item.mime_type,
+                updatedAt: item.updated_at,
+                bucket: selectedBucket.name,
+                isPublic: selectedBucket.public
+            }
+        };
+        this.render();
+    },
+
+    renderFilePreviewModal() {
+        const { filename, url, size, mimeType, updatedAt, fullPath, bucket } = this.state.modal.data;
+        const isImage = this.isImageFile(filename);
+        const isVideo = this.isVideoFile(filename);
+        const isAudio = this.isAudioFile(filename);
+        const isPdf = this.isPdfFile(filename);
+
+        let previewContent = '';
+        if (isImage) {
+            previewContent = `<img src="${url}" alt="${this.escapeHtml(filename)}" class="file-preview-image">`;
+        } else if (isVideo) {
+            previewContent = `<video src="${url}" controls class="file-preview-video"></video>`;
+        } else if (isAudio) {
+            previewContent = `
+                <div class="file-preview-audio">
+                    <div class="file-preview-icon">${this.getFileIcon(filename)}</div>
+                    <audio src="${url}" controls></audio>
+                </div>
+            `;
+        } else if (isPdf) {
+            previewContent = `<iframe src="${url}" class="file-preview-pdf"></iframe>`;
+        } else {
+            previewContent = `
+                <div class="file-preview-generic">
+                    <div class="file-preview-icon">${this.getFileIcon(filename)}</div>
+                    <div class="file-preview-name">${this.escapeHtml(filename)}</div>
+                    <div class="file-preview-hint">Preview not available for this file type</div>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="modal-header">
+                <h3 title="${this.escapeHtml(fullPath)}">${this.escapeHtml(filename)}</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body file-preview-body">
+                ${previewContent}
+            </div>
+            <div class="modal-footer file-preview-footer">
+                <div class="file-preview-info">
+                    <span>${this.formatFileSize(size || 0)}</span>
+                    <span>${mimeType || 'Unknown type'}</span>
+                    ${updatedAt ? `<span>${new Date(updatedAt).toLocaleString()}</span>` : ''}
+                </div>
+                <div class="file-preview-actions">
+                    <button class="btn btn-secondary" onclick="App.closeModal()">Close</button>
+                    <button class="btn btn-primary" onclick="App.downloadFile('${this.escapeJsString(fullPath.split('/').pop())}')">Download</button>
+                </div>
+            </div>
+        `;
     },
 
     getFileIcon(filename) {
