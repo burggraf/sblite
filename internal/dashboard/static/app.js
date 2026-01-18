@@ -24,6 +24,9 @@ const App = {
             showFilters: false,
             // Sorting
             sort: { column: null, direction: null }, // direction: 'asc', 'desc', or null
+            // FTS indexes
+            ftsIndexes: [],
+            ftsLoading: false,
         },
         modal: {
             type: null,  // 'createTable', 'addRow', 'editRow', 'schema', 'addColumn', 'userDetail'
@@ -221,6 +224,8 @@ const App = {
             if (res.ok) {
                 this.state.tables.schema = await res.json();
             }
+            // Also load FTS indexes
+            await this.loadFTSIndexes(name);
         } catch (e) {
             this.state.error = 'Failed to load schema';
         }
@@ -907,10 +912,16 @@ const App = {
             case 'confirmDestructive':
                 content = this.renderConfirmDestructiveModal();
                 break;
+            case 'createFTSIndex':
+                content = this.renderCreateFTSIndexModal();
+                break;
+            case 'ftsSearch':
+                content = this.renderFTSSearchModal();
+                break;
         }
 
-        // Use larger modal for policy editing
-        const isLargeModal = type === 'createPolicy' || type === 'editPolicy';
+        // Use larger modal for policy editing and FTS search
+        const isLargeModal = type === 'createPolicy' || type === 'editPolicy' || type === 'ftsSearch';
         const modalClass = isLargeModal ? 'modal modal-large' : 'modal';
 
         return `
@@ -1219,8 +1230,198 @@ const App = {
         this.render();
     },
 
-    renderSchemaModal() {
+    // FTS Index Management
+    async loadFTSIndexes(tableName) {
+        try {
+            const res = await fetch(`/_/api/tables/${tableName}/fts`);
+            if (res.ok) {
+                const data = await res.json();
+                this.state.tables.ftsIndexes = data.indexes || [];
+            } else {
+                this.state.tables.ftsIndexes = [];
+            }
+        } catch (e) {
+            this.state.tables.ftsIndexes = [];
+        }
+    },
+
+    showCreateFTSIndexModal() {
         const { schema } = this.state.tables;
+        // Get text columns for FTS indexing
+        const textColumns = schema.columns.filter(c => c.type === 'text').map(c => c.name);
+        this.state.modal = {
+            type: 'createFTSIndex',
+            data: {
+                name: '',
+                columns: [],
+                tokenizer: 'unicode61',
+                availableColumns: textColumns
+            }
+        };
+        this.render();
+    },
+
+    async createFTSIndex() {
+        const { data } = this.state.modal;
+        const { selected } = this.state.tables;
+
+        if (!data.name) {
+            this.state.error = 'Index name is required';
+            this.render();
+            return;
+        }
+
+        if (data.columns.length === 0) {
+            this.state.error = 'At least one column is required';
+            this.render();
+            return;
+        }
+
+        try {
+            const res = await fetch(`/_/api/tables/${selected}/fts`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: data.name,
+                    columns: data.columns,
+                    tokenizer: data.tokenizer
+                })
+            });
+
+            if (res.ok) {
+                this.closeModal();
+                await this.loadFTSIndexes(selected);
+                this.showSchemaModal();
+            } else {
+                const err = await res.json();
+                this.state.error = err.error || 'Failed to create FTS index';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to create FTS index';
+            this.render();
+        }
+    },
+
+    async deleteFTSIndex(indexName) {
+        if (!confirm(`Delete FTS index "${indexName}"? This will disable full-text search on these columns.`)) return;
+
+        const { selected } = this.state.tables;
+
+        try {
+            const res = await fetch(`/_/api/tables/${selected}/fts/${indexName}`, {
+                method: 'DELETE'
+            });
+
+            if (res.ok) {
+                await this.loadFTSIndexes(selected);
+                this.render();
+            } else {
+                const err = await res.json();
+                this.state.error = err.error || 'Failed to delete FTS index';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to delete FTS index';
+            this.render();
+        }
+    },
+
+    async rebuildFTSIndex(indexName) {
+        const { selected } = this.state.tables;
+
+        try {
+            const res = await fetch(`/_/api/tables/${selected}/fts/${indexName}/rebuild`, {
+                method: 'POST'
+            });
+
+            if (res.ok) {
+                this.state.error = null;
+                alert('Index rebuilt successfully');
+            } else {
+                const err = await res.json();
+                this.state.error = err.error || 'Failed to rebuild FTS index';
+            }
+        } catch (e) {
+            this.state.error = 'Failed to rebuild FTS index';
+        }
+        this.render();
+    },
+
+    showFTSSearchModal(indexName) {
+        const { selected, ftsIndexes } = this.state.tables;
+        const index = ftsIndexes.find(i => i.index_name === indexName);
+
+        this.state.modal = {
+            type: 'ftsSearch',
+            data: {
+                indexName: indexName,
+                index: index,
+                query: '',
+                queryType: 'plain',
+                results: null,
+                loading: false,
+                error: null
+            }
+        };
+        this.render();
+    },
+
+    async testFTSSearch() {
+        const { data } = this.state.modal;
+        const { selected } = this.state.tables;
+
+        if (!data.query) {
+            return;
+        }
+
+        data.loading = true;
+        data.error = null;
+        this.render();
+
+        try {
+            const res = await fetch(`/_/api/tables/${selected}/fts/test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    index_name: data.indexName,
+                    query: data.query,
+                    query_type: data.queryType,
+                    limit: 10
+                })
+            });
+
+            const result = await res.json();
+            data.loading = false;
+
+            if (result.success) {
+                data.results = result.results;
+                data.ftsQuery = result.fts_query;
+                data.error = null;
+            } else {
+                data.results = null;
+                data.error = result.error;
+            }
+        } catch (e) {
+            data.loading = false;
+            data.error = 'Search failed';
+        }
+        this.render();
+    },
+
+    toggleFTSColumn(colName) {
+        const { data } = this.state.modal;
+        const idx = data.columns.indexOf(colName);
+        if (idx === -1) {
+            data.columns.push(colName);
+        } else {
+            data.columns.splice(idx, 1);
+        }
+        this.render();
+    },
+
+    renderSchemaModal() {
+        const { schema, ftsIndexes } = this.state.tables;
 
         return `
             <div class="modal-header">
@@ -1228,6 +1429,7 @@ const App = {
                 <button class="btn-icon" onclick="App.closeModal()">&times;</button>
             </div>
             <div class="modal-body">
+                <h4 style="margin-bottom: 0.5rem;">Columns</h4>
                 <table class="schema-table">
                     <thead>
                         <tr><th>Column</th><th>Type</th><th>Nullable</th><th>Primary</th><th></th></tr>
@@ -1247,9 +1449,41 @@ const App = {
                         `).join('')}
                     </tbody>
                 </table>
+                <div style="margin-top: 0.5rem;">
+                    <button class="btn btn-secondary btn-sm" onclick="App.showAddColumnModal()">+ Add Column</button>
+                </div>
+
+                <hr style="margin: 1rem 0; border-color: var(--border);">
+
+                <h4 style="margin-bottom: 0.5rem;">Full-Text Search Indexes</h4>
+                ${ftsIndexes.length === 0 ? `
+                    <p style="color: var(--text-muted); font-size: 0.875rem;">No FTS indexes. Create one to enable full-text search.</p>
+                ` : `
+                    <table class="schema-table">
+                        <thead>
+                            <tr><th>Index Name</th><th>Columns</th><th>Tokenizer</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            ${ftsIndexes.map(idx => `
+                                <tr>
+                                    <td>${idx.index_name}</td>
+                                    <td>${idx.columns.join(', ')}</td>
+                                    <td>${idx.tokenizer}</td>
+                                    <td>
+                                        <button class="btn-icon" onclick="App.showFTSSearchModal('${idx.index_name}')" title="Test Search">Test</button>
+                                        <button class="btn-icon" onclick="App.rebuildFTSIndex('${idx.index_name}')" title="Rebuild Index">Rebuild</button>
+                                        <button class="btn-icon" onclick="App.deleteFTSIndex('${idx.index_name}')" title="Delete Index">Delete</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `}
+                <div style="margin-top: 0.5rem;">
+                    <button class="btn btn-secondary btn-sm" onclick="App.showCreateFTSIndexModal()">+ Create FTS Index</button>
+                </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="App.showAddColumnModal()">+ Add Column</button>
                 <button class="btn btn-primary" onclick="App.closeModal()">Done</button>
             </div>
         `;
@@ -1284,6 +1518,130 @@ const App = {
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="App.showSchemaModal()">Back</button>
                 <button class="btn btn-primary" onclick="App.addColumn()">Add Column</button>
+            </div>
+        `;
+    },
+
+    renderCreateFTSIndexModal() {
+        const { data } = this.state.modal;
+        const tokenizers = [
+            { value: 'unicode61', label: 'Unicode61 (Default)', desc: 'Unicode-aware, multi-language support' },
+            { value: 'porter', label: 'Porter Stemming', desc: 'English stemming (run/running/runs match)' },
+            { value: 'ascii', label: 'ASCII', desc: 'Simple ASCII tokenizer' },
+            { value: 'trigram', label: 'Trigram', desc: 'Character trigrams for fuzzy/substring matching' }
+        ];
+
+        return `
+            <div class="modal-header">
+                <h3>Create FTS Index</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Index Name</label>
+                    <input type="text" class="form-input" value="${data.name}" placeholder="e.g., search"
+                        onchange="App.updateModalData('name', this.value)">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Columns to Index</label>
+                    ${data.availableColumns.length === 0 ? `
+                        <p style="color: var(--text-muted); font-size: 0.875rem;">No text columns available. FTS indexes require text columns.</p>
+                    ` : `
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                            ${data.availableColumns.map(col => `
+                                <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 0.25rem;">
+                                    <input type="checkbox" ${data.columns.includes(col) ? 'checked' : ''}
+                                        onchange="App.toggleFTSColumn('${col}')"> ${col}
+                                </label>
+                            `).join('')}
+                        </div>
+                    `}
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Tokenizer</label>
+                    <select class="form-input" onchange="App.updateModalData('tokenizer', this.value)">
+                        ${tokenizers.map(t => `<option value="${t.value}" ${data.tokenizer === t.value ? 'selected' : ''}>${t.label}</option>`).join('')}
+                    </select>
+                    <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;">
+                        ${tokenizers.find(t => t.value === data.tokenizer)?.desc || ''}
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.showSchemaModal()">Back</button>
+                <button class="btn btn-primary" onclick="App.createFTSIndex()" ${data.columns.length === 0 ? 'disabled' : ''}>Create Index</button>
+            </div>
+        `;
+    },
+
+    renderFTSSearchModal() {
+        const { data } = this.state.modal;
+        const queryTypes = [
+            { value: 'plain', label: 'Plain', desc: 'All terms must match (AND)' },
+            { value: 'phrase', label: 'Phrase', desc: 'Exact phrase match' },
+            { value: 'websearch', label: 'Websearch', desc: 'Google-like syntax (OR, -negation, "quotes")' },
+            { value: 'fts', label: 'FTS Query', desc: "PostgreSQL tsquery syntax ('term' & 'term')" }
+        ];
+
+        return `
+            <div class="modal-header">
+                <h3>Test FTS Search: ${data.indexName}</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Indexed Columns: <span style="font-weight: normal;">${data.index?.columns?.join(', ') || ''}</span></label>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Search Query</label>
+                    <input type="text" class="form-input" value="${data.query}" placeholder="Enter search terms..."
+                        onchange="App.updateModalData('query', this.value)"
+                        onkeydown="if(event.key === 'Enter') App.testFTSSearch()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Query Type</label>
+                    <select class="form-input" onchange="App.updateModalData('queryType', this.value)">
+                        ${queryTypes.map(t => `<option value="${t.value}" ${data.queryType === t.value ? 'selected' : ''}>${t.label} - ${t.desc}</option>`).join('')}
+                    </select>
+                </div>
+                <div style="margin-bottom: 1rem;">
+                    <button class="btn btn-primary" onclick="App.testFTSSearch()" ${data.loading ? 'disabled' : ''}>
+                        ${data.loading ? 'Searching...' : 'Search'}
+                    </button>
+                </div>
+
+                ${data.error ? `
+                    <div class="alert alert-danger" style="margin-bottom: 1rem;">${data.error}</div>
+                ` : ''}
+
+                ${data.ftsQuery ? `
+                    <div style="margin-bottom: 1rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px;">
+                        <small style="color: var(--text-muted);">FTS5 Query: <code>${data.ftsQuery}</code></small>
+                    </div>
+                ` : ''}
+
+                ${data.results !== null ? `
+                    <div class="form-label">Results (${data.results.length})</div>
+                    ${data.results.length === 0 ? `
+                        <p style="color: var(--text-muted);">No results found</p>
+                    ` : `
+                        <div style="max-height: 300px; overflow: auto;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>${Object.keys(data.results[0] || {}).map(k => `<th>${k}</th>`).join('')}</tr>
+                                </thead>
+                                <tbody>
+                                    ${data.results.map(row => `
+                                        <tr>${Object.values(row).map(v => `<td>${v !== null ? String(v).substring(0, 100) : '<null>'}</td>`).join('')}</tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    `}
+                ` : ''}
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.showSchemaModal()">Back</button>
             </div>
         `;
     },

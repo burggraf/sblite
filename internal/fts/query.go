@@ -212,3 +212,27 @@ func BuildMatchConditionWithRank(tableName, ftsTable, pkColumn, query string) st
 		pkColumn, ftsTable, ftsTable,
 	)
 }
+
+// ConvertQuery converts a search query to FTS5 MATCH syntax using the given type.
+// Accepts simplified type names: "plain", "phrase", "websearch", "fts"
+func ConvertQuery(query, queryType string) (string, error) {
+	if query == "" {
+		return "", fmt.Errorf("query cannot be empty")
+	}
+
+	var qt QueryType
+	switch strings.ToLower(queryType) {
+	case "plain", "plfts":
+		qt = QueryTypePlain
+	case "phrase", "phfts":
+		qt = QueryTypePhrase
+	case "websearch", "wfts":
+		qt = QueryTypeWebsearch
+	case "fts", "":
+		qt = QueryTypeFTS
+	default:
+		return "", fmt.Errorf("invalid query type: %s (valid: plain, phrase, websearch, fts)", queryType)
+	}
+
+	return ToFTS5Query(qt, query), nil
+}
