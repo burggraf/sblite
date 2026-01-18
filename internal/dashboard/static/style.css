@@ -1296,3 +1296,331 @@ small.text-muted {
     white-space: pre-wrap;
     word-break: break-all;
 }
+
+/* ==================== API Console ==================== */
+
+.api-console-view {
+    padding: 1rem;
+}
+
+.api-console-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    min-height: 500px;
+}
+
+.api-console-request,
+.api-console-response {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.api-console-request h4,
+.api-console-response h4 {
+    margin: 0 0 1rem 0;
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.api-console-url-bar {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.api-console-method {
+    width: 100px;
+    flex-shrink: 0;
+}
+
+.api-console-url-input {
+    flex: 1;
+    font-family: monospace;
+}
+
+.api-console-templates {
+    margin-bottom: 1rem;
+}
+
+.api-console-templates select {
+    width: 100%;
+}
+
+.api-console-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.api-console-headers {
+    margin-bottom: 1rem;
+}
+
+.api-console-header-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.api-console-header-row input:first-child {
+    width: 40%;
+}
+
+.api-console-header-row input:nth-child(2) {
+    flex: 1;
+}
+
+.api-console-body {
+    margin-bottom: 1rem;
+    flex: 1;
+}
+
+.api-console-body-input {
+    font-family: monospace;
+    font-size: 0.875rem;
+    resize: vertical;
+    min-height: 120px;
+}
+
+.api-console-send {
+    width: 100%;
+    margin-top: auto;
+}
+
+/* Response panel */
+
+.api-console-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.api-console-response-status {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+    font-weight: 600;
+}
+
+.api-console-response-status.status-success {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+}
+
+.api-console-response-status.status-warning {
+    background: rgba(234, 179, 8, 0.15);
+    color: #eab308;
+}
+
+.api-console-response-status.status-error {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+.status-code {
+    font-family: monospace;
+}
+
+.status-time {
+    font-size: 0.875rem;
+    opacity: 0.8;
+}
+
+.api-console-response-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    align-items: center;
+}
+
+.api-console-response-tabs .tab {
+    padding: 0.5rem 1rem;
+    border: none;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+}
+
+.api-console-response-tabs .tab.active {
+    background: var(--accent-color);
+    color: white;
+}
+
+.api-console-response-tabs .copy-btn {
+    margin-left: auto;
+}
+
+.api-console-response-content {
+    flex: 1;
+    overflow: auto;
+    background: var(--bg-tertiary);
+    border-radius: 6px;
+    padding: 1rem;
+}
+
+.api-console-json {
+    margin: 0;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.5;
+}
+
+.api-console-headers-list .header-item {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+    font-size: 0.875rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.header-key {
+    color: var(--accent-color);
+    font-weight: 500;
+}
+
+.header-value {
+    color: var(--text-secondary);
+    word-break: break-all;
+}
+
+/* JSON syntax highlighting */
+
+.json-key {
+    color: #f472b6;
+}
+
+.json-string {
+    color: #4ade80;
+}
+
+.json-number {
+    color: #60a5fa;
+}
+
+.json-boolean {
+    color: #fbbf24;
+}
+
+.json-null {
+    color: #a78bfa;
+}
+
+/* History dropdown */
+
+.api-console-history-toggle {
+    position: relative;
+    display: inline-block;
+}
+
+.card-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.api-console-history-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    width: 350px;
+    max-height: 400px;
+    overflow-y: auto;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 100;
+    margin-top: 0.5rem;
+}
+
+.history-empty {
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.history-item {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.875rem;
+}
+
+.history-item:hover {
+    background: var(--bg-tertiary);
+}
+
+.history-method {
+    font-weight: 600;
+    width: 50px;
+    flex-shrink: 0;
+}
+
+.history-url {
+    flex: 1;
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.history-status {
+    font-family: monospace;
+    font-weight: 600;
+    width: 35px;
+    text-align: right;
+}
+
+.history-item.status-success .history-status {
+    color: #22c55e;
+}
+
+.history-item.status-warning .history-status {
+    color: #eab308;
+}
+
+.history-item.status-error .history-status {
+    color: #ef4444;
+}
+
+.history-time {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    width: 70px;
+    text-align: right;
+}
+
+.history-actions {
+    padding: 0.75rem 1rem;
+    border-top: 1px solid var(--border-color);
+    text-align: center;
+}
+
+/* Responsive */
+
+@media (max-width: 1024px) {
+    .api-console-split {
+        grid-template-columns: 1fr;
+    }
+}

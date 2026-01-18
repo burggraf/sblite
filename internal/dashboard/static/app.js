@@ -61,6 +61,17 @@ const App = {
             tailLines: [],
             expandedLog: null,
         },
+        apiConsole: {
+            method: 'GET',
+            url: '/rest/v1/',
+            headers: [],
+            body: '',
+            response: null,
+            loading: false,
+            history: [],
+            activeTab: 'body',
+            showHistory: false,
+        },
     },
 
     async init() {
@@ -299,6 +310,8 @@ const App = {
             this.loadSettings();
         } else if (view === 'logs') {
             this.loadLogs();
+        } else if (view === 'apiConsole') {
+            this.initApiConsole();
         } else {
             this.render();
         }
@@ -409,6 +422,8 @@ const App = {
                                onclick="App.navigate('settings')">Settings</a>
                             <a class="nav-item ${this.state.currentView === 'logs' ? 'active' : ''}"
                                onclick="App.navigate('logs')">Logs</a>
+                            <a class="nav-item ${this.state.currentView === 'apiConsole' ? 'active' : ''}"
+                               onclick="App.navigate('apiConsole')">API Console</a>
                         </div>
                     </nav>
 
@@ -437,6 +452,8 @@ const App = {
                 return this.renderSettingsView();
             case 'logs':
                 return this.renderLogsView();
+            case 'apiConsole':
+                return this.renderApiConsoleView();
             default:
                 return '<div class="card">Select a section from the sidebar</div>';
         }
@@ -2882,6 +2899,494 @@ const App = {
                 ` : ''}
             </div>
         `;
+    },
+
+    // API Console methods
+
+    apiConsoleTemplates: {
+        // Auth templates
+        'auth-signup': {
+            method: 'POST',
+            url: '/auth/v1/signup',
+            headers: [{ key: 'Content-Type', value: 'application/json' }],
+            body: JSON.stringify({ email: 'user@example.com', password: 'password123' }, null, 2)
+        },
+        'auth-signin': {
+            method: 'POST',
+            url: '/auth/v1/token?grant_type=password',
+            headers: [{ key: 'Content-Type', value: 'application/json' }],
+            body: JSON.stringify({ email: 'user@example.com', password: 'password123' }, null, 2)
+        },
+        'auth-refresh': {
+            method: 'POST',
+            url: '/auth/v1/token?grant_type=refresh_token',
+            headers: [{ key: 'Content-Type', value: 'application/json' }],
+            body: JSON.stringify({ refresh_token: 'your-refresh-token' }, null, 2)
+        },
+        'auth-user': {
+            method: 'GET',
+            url: '/auth/v1/user',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }],
+            body: ''
+        },
+        'auth-update-user': {
+            method: 'PUT',
+            url: '/auth/v1/user',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }, { key: 'Content-Type', value: 'application/json' }],
+            body: JSON.stringify({ data: { display_name: 'John Doe' } }, null, 2)
+        },
+        'auth-logout': {
+            method: 'POST',
+            url: '/auth/v1/logout',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }],
+            body: ''
+        },
+        // REST templates
+        'rest-select': {
+            method: 'GET',
+            url: '/rest/v1/table_name?select=*',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }],
+            body: ''
+        },
+        'rest-select-filter': {
+            method: 'GET',
+            url: '/rest/v1/table_name?select=*&column=eq.value',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }],
+            body: ''
+        },
+        'rest-insert': {
+            method: 'POST',
+            url: '/rest/v1/table_name',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }, { key: 'Content-Type', value: 'application/json' }, { key: 'Prefer', value: 'return=representation' }],
+            body: JSON.stringify({ column1: 'value1', column2: 'value2' }, null, 2)
+        },
+        'rest-update': {
+            method: 'PATCH',
+            url: '/rest/v1/table_name?id=eq.1',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }, { key: 'Content-Type', value: 'application/json' }, { key: 'Prefer', value: 'return=representation' }],
+            body: JSON.stringify({ column1: 'new_value' }, null, 2)
+        },
+        'rest-delete': {
+            method: 'DELETE',
+            url: '/rest/v1/table_name?id=eq.1',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }],
+            body: ''
+        },
+        // Admin templates
+        'admin-list-tables': {
+            method: 'GET',
+            url: '/admin/v1/tables',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }],
+            body: ''
+        },
+        'admin-create-table': {
+            method: 'POST',
+            url: '/admin/v1/tables',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }, { key: 'Content-Type', value: 'application/json' }],
+            body: JSON.stringify({ name: 'new_table', columns: [{ name: 'id', type: 'uuid', primary: true }, { name: 'name', type: 'text' }] }, null, 2)
+        },
+        'admin-get-schema': {
+            method: 'GET',
+            url: '/admin/v1/tables/table_name',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }],
+            body: ''
+        },
+        'admin-drop-table': {
+            method: 'DELETE',
+            url: '/admin/v1/tables/table_name',
+            headers: [{ key: 'Authorization', value: 'Bearer <access_token>' }],
+            body: ''
+        }
+    },
+
+    initApiConsole() {
+        // Load history from localStorage
+        const saved = localStorage.getItem('sblite_api_console_history');
+        if (saved) {
+            try {
+                this.state.apiConsole.history = JSON.parse(saved);
+            } catch (e) {
+                this.state.apiConsole.history = [];
+            }
+        }
+        // Initialize with default header if empty
+        if (this.state.apiConsole.headers.length === 0) {
+            this.state.apiConsole.headers = [
+                { key: 'Content-Type', value: 'application/json' }
+            ];
+        }
+        this.render();
+    },
+
+    saveApiConsoleHistory() {
+        const history = this.state.apiConsole.history.slice(0, 20); // Keep last 20
+        localStorage.setItem('sblite_api_console_history', JSON.stringify(history));
+    },
+
+    applyApiConsoleTemplate(templateId) {
+        const template = this.apiConsoleTemplates[templateId];
+        if (!template) return;
+
+        this.state.apiConsole.method = template.method;
+        this.state.apiConsole.url = template.url;
+        this.state.apiConsole.headers = template.headers.map(h => ({ ...h }));
+        this.state.apiConsole.body = template.body;
+        this.render();
+    },
+
+    updateApiConsoleMethod(method) {
+        this.state.apiConsole.method = method;
+        this.render();
+    },
+
+    updateApiConsoleUrl(url) {
+        this.state.apiConsole.url = url;
+        // Don't re-render on every keystroke
+    },
+
+    updateApiConsoleBody(body) {
+        this.state.apiConsole.body = body;
+        // Don't re-render on every keystroke
+    },
+
+    addApiConsoleHeader() {
+        this.state.apiConsole.headers.push({ key: '', value: '' });
+        this.render();
+    },
+
+    updateApiConsoleHeader(index, field, value) {
+        this.state.apiConsole.headers[index][field] = value;
+        // Don't re-render on every keystroke
+    },
+
+    removeApiConsoleHeader(index) {
+        this.state.apiConsole.headers.splice(index, 1);
+        this.render();
+    },
+
+    async sendApiConsoleRequest() {
+        const { method, url, headers, body } = this.state.apiConsole;
+
+        // Get current URL value from input (in case it wasn't saved to state)
+        const urlInput = document.getElementById('api-console-url');
+        const bodyInput = document.getElementById('api-console-body');
+        const currentUrl = urlInput ? urlInput.value : url;
+        const currentBody = bodyInput ? bodyInput.value : body;
+
+        this.state.apiConsole.url = currentUrl;
+        this.state.apiConsole.body = currentBody;
+        this.state.apiConsole.loading = true;
+        this.state.apiConsole.response = null;
+        this.render();
+
+        const startTime = performance.now();
+
+        try {
+            const fetchHeaders = {};
+            headers.forEach(h => {
+                if (h.key && h.value) {
+                    fetchHeaders[h.key] = h.value;
+                }
+            });
+
+            const fetchOptions = {
+                method: method,
+                headers: fetchHeaders,
+            };
+
+            if (['POST', 'PUT', 'PATCH'].includes(method) && currentBody) {
+                fetchOptions.body = currentBody;
+            }
+
+            const res = await fetch(currentUrl, fetchOptions);
+            const endTime = performance.now();
+
+            // Get response headers
+            const responseHeaders = {};
+            res.headers.forEach((value, key) => {
+                responseHeaders[key] = value;
+            });
+
+            // Get response body
+            let responseBody = '';
+            const contentType = res.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+                try {
+                    const json = await res.json();
+                    responseBody = JSON.stringify(json, null, 2);
+                } catch (e) {
+                    responseBody = await res.text();
+                }
+            } else {
+                responseBody = await res.text();
+            }
+
+            this.state.apiConsole.response = {
+                status: res.status,
+                statusText: res.statusText,
+                headers: responseHeaders,
+                body: responseBody,
+                time: Math.round(endTime - startTime)
+            };
+
+            // Add to history
+            const historyEntry = {
+                id: Date.now().toString(),
+                method: method,
+                url: currentUrl,
+                headers: headers.map(h => ({ ...h })),
+                body: currentBody,
+                status: res.status,
+                timestamp: Date.now()
+            };
+
+            // Don't add duplicate consecutive requests
+            const lastEntry = this.state.apiConsole.history[0];
+            if (!lastEntry || lastEntry.method !== method || lastEntry.url !== currentUrl) {
+                this.state.apiConsole.history.unshift(historyEntry);
+                this.saveApiConsoleHistory();
+            }
+
+        } catch (e) {
+            this.state.apiConsole.response = {
+                status: 0,
+                statusText: 'Network Error',
+                headers: {},
+                body: e.message,
+                time: Math.round(performance.now() - startTime)
+            };
+        }
+
+        this.state.apiConsole.loading = false;
+        this.render();
+    },
+
+    loadFromApiConsoleHistory(id) {
+        const entry = this.state.apiConsole.history.find(h => h.id === id);
+        if (!entry) return;
+
+        this.state.apiConsole.method = entry.method;
+        this.state.apiConsole.url = entry.url;
+        this.state.apiConsole.headers = entry.headers.map(h => ({ ...h }));
+        this.state.apiConsole.body = entry.body;
+        this.state.apiConsole.showHistory = false;
+        this.render();
+    },
+
+    clearApiConsoleHistory() {
+        this.state.apiConsole.history = [];
+        localStorage.removeItem('sblite_api_console_history');
+        this.state.apiConsole.showHistory = false;
+        this.render();
+    },
+
+    toggleApiConsoleHistory() {
+        this.state.apiConsole.showHistory = !this.state.apiConsole.showHistory;
+        this.render();
+    },
+
+    setApiConsoleResponseTab(tab) {
+        this.state.apiConsole.activeTab = tab;
+        this.render();
+    },
+
+    copyApiConsoleResponse() {
+        const { response } = this.state.apiConsole;
+        if (response && response.body) {
+            navigator.clipboard.writeText(response.body);
+        }
+    },
+
+    formatTimeAgo(timestamp) {
+        const seconds = Math.floor((Date.now() - timestamp) / 1000);
+        if (seconds < 60) return 'just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes} min ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours} hr ago`;
+        const days = Math.floor(hours / 24);
+        return `${days} day${days > 1 ? 's' : ''} ago`;
+    },
+
+    getStatusClass(status) {
+        if (status >= 200 && status < 300) return 'status-success';
+        if (status >= 400 && status < 500) return 'status-warning';
+        return 'status-error';
+    },
+
+    renderApiConsoleView() {
+        const { method, url, headers, body, response, loading, history, activeTab, showHistory } = this.state.apiConsole;
+        const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+        const showBody = ['POST', 'PUT', 'PATCH'].includes(method);
+
+        return `
+            <div class="card-title">
+                API Console
+                <div class="api-console-history-toggle">
+                    <button class="btn btn-secondary btn-sm" onclick="App.toggleApiConsoleHistory()">
+                        History (${history.length})
+                    </button>
+                    ${showHistory ? this.renderApiConsoleHistoryDropdown() : ''}
+                </div>
+            </div>
+            <div class="api-console-view">
+                <div class="api-console-split">
+                    <div class="api-console-request">
+                        <h4>Request</h4>
+
+                        <div class="api-console-url-bar">
+                            <select class="form-input api-console-method" onchange="App.updateApiConsoleMethod(this.value)">
+                                ${methods.map(m => `<option value="${m}" ${method === m ? 'selected' : ''}>${m}</option>`).join('')}
+                            </select>
+                            <input type="text" id="api-console-url" class="form-input api-console-url-input"
+                                value="${this.escapeHtml(url)}"
+                                onchange="App.updateApiConsoleUrl(this.value)"
+                                placeholder="/rest/v1/table_name">
+                        </div>
+
+                        <div class="api-console-templates">
+                            <label class="form-label">Templates:</label>
+                            <select class="form-input" onchange="if(this.value) App.applyApiConsoleTemplate(this.value); this.value='';">
+                                <option value="">Select a template...</option>
+                                <optgroup label="Auth">
+                                    <option value="auth-signup">Sign Up</option>
+                                    <option value="auth-signin">Sign In</option>
+                                    <option value="auth-refresh">Refresh Token</option>
+                                    <option value="auth-user">Get User</option>
+                                    <option value="auth-update-user">Update User</option>
+                                    <option value="auth-logout">Logout</option>
+                                </optgroup>
+                                <optgroup label="REST">
+                                    <option value="rest-select">Select All</option>
+                                    <option value="rest-select-filter">Select with Filter</option>
+                                    <option value="rest-insert">Insert Row</option>
+                                    <option value="rest-update">Update Row</option>
+                                    <option value="rest-delete">Delete Row</option>
+                                </optgroup>
+                                <optgroup label="Admin">
+                                    <option value="admin-list-tables">List Tables</option>
+                                    <option value="admin-create-table">Create Table</option>
+                                    <option value="admin-get-schema">Get Schema</option>
+                                    <option value="admin-drop-table">Drop Table</option>
+                                </optgroup>
+                            </select>
+                        </div>
+
+                        <div class="api-console-headers">
+                            <div class="api-console-section-header">
+                                <label class="form-label">Headers</label>
+                                <button class="btn btn-secondary btn-sm" onclick="App.addApiConsoleHeader()">+ Add</button>
+                            </div>
+                            ${headers.map((h, i) => `
+                                <div class="api-console-header-row">
+                                    <input type="text" class="form-input" placeholder="Header name"
+                                        value="${this.escapeHtml(h.key)}"
+                                        onchange="App.updateApiConsoleHeader(${i}, 'key', this.value)">
+                                    <input type="text" class="form-input" placeholder="Value"
+                                        value="${this.escapeHtml(h.value)}"
+                                        onchange="App.updateApiConsoleHeader(${i}, 'value', this.value)">
+                                    <button class="btn-icon" onclick="App.removeApiConsoleHeader(${i})">&times;</button>
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        ${showBody ? `
+                            <div class="api-console-body">
+                                <label class="form-label">Body (JSON)</label>
+                                <textarea id="api-console-body" class="form-input api-console-body-input"
+                                    rows="8" placeholder='{"key": "value"}'
+                                    onchange="App.updateApiConsoleBody(this.value)">${this.escapeHtml(body)}</textarea>
+                            </div>
+                        ` : ''}
+
+                        <button class="btn btn-primary api-console-send"
+                            onclick="App.sendApiConsoleRequest()"
+                            ${loading ? 'disabled' : ''}>
+                            ${loading ? 'Sending...' : 'Send Request'}
+                        </button>
+                    </div>
+
+                    <div class="api-console-response">
+                        <h4>Response</h4>
+                        ${response ? this.renderApiConsoleResponse() : `
+                            <div class="api-console-empty">
+                                Send a request to see the response
+                            </div>
+                        `}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    renderApiConsoleResponse() {
+        const { response, activeTab } = this.state.apiConsole;
+        const statusClass = this.getStatusClass(response.status);
+
+        return `
+            <div class="api-console-response-status ${statusClass}">
+                <span class="status-code">${response.status} ${response.statusText}</span>
+                <span class="status-time">${response.time}ms</span>
+            </div>
+
+            <div class="api-console-response-tabs">
+                <button class="tab ${activeTab === 'body' ? 'active' : ''}"
+                    onclick="App.setApiConsoleResponseTab('body')">Body</button>
+                <button class="tab ${activeTab === 'headers' ? 'active' : ''}"
+                    onclick="App.setApiConsoleResponseTab('headers')">Headers</button>
+                <button class="btn btn-secondary btn-sm copy-btn" onclick="App.copyApiConsoleResponse()">Copy</button>
+            </div>
+
+            <div class="api-console-response-content">
+                ${activeTab === 'body' ? `
+                    <pre class="api-console-json">${this.syntaxHighlightJson(response.body)}</pre>
+                ` : `
+                    <div class="api-console-headers-list">
+                        ${Object.entries(response.headers).map(([key, value]) => `
+                            <div class="header-item">
+                                <span class="header-key">${this.escapeHtml(key)}:</span>
+                                <span class="header-value">${this.escapeHtml(value)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `}
+            </div>
+        `;
+    },
+
+    renderApiConsoleHistoryDropdown() {
+        const { history } = this.state.apiConsole;
+
+        return `
+            <div class="api-console-history-dropdown">
+                ${history.length === 0 ? `
+                    <div class="history-empty">No history yet</div>
+                ` : `
+                    ${history.map(h => `
+                        <div class="history-item ${this.getStatusClass(h.status)}" onclick="App.loadFromApiConsoleHistory('${h.id}')">
+                            <span class="history-method">${h.method}</span>
+                            <span class="history-url">${this.escapeHtml(h.url.substring(0, 30))}${h.url.length > 30 ? '...' : ''}</span>
+                            <span class="history-status">${h.status}</span>
+                            <span class="history-time">${this.formatTimeAgo(h.timestamp)}</span>
+                        </div>
+                    `).join('')}
+                    <div class="history-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="App.clearApiConsoleHistory()">Clear History</button>
+                    </div>
+                `}
+            </div>
+        `;
+    },
+
+    syntaxHighlightJson(json) {
+        if (!json) return '';
+        const escaped = this.escapeHtml(json);
+        return escaped
+            .replace(/"([^"]+)":/g, '<span class="json-key">"$1"</span>:')
+            .replace(/: "([^"]*)"/g, ': <span class="json-string">"$1"</span>')
+            .replace(/: (\d+)/g, ': <span class="json-number">$1</span>')
+            .replace(/: (true|false)/g, ': <span class="json-boolean">$1</span>')
+            .replace(/: (null)/g, ': <span class="json-null">$1</span>');
     },
 
     escapeHtml(str) {
