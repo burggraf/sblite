@@ -693,3 +693,255 @@ small.text-muted {
     margin-top: 0.25rem;
     font-size: 0.75rem;
 }
+
+/* ========================================================================
+   RLS Policies View
+   ======================================================================== */
+
+.policies-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 1rem;
+    height: calc(100vh - 100px);
+}
+
+.policy-tables-panel {
+    background: var(--card-bg);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.policy-tables-panel .panel-header {
+    padding: 1rem;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+}
+
+.policy-tables-panel .table-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.policy-tables-panel .table-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+}
+
+.policy-tables-panel .table-list-item:hover {
+    background: var(--hover);
+}
+
+.policy-tables-panel .table-list-item.active {
+    background: var(--primary);
+    color: white;
+}
+
+.table-item-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.policy-badge {
+    background: var(--primary);
+    color: white;
+    padding: 0.125rem 0.5rem;
+    border-radius: 10px;
+    font-size: 0.75rem;
+}
+
+.policy-tables-panel .table-list-item.active .policy-badge {
+    background: white;
+    color: var(--primary);
+}
+
+.rls-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.rls-toggle input {
+    cursor: pointer;
+}
+
+.policy-content-panel {
+    background: var(--card-bg);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    padding: 1rem;
+    overflow-y: auto;
+}
+
+/* Policy Cards */
+.policies-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.policy-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+}
+
+.policy-card.disabled {
+    opacity: 0.6;
+}
+
+.policy-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.75rem;
+}
+
+.policy-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.policy-name {
+    font-weight: 600;
+}
+
+.policy-command {
+    background: var(--primary);
+    color: white;
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-family: monospace;
+}
+
+.policy-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.policy-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    margin-right: 0.5rem;
+}
+
+.policy-expr {
+    font-size: 0.875rem;
+    margin-top: 0.5rem;
+}
+
+.policy-expr .expr-label {
+    color: var(--text-muted);
+    margin-right: 0.5rem;
+}
+
+.policy-expr code {
+    background: var(--card-bg);
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+    font-size: 0.8125rem;
+}
+
+/* Policy Modal */
+.policy-modal-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+.policy-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.policy-preview {
+    display: flex;
+    flex-direction: column;
+}
+
+.sql-preview {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1rem;
+    font-family: monospace;
+    font-size: 0.8125rem;
+    white-space: pre-wrap;
+    flex: 1;
+    overflow: auto;
+    margin: 0;
+}
+
+.code-input {
+    font-family: monospace;
+}
+
+/* Policy Test Section */
+.policy-test-section {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--border);
+    padding-top: 1rem;
+}
+
+.policy-test-panel {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: var(--bg);
+    border-radius: 4px;
+}
+
+.policy-test-panel .form-group {
+    margin-bottom: 1rem;
+}
+
+.test-result {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    border-radius: 4px;
+}
+
+.test-result.test-success {
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid var(--success);
+}
+
+.test-result.test-error {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid var(--error);
+}
+
+.test-icon {
+    margin-right: 0.5rem;
+}
+
+.test-result details {
+    margin-top: 0.5rem;
+}
+
+.test-result summary {
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+.test-result .sql-preview {
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+}

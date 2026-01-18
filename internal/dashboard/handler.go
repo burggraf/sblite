@@ -85,6 +85,24 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Patch("/{id}", h.handleUpdateUser)
 			r.Delete("/{id}", h.handleDeleteUser)
 		})
+
+		// RLS Policies API routes (require auth)
+		r.Route("/policies", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/", h.handleListPolicies)
+			r.Post("/", h.handleCreatePolicy)
+			r.Post("/test", h.handleTestPolicy)
+			r.Get("/{id}", h.handleGetPolicy)
+			r.Patch("/{id}", h.handleUpdatePolicy)
+			r.Delete("/{id}", h.handleDeletePolicy)
+		})
+
+		// RLS table state routes (nested under tables)
+		r.Route("/tables/{name}/rls", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/", h.handleGetTableRLS)
+			r.Patch("/", h.handleSetTableRLS)
+		})
 	})
 
 	// Static files - use Route group to ensure priority
@@ -1437,4 +1455,504 @@ func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ============================================================================
+// RLS Policy Handlers
+// ============================================================================
+
+func (h *Handler) handleListPolicies(w http.ResponseWriter, r *http.Request) {
+	tableName := r.URL.Query().Get("table")
+
+	var rows *sql.Rows
+	var err error
+	if tableName != "" {
+		rows, err = h.db.Query(`
+			SELECT id, table_name, policy_name, command, using_expr, check_expr, enabled, created_at
+			FROM _rls_policies WHERE table_name = ? ORDER BY policy_name
+		`, tableName)
+	} else {
+		rows, err = h.db.Query(`
+			SELECT id, table_name, policy_name, command, using_expr, check_expr, enabled, created_at
+			FROM _rls_policies ORDER BY table_name, policy_name
+		`)
+	}
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type Policy struct {
+		ID         int64  `json:"id"`
+		TableName  string `json:"table_name"`
+		PolicyName string `json:"policy_name"`
+		Command    string `json:"command"`
+		UsingExpr  string `json:"using_expr,omitempty"`
+		CheckExpr  string `json:"check_expr,omitempty"`
+		Enabled    bool   `json:"enabled"`
+		CreatedAt  string `json:"created_at"`
+	}
+
+	policies := []Policy{}
+	for rows.Next() {
+		var p Policy
+		var usingExpr, checkExpr sql.NullString
+		var enabled int
+		if err := rows.Scan(&p.ID, &p.TableName, &p.PolicyName, &p.Command, &usingExpr, &checkExpr, &enabled, &p.CreatedAt); err != nil {
+			continue
+		}
+		p.UsingExpr = usingExpr.String
+		p.CheckExpr = checkExpr.String
+		p.Enabled = enabled == 1
+		policies = append(policies, p)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"policies": policies})
+}
+
+func (h *Handler) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TableName  string `json:"table_name"`
+		PolicyName string `json:"policy_name"`
+		Command    string `json:"command"`
+		UsingExpr  string `json:"using_expr"`
+		CheckExpr  string `json:"check_expr"`
+		Enabled    *bool  `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		return
+	}
+
+	// Validate required fields
+	if req.TableName == "" || req.PolicyName == "" || req.Command == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "table_name, policy_name, and command are required"})
+		return
+	}
+
+	// Validate command
+	validCommands := map[string]bool{"SELECT": true, "INSERT": true, "UPDATE": true, "DELETE": true, "ALL": true}
+	if !validCommands[req.Command] {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "command must be SELECT, INSERT, UPDATE, DELETE, or ALL"})
+		return
+	}
+
+	enabled := 1
+	if req.Enabled != nil && !*req.Enabled {
+		enabled = 0
+	}
+
+	result, err := h.db.Exec(`
+		INSERT INTO _rls_policies (table_name, policy_name, command, using_expr, check_expr, enabled)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, req.TableName, req.PolicyName, req.Command, req.UsingExpr, req.CheckExpr, enabled)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "A policy with this name already exists for this table"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	id, _ := result.LastInsertId()
+
+	// Fetch and return the created policy
+	var p struct {
+		ID         int64  `json:"id"`
+		TableName  string `json:"table_name"`
+		PolicyName string `json:"policy_name"`
+		Command    string `json:"command"`
+		UsingExpr  string `json:"using_expr,omitempty"`
+		CheckExpr  string `json:"check_expr,omitempty"`
+		Enabled    bool   `json:"enabled"`
+		CreatedAt  string `json:"created_at"`
+	}
+	var usingExpr, checkExpr sql.NullString
+	var enabledInt int
+	h.db.QueryRow(`
+		SELECT id, table_name, policy_name, command, using_expr, check_expr, enabled, created_at
+		FROM _rls_policies WHERE id = ?
+	`, id).Scan(&p.ID, &p.TableName, &p.PolicyName, &p.Command, &usingExpr, &checkExpr, &enabledInt, &p.CreatedAt)
+	p.UsingExpr = usingExpr.String
+	p.CheckExpr = checkExpr.String
+	p.Enabled = enabledInt == 1
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(p)
+}
+
+func (h *Handler) handleGetPolicy(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid policy ID"})
+		return
+	}
+
+	var p struct {
+		ID         int64  `json:"id"`
+		TableName  string `json:"table_name"`
+		PolicyName string `json:"policy_name"`
+		Command    string `json:"command"`
+		UsingExpr  string `json:"using_expr,omitempty"`
+		CheckExpr  string `json:"check_expr,omitempty"`
+		Enabled    bool   `json:"enabled"`
+		CreatedAt  string `json:"created_at"`
+	}
+	var usingExpr, checkExpr sql.NullString
+	var enabled int
+	err = h.db.QueryRow(`
+		SELECT id, table_name, policy_name, command, using_expr, check_expr, enabled, created_at
+		FROM _rls_policies WHERE id = ?
+	`, id).Scan(&p.ID, &p.TableName, &p.PolicyName, &p.Command, &usingExpr, &checkExpr, &enabled, &p.CreatedAt)
+	if err == sql.ErrNoRows {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Policy not found"})
+		return
+	}
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	p.UsingExpr = usingExpr.String
+	p.CheckExpr = checkExpr.String
+	p.Enabled = enabled == 1
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(p)
+}
+
+func (h *Handler) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid policy ID"})
+		return
+	}
+
+	var req struct {
+		PolicyName *string `json:"policy_name"`
+		Command    *string `json:"command"`
+		UsingExpr  *string `json:"using_expr"`
+		CheckExpr  *string `json:"check_expr"`
+		Enabled    *bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		return
+	}
+
+	// Build update query dynamically
+	var updates []string
+	var args []interface{}
+	if req.PolicyName != nil {
+		updates = append(updates, "policy_name = ?")
+		args = append(args, *req.PolicyName)
+	}
+	if req.Command != nil {
+		validCommands := map[string]bool{"SELECT": true, "INSERT": true, "UPDATE": true, "DELETE": true, "ALL": true}
+		if !validCommands[*req.Command] {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "command must be SELECT, INSERT, UPDATE, DELETE, or ALL"})
+			return
+		}
+		updates = append(updates, "command = ?")
+		args = append(args, *req.Command)
+	}
+	if req.UsingExpr != nil {
+		updates = append(updates, "using_expr = ?")
+		args = append(args, *req.UsingExpr)
+	}
+	if req.CheckExpr != nil {
+		updates = append(updates, "check_expr = ?")
+		args = append(args, *req.CheckExpr)
+	}
+	if req.Enabled != nil {
+		enabled := 0
+		if *req.Enabled {
+			enabled = 1
+		}
+		updates = append(updates, "enabled = ?")
+		args = append(args, enabled)
+	}
+
+	if len(updates) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "No fields to update"})
+		return
+	}
+
+	args = append(args, id)
+	query := "UPDATE _rls_policies SET " + strings.Join(updates, ", ") + " WHERE id = ?"
+	result, err := h.db.Exec(query, args...)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "A policy with this name already exists for this table"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Policy not found"})
+		return
+	}
+
+	// Fetch and return the updated policy
+	var p struct {
+		ID         int64  `json:"id"`
+		TableName  string `json:"table_name"`
+		PolicyName string `json:"policy_name"`
+		Command    string `json:"command"`
+		UsingExpr  string `json:"using_expr,omitempty"`
+		CheckExpr  string `json:"check_expr,omitempty"`
+		Enabled    bool   `json:"enabled"`
+		CreatedAt  string `json:"created_at"`
+	}
+	var usingExpr, checkExpr sql.NullString
+	var enabled int
+	h.db.QueryRow(`
+		SELECT id, table_name, policy_name, command, using_expr, check_expr, enabled, created_at
+		FROM _rls_policies WHERE id = ?
+	`, id).Scan(&p.ID, &p.TableName, &p.PolicyName, &p.Command, &usingExpr, &checkExpr, &enabled, &p.CreatedAt)
+	p.UsingExpr = usingExpr.String
+	p.CheckExpr = checkExpr.String
+	p.Enabled = enabled == 1
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(p)
+}
+
+func (h *Handler) handleDeletePolicy(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid policy ID"})
+		return
+	}
+
+	result, err := h.db.Exec("DELETE FROM _rls_policies WHERE id = ?", id)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Policy not found"})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ============================================================================
+// RLS Table State Handlers
+// ============================================================================
+
+func (h *Handler) handleGetTableRLS(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	if tableName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
+		return
+	}
+
+	var enabled int
+	err := h.db.QueryRow("SELECT enabled FROM _rls_tables WHERE table_name = ?", tableName).Scan(&enabled)
+	if err == sql.ErrNoRows {
+		// Default to disabled if not set
+		enabled = 0
+	} else if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Also get policy count for the table
+	var policyCount int
+	h.db.QueryRow("SELECT COUNT(*) FROM _rls_policies WHERE table_name = ?", tableName).Scan(&policyCount)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"table_name":   tableName,
+		"rls_enabled":  enabled == 1,
+		"policy_count": policyCount,
+	})
+}
+
+func (h *Handler) handleSetTableRLS(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	if tableName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
+		return
+	}
+
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		return
+	}
+
+	enabled := 0
+	if req.Enabled {
+		enabled = 1
+	}
+
+	_, err := h.db.Exec(`
+		INSERT INTO _rls_tables (table_name, enabled) VALUES (?, ?)
+		ON CONFLICT(table_name) DO UPDATE SET enabled = excluded.enabled
+	`, tableName, enabled)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Get policy count
+	var policyCount int
+	h.db.QueryRow("SELECT COUNT(*) FROM _rls_policies WHERE table_name = ?", tableName).Scan(&policyCount)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"table_name":   tableName,
+		"rls_enabled":  req.Enabled,
+		"policy_count": policyCount,
+	})
+}
+
+// ============================================================================
+// Policy Test Handler
+// ============================================================================
+
+func (h *Handler) handleTestPolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Table     string `json:"table"`
+		UsingExpr string `json:"using_expr"`
+		CheckExpr string `json:"check_expr"`
+		UserID    string `json:"user_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		return
+	}
+
+	if req.Table == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "table is required"})
+		return
+	}
+
+	// Get user details if user_id provided
+	var userEmail, userRole string
+	if req.UserID != "" {
+		h.db.QueryRow("SELECT email, role FROM auth_users WHERE id = ?", req.UserID).Scan(&userEmail, &userRole)
+		if userRole == "" {
+			userRole = "authenticated"
+		}
+	}
+
+	// Substitute auth functions in the expression
+	testExpr := req.UsingExpr
+	if testExpr == "" {
+		testExpr = req.CheckExpr
+	}
+	if testExpr == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "using_expr or check_expr is required"})
+		return
+	}
+
+	// Replace auth functions with actual values
+	substitutedExpr := testExpr
+	if req.UserID != "" {
+		substitutedExpr = strings.ReplaceAll(substitutedExpr, "auth.uid()", "'"+escapeSQLString(req.UserID)+"'")
+		substitutedExpr = strings.ReplaceAll(substitutedExpr, "auth.email()", "'"+escapeSQLString(userEmail)+"'")
+		substitutedExpr = strings.ReplaceAll(substitutedExpr, "auth.role()", "'"+escapeSQLString(userRole)+"'")
+	} else {
+		substitutedExpr = strings.ReplaceAll(substitutedExpr, "auth.uid()", "NULL")
+		substitutedExpr = strings.ReplaceAll(substitutedExpr, "auth.email()", "NULL")
+		substitutedExpr = strings.ReplaceAll(substitutedExpr, "auth.role()", "'anon'")
+	}
+
+	// Execute test query
+	testSQL := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s", req.Table, substitutedExpr)
+	var count int
+	err := h.db.QueryRow(testSQL).Scan(&count)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":      false,
+			"error":        err.Error(),
+			"executed_sql": testSQL,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":      true,
+		"row_count":    count,
+		"executed_sql": testSQL,
+	})
+}
+
+// escapeSQLString escapes single quotes in SQL strings
+func escapeSQLString(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }

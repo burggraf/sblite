@@ -36,6 +36,12 @@ const App = {
             totalUsers: 0,
             loading: false,
         },
+        policies: {
+            tables: [],           // Tables with RLS info
+            selectedTable: null,  // Currently selected table
+            list: [],             // Policies for selected table
+            loading: false,
+        },
     },
 
     async init() {
@@ -268,6 +274,8 @@ const App = {
         this.state.currentView = view;
         if (view === 'users') {
             this.loadUsers();
+        } else if (view === 'policies') {
+            this.loadPoliciesTables();
         } else {
             this.render();
         }
@@ -401,7 +409,7 @@ const App = {
             case 'users':
                 return this.renderUsersView();
             case 'policies':
-                return '<div class="card"><h2 class="card-title">RLS Policies</h2><p>Policy editor coming in Phase 5</p></div>';
+                return this.renderPoliciesView();
             case 'settings':
                 return '<div class="card"><h2 class="card-title">Settings</h2><p>Settings panel coming in Phase 6</p></div>';
             case 'logs':
@@ -413,6 +421,7 @@ const App = {
 
     renderTablesView() {
         return `
+            <div class="card-title">Tables</div>
             <div class="tables-layout">
                 <div class="table-list-panel">
                     <div class="panel-header">
@@ -819,6 +828,10 @@ const App = {
                 break;
             case 'inviteUser':
                 content = this.renderInviteUserModal();
+                break;
+            case 'createPolicy':
+            case 'editPolicy':
+                content = this.renderPolicyModal();
                 break;
         }
 
@@ -1229,6 +1242,7 @@ const App = {
         const totalPages = Math.ceil(totalUsers / pageSize);
 
         return `
+            <div class="card-title">Users</div>
             <div class="users-view">
                 <div class="table-toolbar">
                     <h2>Users</h2>
@@ -1662,6 +1676,552 @@ const App = {
                 <button class="btn btn-primary" onclick="App.sendInvite()">Send Invite</button>
             </div>
         `;
+    },
+
+    // ========================================================================
+    // RLS Policy Management
+    // ========================================================================
+
+    async loadPoliciesTables() {
+        this.state.policies.loading = true;
+        this.render();
+
+        try {
+            // Load tables list
+            const tablesRes = await fetch('/_/api/tables');
+            if (tablesRes.ok) {
+                const tables = await tablesRes.json();
+
+                // For each table, get RLS status
+                const tablesWithRLS = await Promise.all(tables.map(async (t) => {
+                    const rlsRes = await fetch(`/_/api/tables/${t.name}/rls`);
+                    if (rlsRes.ok) {
+                        const rlsData = await rlsRes.json();
+                        return { ...t, rls_enabled: rlsData.rls_enabled, policy_count: rlsData.policy_count };
+                    }
+                    return { ...t, rls_enabled: false, policy_count: 0 };
+                }));
+
+                this.state.policies.tables = tablesWithRLS;
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load tables';
+        }
+        this.state.policies.loading = false;
+        this.render();
+    },
+
+    async selectPolicyTable(tableName) {
+        this.state.policies.selectedTable = tableName;
+        this.state.policies.loading = true;
+        this.render();
+
+        try {
+            const res = await fetch(`/_/api/policies?table=${tableName}`);
+            if (res.ok) {
+                const data = await res.json();
+                this.state.policies.list = data.policies || [];
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load policies';
+        }
+        this.state.policies.loading = false;
+        this.render();
+    },
+
+    async toggleTableRLS(tableName, enabled) {
+        try {
+            const res = await fetch(`/_/api/tables/${tableName}/rls`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled })
+            });
+            if (res.ok) {
+                // Update local state
+                const table = this.state.policies.tables.find(t => t.name === tableName);
+                if (table) table.rls_enabled = enabled;
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to update RLS state';
+            this.render();
+        }
+    },
+
+    renderPoliciesView() {
+        const { tables, selectedTable, list, loading } = this.state.policies;
+
+        if (loading && tables.length === 0) {
+            return '<div class="loading">Loading...</div>';
+        }
+
+        return `
+            <div class="card-title">RLS Policies</div>
+            <div class="policies-layout">
+                <div class="policy-tables-panel">
+                    <div class="panel-header">
+                        <span>Tables</span>
+                    </div>
+                    <div class="table-list">
+                        ${tables.length === 0
+                            ? '<div class="empty-state">No tables yet</div>'
+                            : tables.map(t => `
+                                <div class="table-list-item ${selectedTable === t.name ? 'active' : ''}"
+                                     onclick="App.selectPolicyTable('${t.name}')">
+                                    <div class="table-item-info">
+                                        <span class="table-name">${t.name}</span>
+                                        ${t.policy_count > 0 ? `<span class="policy-badge">${t.policy_count}</span>` : ''}
+                                    </div>
+                                    <label class="rls-toggle" onclick="event.stopPropagation()">
+                                        <input type="checkbox" ${t.rls_enabled ? 'checked' : ''}
+                                            onchange="App.toggleTableRLS('${t.name}', this.checked)">
+                                        <span class="toggle-label">RLS</span>
+                                    </label>
+                                </div>
+                            `).join('')}
+                    </div>
+                </div>
+                <div class="policy-content-panel">
+                    ${selectedTable ? this.renderPolicyContent() : '<div class="empty-state">Select a table to manage policies</div>'}
+                </div>
+            </div>
+        `;
+    },
+
+    renderPolicyContent() {
+        const { selectedTable, list, loading } = this.state.policies;
+        const table = this.state.policies.tables.find(t => t.name === selectedTable);
+        const rlsEnabled = table?.rls_enabled || false;
+
+        if (loading) {
+            return '<div class="loading">Loading...</div>';
+        }
+
+        return `
+            <div class="table-toolbar">
+                <h2>${selectedTable}</h2>
+                <div class="toolbar-actions">
+                    <button class="btn btn-primary btn-sm" onclick="App.showCreatePolicyModal()">+ New Policy</button>
+                </div>
+            </div>
+            ${!rlsEnabled ? `
+                <div class="message message-warning" style="margin-bottom: 1rem;">
+                    RLS is disabled for this table. All rows are accessible to all users.
+                    <button class="btn btn-secondary btn-sm" style="margin-left: 1rem;"
+                        onclick="App.toggleTableRLS('${selectedTable}', true)">Enable RLS</button>
+                </div>
+            ` : ''}
+            ${rlsEnabled && list.length === 0 ? `
+                <div class="message message-error" style="margin-bottom: 1rem;">
+                    RLS is enabled but no policies exist. All access is currently denied.
+                </div>
+            ` : ''}
+            <div class="policies-list">
+                ${list.length === 0
+                    ? '<div class="empty-state">No policies for this table. Click "+ New Policy" to create one.</div>'
+                    : list.map(p => this.renderPolicyCard(p)).join('')}
+            </div>
+        `;
+    },
+
+    renderPolicyCard(policy) {
+        return `
+            <div class="policy-card ${!policy.enabled ? 'disabled' : ''}">
+                <div class="policy-header">
+                    <div class="policy-title">
+                        <span class="policy-name">${policy.policy_name}</span>
+                        <span class="policy-command">${policy.command}</span>
+                    </div>
+                    <div class="policy-actions">
+                        <label class="policy-toggle">
+                            <input type="checkbox" ${policy.enabled ? 'checked' : ''}
+                                onchange="App.togglePolicyEnabled(${policy.id}, this.checked)">
+                            <span class="toggle-label">${policy.enabled ? 'Enabled' : 'Disabled'}</span>
+                        </label>
+                        <button class="btn-icon" onclick="App.showEditPolicyModal(${policy.id})">Edit</button>
+                        <button class="btn-icon" onclick="App.confirmDeletePolicy(${policy.id}, '${policy.policy_name}')">Delete</button>
+                    </div>
+                </div>
+                ${policy.using_expr ? `
+                    <div class="policy-expr">
+                        <span class="expr-label">USING:</span>
+                        <code>${this.truncate(policy.using_expr, 100)}</code>
+                    </div>
+                ` : ''}
+                ${policy.check_expr ? `
+                    <div class="policy-expr">
+                        <span class="expr-label">CHECK:</span>
+                        <code>${this.truncate(policy.check_expr, 100)}</code>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    truncate(str, max) {
+        if (!str) return '';
+        return str.length > max ? str.substring(0, max) + '...' : str;
+    },
+
+    async togglePolicyEnabled(policyId, enabled) {
+        try {
+            const res = await fetch(`/_/api/policies/${policyId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled })
+            });
+            if (res.ok) {
+                const policy = this.state.policies.list.find(p => p.id === policyId);
+                if (policy) policy.enabled = enabled;
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to update policy';
+            this.render();
+        }
+    },
+
+    async confirmDeletePolicy(policyId, policyName) {
+        const { list } = this.state.policies;
+        const table = this.state.policies.tables.find(t => t.name === this.state.policies.selectedTable);
+
+        let message = `Delete policy "${policyName}"? This cannot be undone.`;
+        if (list.length === 1 && table?.rls_enabled) {
+            message += '\n\nWarning: This is the only policy on this table. Deleting it will deny all access.';
+        }
+
+        if (!confirm(message)) return;
+
+        try {
+            const res = await fetch(`/_/api/policies/${policyId}`, { method: 'DELETE' });
+            if (res.ok) {
+                this.state.policies.list = list.filter(p => p.id !== policyId);
+                // Update policy count
+                if (table) table.policy_count = Math.max(0, (table.policy_count || 1) - 1);
+                this.render();
+            } else {
+                this.state.error = 'Failed to delete policy';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to delete policy';
+            this.render();
+        }
+    },
+
+    // Policy Modal Methods
+    showCreatePolicyModal() {
+        this.state.modal = {
+            type: 'createPolicy',
+            data: {
+                table_name: this.state.policies.selectedTable,
+                policy_name: '',
+                command: 'SELECT',
+                using_expr: '',
+                check_expr: '',
+                enabled: true,
+                error: null,
+                testResult: null,
+                testUserId: '',
+                showTest: false
+            }
+        };
+        this.render();
+    },
+
+    async showEditPolicyModal(policyId) {
+        try {
+            const res = await fetch(`/_/api/policies/${policyId}`);
+            if (res.ok) {
+                const policy = await res.json();
+                this.state.modal = {
+                    type: 'editPolicy',
+                    data: {
+                        ...policy,
+                        error: null,
+                        testResult: null,
+                        testUserId: '',
+                        showTest: false
+                    }
+                };
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load policy';
+            this.render();
+        }
+    },
+
+    updatePolicyField(field, value) {
+        this.state.modal.data[field] = value;
+        this.state.modal.data.testResult = null; // Clear test result on change
+        // Only update SQL preview, don't re-render entire modal (which would lose input focus)
+        const previewEl = document.querySelector('.sql-preview');
+        if (previewEl) {
+            previewEl.textContent = this.generatePolicySQL();
+        }
+        // Clear test result display
+        const testResultEl = document.querySelector('.test-result');
+        if (testResultEl) {
+            testResultEl.remove();
+        }
+    },
+
+    applyPolicyTemplate(template) {
+        const templates = {
+            'own_data': { using: 'auth.uid() = user_id', check: 'auth.uid() = user_id' },
+            'authenticated_read': { using: 'auth.uid() IS NOT NULL', check: '' },
+            'public_read': { using: 'true', check: '' },
+            'own_modify': { using: 'auth.uid() = user_id', check: 'auth.uid() = user_id' }
+        };
+        const t = templates[template];
+        if (t) {
+            this.state.modal.data.using_expr = t.using;
+            this.state.modal.data.check_expr = t.check;
+            this.state.modal.data.testResult = null;
+            this.render();
+        }
+    },
+
+    togglePolicyTest() {
+        this.state.modal.data.showTest = !this.state.modal.data.showTest;
+        this.render();
+    },
+
+    async runPolicyTest() {
+        const { table_name, using_expr, check_expr, testUserId } = this.state.modal.data;
+
+        try {
+            const res = await fetch('/_/api/policies/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    table: table_name,
+                    using_expr: using_expr,
+                    check_expr: check_expr,
+                    user_id: testUserId || null
+                })
+            });
+            const result = await res.json();
+            this.state.modal.data.testResult = result;
+            this.render();
+        } catch (e) {
+            this.state.modal.data.testResult = { success: false, error: 'Failed to run test' };
+            this.render();
+        }
+    },
+
+    async savePolicy() {
+        const { type, data } = this.state.modal;
+        const isNew = type === 'createPolicy';
+
+        // Validate
+        if (!data.policy_name) {
+            this.state.modal.data.error = 'Policy name is required';
+            this.render();
+            return;
+        }
+        if (!data.using_expr && !data.check_expr) {
+            this.state.modal.data.error = 'At least one expression (USING or CHECK) is required';
+            this.render();
+            return;
+        }
+
+        try {
+            let res;
+            if (isNew) {
+                res = await fetch('/_/api/policies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        table_name: data.table_name,
+                        policy_name: data.policy_name,
+                        command: data.command,
+                        using_expr: data.using_expr || null,
+                        check_expr: data.check_expr || null,
+                        enabled: data.enabled
+                    })
+                });
+            } else {
+                res = await fetch(`/_/api/policies/${data.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        policy_name: data.policy_name,
+                        command: data.command,
+                        using_expr: data.using_expr || null,
+                        check_expr: data.check_expr || null,
+                        enabled: data.enabled
+                    })
+                });
+            }
+
+            if (res.ok) {
+                this.closeModal();
+                await this.selectPolicyTable(data.table_name);
+                // Update policy count
+                if (isNew) {
+                    const table = this.state.policies.tables.find(t => t.name === data.table_name);
+                    if (table) table.policy_count = (table.policy_count || 0) + 1;
+                }
+            } else {
+                const err = await res.json();
+                this.state.modal.data.error = err.error || 'Failed to save policy';
+                this.render();
+            }
+        } catch (e) {
+            this.state.modal.data.error = 'Failed to save policy';
+            this.render();
+        }
+    },
+
+    generatePolicySQL() {
+        const { table_name, policy_name, command, using_expr, check_expr } = this.state.modal.data;
+        let sql = `CREATE POLICY "${policy_name || 'policy_name'}"\nON ${table_name || 'table_name'}\nFOR ${command}`;
+        if (using_expr) {
+            sql += `\nUSING (${using_expr})`;
+        }
+        if (check_expr) {
+            sql += `\nWITH CHECK (${check_expr})`;
+        }
+        return sql + ';';
+    },
+
+    renderPolicyModal() {
+        const { type, data } = this.state.modal;
+        const isNew = type === 'createPolicy';
+        const showUsing = ['SELECT', 'UPDATE', 'DELETE', 'ALL'].includes(data.command);
+        const showCheck = ['INSERT', 'UPDATE', 'ALL'].includes(data.command);
+
+        return `
+            <div class="modal-header">
+                <h3>${isNew ? 'Create Policy' : 'Edit Policy'}</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body policy-modal-body">
+                ${data.error ? `<div class="message message-error">${data.error}</div>` : ''}
+
+                <div class="policy-form">
+                    <div class="form-group">
+                        <label class="form-label">Policy Name</label>
+                        <input type="text" class="form-input" value="${data.policy_name}"
+                            placeholder="e.g., Users can view own data"
+                            oninput="App.updatePolicyField('policy_name', this.value)">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Command</label>
+                        <select class="form-input" onchange="App.updatePolicyField('command', this.value)">
+                            <option value="SELECT" ${data.command === 'SELECT' ? 'selected' : ''}>SELECT</option>
+                            <option value="INSERT" ${data.command === 'INSERT' ? 'selected' : ''}>INSERT</option>
+                            <option value="UPDATE" ${data.command === 'UPDATE' ? 'selected' : ''}>UPDATE</option>
+                            <option value="DELETE" ${data.command === 'DELETE' ? 'selected' : ''}>DELETE</option>
+                            <option value="ALL" ${data.command === 'ALL' ? 'selected' : ''}>ALL</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Use Template</label>
+                        <select class="form-input" onchange="App.applyPolicyTemplate(this.value); this.value='';">
+                            <option value="">Select a template...</option>
+                            <option value="own_data">Users can access their own data</option>
+                            <option value="authenticated_read">Authenticated users can read</option>
+                            <option value="public_read">Anyone can read</option>
+                            <option value="own_modify">Users can modify their own data</option>
+                        </select>
+                    </div>
+
+                    ${showUsing ? `
+                        <div class="form-group">
+                            <label class="form-label">USING Expression</label>
+                            <textarea class="form-input code-input" rows="3"
+                                placeholder="auth.uid() = user_id"
+                                oninput="App.updatePolicyField('using_expr', this.value)">${data.using_expr || ''}</textarea>
+                            <small class="text-muted">Filters which existing rows can be accessed</small>
+                        </div>
+                    ` : ''}
+
+                    ${showCheck ? `
+                        <div class="form-group">
+                            <label class="form-label">CHECK Expression</label>
+                            <textarea class="form-input code-input" rows="3"
+                                placeholder="auth.uid() = user_id"
+                                oninput="App.updatePolicyField('check_expr', this.value)">${data.check_expr || ''}</textarea>
+                            <small class="text-muted">Validates new or modified data</small>
+                        </div>
+                    ` : ''}
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" ${data.enabled ? 'checked' : ''}
+                                onchange="App.updatePolicyField('enabled', this.checked)">
+                            Policy enabled
+                        </label>
+                    </div>
+                </div>
+
+                <div class="policy-preview">
+                    <label class="form-label">SQL Preview</label>
+                    <pre class="sql-preview">${this.generatePolicySQL()}</pre>
+                </div>
+
+                <div class="policy-test-section">
+                    <button class="btn btn-secondary btn-sm" onclick="App.togglePolicyTest()">
+                        ${data.showTest ? '▼ Hide Test' : '▶ Test Policy'}
+                    </button>
+                    ${data.showTest ? this.renderPolicyTestPanel() : ''}
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="App.savePolicy()">${isNew ? 'Create Policy' : 'Save Changes'}</button>
+            </div>
+        `;
+    },
+
+    renderPolicyTestPanel() {
+        const { testUserId, testResult } = this.state.modal.data;
+
+        return `
+            <div class="policy-test-panel">
+                <div class="form-group">
+                    <label class="form-label">Test as User</label>
+                    <select class="form-input" onchange="App.updatePolicyField('testUserId', this.value)">
+                        <option value="">Anonymous (no user)</option>
+                        ${this.state.users.list.map(u => `
+                            <option value="${u.id}" ${testUserId === u.id ? 'selected' : ''}>${u.email}</option>
+                        `).join('')}
+                    </select>
+                    <small class="text-muted">Select a user to test auth.uid(), auth.email(), etc.</small>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="App.loadUsersForTest().then(() => App.runPolicyTest())">Run Test</button>
+                ${testResult ? `
+                    <div class="test-result ${testResult.success ? 'test-success' : 'test-error'}">
+                        ${testResult.success
+                            ? `<span class="test-icon">✓</span> Policy would allow access to ${testResult.row_count} row${testResult.row_count !== 1 ? 's' : ''}`
+                            : `<span class="test-icon">✗</span> Error: ${testResult.error}`}
+                        <details>
+                            <summary>Show SQL</summary>
+                            <pre class="sql-preview">${testResult.executed_sql || 'N/A'}</pre>
+                        </details>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    async loadUsersForTest() {
+        if (this.state.users.list.length === 0) {
+            try {
+                const res = await fetch('/_/api/users?limit=100');
+                if (res.ok) {
+                    const data = await res.json();
+                    this.state.users.list = data.users || [];
+                }
+            } catch (e) {
+                // Ignore error, test will work with anonymous
+            }
+        }
     }
 };
 

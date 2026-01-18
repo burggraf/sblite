@@ -70,6 +70,11 @@ CREATE TABLE IF NOT EXISTS _rls_policies (
     created_at    TEXT DEFAULT (datetime('now')),
     UNIQUE(table_name, policy_name)
 );
+
+CREATE TABLE IF NOT EXISTS _rls_tables (
+    table_name    TEXT PRIMARY KEY,
+    enabled       INTEGER DEFAULT 0
+);
 `
 
 const emailSchema = `
