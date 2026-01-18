@@ -211,3 +211,42 @@ func TestAddProviderToUserDuplicate(t *testing.T) {
 		t.Errorf("expected exactly 1 email provider, found %d", emailCount)
 	}
 }
+
+func TestCreateAnonymousUser(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	service := NewService(database, "test-secret-key-min-32-characters")
+
+	userMeta := map[string]any{"theme": "dark"}
+	user, err := service.CreateAnonymousUser(userMeta)
+	if err != nil {
+		t.Fatalf("failed to create anonymous user: %v", err)
+	}
+
+	// Verify user properties
+	if user.ID == "" {
+		t.Error("expected user ID to be set")
+	}
+	if user.Email != "" {
+		t.Errorf("expected email to be empty, got %s", user.Email)
+	}
+	if !user.IsAnonymous {
+		t.Error("expected IsAnonymous to be true")
+	}
+	if user.Role != "authenticated" {
+		t.Errorf("expected role to be 'authenticated', got %s", user.Role)
+	}
+
+	// Check app_metadata
+	provider, ok := user.AppMetadata["provider"]
+	if !ok || provider != "anonymous" {
+		t.Errorf("expected app_metadata.provider to be 'anonymous', got %v", provider)
+	}
+
+	// Check user_metadata
+	theme, ok := user.UserMetadata["theme"]
+	if !ok || theme != "dark" {
+		t.Errorf("expected user_metadata.theme to be 'dark', got %v", theme)
+	}
+}

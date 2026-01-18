@@ -92,7 +92,7 @@ func (s *Service) CreateUserWithOptions(email, password string, userMetadata map
 func (s *Service) GetUserByID(id string) (*User, error) {
 	var user User
 	var createdAt, updatedAt string
-	var emailConfirmedAt, lastSignInAt sql.NullString
+	var email, emailConfirmedAt, lastSignInAt sql.NullString
 	var rawAppMetaData, rawUserMetaData string
 	var isAnonymous int
 
@@ -100,7 +100,7 @@ func (s *Service) GetUserByID(id string) (*User, error) {
 		SELECT id, email, encrypted_password, email_confirmed_at, last_sign_in_at,
 		       role, created_at, updated_at, raw_app_meta_data, raw_user_meta_data, is_anonymous
 		FROM auth_users WHERE id = ? AND deleted_at IS NULL
-	`, id).Scan(&user.ID, &user.Email, &user.EncryptedPassword, &emailConfirmedAt,
+	`, id).Scan(&user.ID, &email, &user.EncryptedPassword, &emailConfirmedAt,
 		&lastSignInAt, &user.Role, &createdAt, &updatedAt, &rawAppMetaData, &rawUserMetaData, &isAnonymous)
 
 	if err == sql.ErrNoRows {
@@ -110,6 +110,10 @@ func (s *Service) GetUserByID(id string) (*User, error) {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
+	// Handle nullable email (anonymous users have NULL email)
+	if email.Valid {
+		user.Email = email.String
+	}
 	user.IsAnonymous = isAnonymous == 1
 	user.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	user.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
@@ -416,6 +420,34 @@ func (s *Service) AddProviderToUser(userID, provider string) error {
 	}
 
 	return nil
+}
+
+// CreateAnonymousUser creates a new anonymous user (no email/password).
+func (s *Service) CreateAnonymousUser(userMetadata map[string]any) (*User, error) {
+	id := generateID()
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Marshal user metadata to JSON
+	userMetaJSON := "{}"
+	if userMetadata != nil {
+		metaBytes, err := json.Marshal(userMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal user metadata: %w", err)
+		}
+		userMetaJSON = string(metaBytes)
+	}
+
+	// Anonymous users have no email, no password, is_anonymous=1
+	_, err := s.db.Exec(`
+		INSERT INTO auth_users (id, email, encrypted_password, email_confirmed_at, is_anonymous, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+		VALUES (?, NULL, '', ?, 1, '{"provider":"anonymous","providers":["anonymous"]}', ?, ?, ?)
+	`, id, now, userMetaJSON, now, now)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create anonymous user: %w", err)
+	}
+
+	return s.GetUserByID(id)
 }
 
 // RemoveProviderFromUser removes a provider from the user's app_metadata.providers array.
