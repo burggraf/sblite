@@ -909,9 +909,13 @@ const App = {
                 break;
         }
 
+        // Use larger modal for policy editing
+        const isLargeModal = type === 'createPolicy' || type === 'editPolicy';
+        const modalClass = isLargeModal ? 'modal modal-large' : 'modal';
+
         return `
             <div class="modal-overlay" onclick="App.closeModal()">
-                <div class="modal" onclick="event.stopPropagation()">
+                <div class="${modalClass}" onclick="event.stopPropagation()">
                     ${content}
                 </div>
             </div>
@@ -2208,9 +2212,14 @@ const App = {
                     ${showUsing ? `
                         <div class="form-group">
                             <label class="form-label">USING Expression</label>
-                            <textarea class="form-input code-input" rows="3"
-                                placeholder="auth.uid() = user_id"
-                                oninput="App.updatePolicyField('using_expr', this.value)">${data.using_expr || ''}</textarea>
+                            <div class="policy-expr-editor">
+                                <pre class="policy-expr-highlight" id="using-highlight" aria-hidden="true">${this.highlightSql(data.using_expr || '')}</pre>
+                                <textarea class="policy-expr-input"
+                                    id="using-input"
+                                    spellcheck="false"
+                                    placeholder="auth.uid() = user_id"
+                                    oninput="App.updatePolicyField('using_expr', this.value); document.getElementById('using-highlight').innerHTML = App.highlightSql(this.value);">${this.escapeHtml(data.using_expr || '')}</textarea>
+                            </div>
                             <small class="text-muted">Filters which existing rows can be accessed</small>
                         </div>
                     ` : ''}
@@ -2218,9 +2227,14 @@ const App = {
                     ${showCheck ? `
                         <div class="form-group">
                             <label class="form-label">CHECK Expression</label>
-                            <textarea class="form-input code-input" rows="3"
-                                placeholder="auth.uid() = user_id"
-                                oninput="App.updatePolicyField('check_expr', this.value)">${data.check_expr || ''}</textarea>
+                            <div class="policy-expr-editor">
+                                <pre class="policy-expr-highlight" id="check-highlight" aria-hidden="true">${this.highlightSql(data.check_expr || '')}</pre>
+                                <textarea class="policy-expr-input"
+                                    id="check-input"
+                                    spellcheck="false"
+                                    placeholder="auth.uid() = user_id"
+                                    oninput="App.updatePolicyField('check_expr', this.value); document.getElementById('check-highlight').innerHTML = App.highlightSql(this.value);">${this.escapeHtml(data.check_expr || '')}</textarea>
+                            </div>
                             <small class="text-muted">Validates new or modified data</small>
                         </div>
                     ` : ''}
@@ -2236,7 +2250,7 @@ const App = {
 
                 <div class="policy-preview">
                     <label class="form-label">SQL Preview</label>
-                    <pre class="sql-preview">${this.generatePolicySQL()}</pre>
+                    <pre class="sql-preview">${this.highlightSql(this.generatePolicySQL())}</pre>
                 </div>
 
                 <div class="policy-test-section">
