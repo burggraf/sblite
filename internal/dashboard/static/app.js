@@ -114,6 +114,16 @@ const App = {
                 loading: false,
             },
         },
+        storage: {
+            buckets: [],
+            selectedBucket: null,
+            objects: [],
+            currentPath: '',
+            viewMode: 'grid',
+            selectedFiles: [],
+            uploading: [],
+            loading: false
+        },
     },
 
     async init() {
@@ -360,6 +370,8 @@ const App = {
             this.initSqlBrowser();
         } else if (view === 'functions') {
             this.loadFunctions();
+        } else if (view === 'storage') {
+            this.loadBuckets();
         } else {
             this.render();
         }
@@ -459,6 +471,12 @@ const App = {
                         </div>
 
                         <div class="nav-section">
+                            <div class="nav-section-title">Storage</div>
+                            <a class="nav-item ${this.state.currentView === 'storage' ? 'active' : ''}"
+                               onclick="App.navigate('storage')">Buckets</a>
+                        </div>
+
+                        <div class="nav-section">
                             <div class="nav-section-title">Security</div>
                             <a class="nav-item ${this.state.currentView === 'policies' ? 'active' : ''}"
                                onclick="App.navigate('policies')">Policies</a>
@@ -514,6 +532,8 @@ const App = {
                 return this.renderSqlBrowserView();
             case 'functions':
                 return this.renderFunctionsView();
+            case 'storage':
+                return this.renderStorageView();
             default:
                 return '<div class="card">Select a section from the sidebar</div>';
         }
@@ -5399,6 +5419,30 @@ const App = {
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="App.addSecret()">Add Secret</button>
+            </div>
+        `;
+    },
+
+    // Storage methods
+
+    async loadBuckets() {
+        this.state.storage.loading = true;
+        this.render();
+        // Will be implemented in Task 4
+        this.state.storage.loading = false;
+        this.render();
+    },
+
+    renderStorageView() {
+        return `
+            <div class="storage-layout">
+                <div class="storage-sidebar">
+                    <h3>Buckets</h3>
+                    <p class="text-muted">Storage UI loading...</p>
+                </div>
+                <div class="storage-main">
+                    <p>Select a bucket to browse files</p>
+                </div>
             </div>
         `;
     },
