@@ -27,6 +27,13 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if this is an anonymous signup (no email AND no password)
+	if req.Email == "" && req.Password == "" {
+		s.handleAnonymousSignup(w, r, req.Data)
+		return
+	}
+
+	// Regular signup - require both email and password
 	if req.Email == "" || req.Password == "" {
 		s.writeError(w, http.StatusBadRequest, "validation_failed", "Email and password are required")
 		return
@@ -103,6 +110,51 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleAnonymousSignup(w http.ResponseWriter, r *http.Request, userMetadata map[string]any) {
+	user, err := s.authService.CreateAnonymousUser(userMetadata)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to create anonymous user")
+		return
+	}
+
+	session, refreshToken, err := s.authService.CreateSession(user)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to create session")
+		return
+	}
+
+	accessToken, err := s.authService.GenerateAccessToken(user, session.ID)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to generate token")
+		return
+	}
+
+	s.authService.UpdateLastSignIn(user.ID)
+
+	// Build user response with null email
+	userResponse := map[string]any{
+		"id":            user.ID,
+		"email":         nil,
+		"role":          user.Role,
+		"is_anonymous":  true,
+		"created_at":    user.CreatedAt,
+		"updated_at":    user.UpdatedAt,
+		"app_metadata":  user.AppMetadata,
+		"user_metadata": user.UserMetadata,
+	}
+
+	response := TokenResponse{
+		AccessToken:  accessToken,
+		TokenType:    "bearer",
+		ExpiresIn:    3600,
+		RefreshToken: refreshToken,
+		User:         userResponse,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 

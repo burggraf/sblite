@@ -556,3 +556,68 @@ func TestSettingsShowsMailerAutoconfirm(t *testing.T) {
 		t.Errorf("expected mailer_autoconfirm to be false by default, got %v", resp["mailer_autoconfirm"])
 	}
 }
+
+func TestHandleSignupAnonymous(t *testing.T) {
+	// Setup test server
+	srv := setupTestServer(t)
+
+	// Empty body = anonymous signup
+	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString("{}"))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Verify response has tokens
+	if resp["access_token"] == nil {
+		t.Error("expected access_token in response")
+	}
+	if resp["refresh_token"] == nil {
+		t.Error("expected refresh_token in response")
+	}
+
+	// Verify user is anonymous
+	user, ok := resp["user"].(map[string]any)
+	if !ok {
+		t.Fatal("expected user in response")
+	}
+	if user["is_anonymous"] != true {
+		t.Errorf("expected is_anonymous to be true, got %v", user["is_anonymous"])
+	}
+	if user["email"] != nil {
+		t.Errorf("expected email to be null, got %v", user["email"])
+	}
+}
+
+func TestHandleSignupAnonymousWithMetadata(t *testing.T) {
+	srv := setupTestServer(t)
+
+	body := `{"data": {"theme": "dark"}}`
+	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+
+	user := resp["user"].(map[string]any)
+	userMeta := user["user_metadata"].(map[string]any)
+	if userMeta["theme"] != "dark" {
+		t.Errorf("expected theme to be 'dark', got %v", userMeta["theme"])
+	}
+}
