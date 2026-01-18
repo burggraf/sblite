@@ -1684,7 +1684,7 @@ const App = {
                 <div class="table-toolbar">
                     <h2>Users</h2>
                     <div class="toolbar-actions">
-                        <select class="form-select" style="width: auto;"
+                        <select class="form-input" style="width: auto;"
                                 onchange="App.setUserFilter(this.value)">
                             <option value="all" ${this.state.users.filter === 'all' ? 'selected' : ''}>All Users</option>
                             <option value="regular" ${this.state.users.filter === 'regular' ? 'selected' : ''}>Regular</option>
