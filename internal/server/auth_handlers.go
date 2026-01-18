@@ -114,6 +114,12 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAnonymousSignup(w http.ResponseWriter, r *http.Request, userMetadata map[string]any) {
+	// Check if anonymous sign-in is enabled
+	if !s.isAnonymousSigninEnabled() {
+		s.writeError(w, http.StatusForbidden, "anonymous_disabled", "Anonymous sign-in is disabled")
+		return
+	}
+
 	user, err := s.authService.CreateAnonymousUser(userMetadata)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to create anonymous user")
@@ -603,7 +609,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	settings := map[string]any{
 		"external": map[string]bool{
-			"anonymous": true, // Always enabled
+			"anonymous": s.isAnonymousSigninEnabled(),
 			"email":     true, // Always enabled
 			"phone":     false,
 			"google":    s.oauthRegistry != nil && s.oauthRegistry.IsEnabled("google"),

@@ -54,6 +54,9 @@ type Server struct {
 	functionsService *functions.Service
 	functionsHandler *functions.Handler
 	functionsEnabled bool
+
+	// Dashboard store for auth settings
+	dashboardStore *dashboard.Store
 }
 
 // ServerConfig holds server configuration.
@@ -112,6 +115,7 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 	// Initialize dashboard handler
 	s.dashboardHandler = dashboard.NewHandler(database.DB, cfg.MigrationsDir)
 	s.dashboardHandler.SetJWTSecret(cfg.JWTSecret)
+	s.dashboardStore = s.dashboardHandler.GetStore()
 
 	// Initialize storage service
 	var storageCfg storage.Config
@@ -393,4 +397,21 @@ func (s *Server) FunctionsService() *functions.Service {
 // FunctionsEnabled returns true if functions are enabled.
 func (s *Server) FunctionsEnabled() bool {
 	return s.functionsEnabled
+}
+
+// SetDashboardStore sets the dashboard store for auth settings.
+func (s *Server) SetDashboardStore(store *dashboard.Store) {
+	s.dashboardStore = store
+}
+
+// isAnonymousSigninEnabled checks if anonymous sign-in is enabled.
+func (s *Server) isAnonymousSigninEnabled() bool {
+	if s.dashboardStore == nil {
+		return true // Default enabled if no store
+	}
+	val, err := s.dashboardStore.Get("auth_allow_anonymous")
+	if err != nil {
+		return true // Default enabled on error
+	}
+	return val != "false"
 }

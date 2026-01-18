@@ -92,6 +92,11 @@ func (h *Handler) SetFunctionsService(svc *functions.Service) {
 	h.functionsService = svc
 }
 
+// GetStore returns the dashboard store for auth settings.
+func (h *Handler) GetStore() *Store {
+	return h.store
+}
+
 // RegisterRoutes registers the dashboard routes.
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	// API routes
