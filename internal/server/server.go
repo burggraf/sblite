@@ -116,7 +116,7 @@ func (s *Server) setupRoutes() {
 	s.router.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Requested-With", "apikey", "Prefer", "Range"},
+		AllowedHeaders:   []string{"*"},
 		ExposedHeaders:   []string{"Content-Range", "Range", "X-Total-Count"},
 		AllowCredentials: false,
 		MaxAge:           300,
