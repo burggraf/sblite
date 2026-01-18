@@ -4780,14 +4780,22 @@ const App = {
             const [functionsRes, statusRes] = responses;
 
             if (functionsRes.ok) {
-                this.state.functions.list = await functionsRes.json();
+                const data = await functionsRes.json();
+                // API returns { functions: [...], enabled: bool }
+                this.state.functions.list = data.functions || [];
+                // Also update status from this response if available
+                if (data.enabled !== undefined) {
+                    this.state.functions.status = this.state.functions.status || {};
+                    this.state.functions.status.enabled = data.enabled;
+                }
             } else if (functionsRes.status === 404) {
                 // Functions not enabled
                 this.state.functions.list = [];
             }
 
             if (statusRes.ok) {
-                this.state.functions.status = await statusRes.json();
+                const statusData = await statusRes.json();
+                this.state.functions.status = { ...this.state.functions.status, ...statusData };
             } else if (statusRes.status === 404) {
                 this.state.functions.status = { enabled: false };
             }
@@ -4811,7 +4819,9 @@ const App = {
         try {
             const res = await fetch('/_/api/secrets');
             if (res.ok) {
-                this.state.functions.secrets = await res.json();
+                const data = await res.json();
+                // API returns { secrets: [...], enabled: bool }
+                this.state.functions.secrets = data.secrets || [];
             } else {
                 this.state.functions.secrets = [];
             }
