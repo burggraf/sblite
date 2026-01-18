@@ -151,6 +151,35 @@ CREATE TABLE IF NOT EXISTS _dashboard (
 );
 `
 
+// OAuth: auth_identities table stores OAuth provider accounts linked to users
+const oauthIdentitiesSchema = `
+CREATE TABLE IF NOT EXISTS auth_identities (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+	provider TEXT NOT NULL,
+	provider_id TEXT NOT NULL,
+	identity_data TEXT,
+	last_sign_in_at TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE(provider, provider_id)
+);
+CREATE INDEX IF NOT EXISTS idx_identities_user ON auth_identities(user_id);
+CREATE INDEX IF NOT EXISTS idx_identities_provider ON auth_identities(provider, provider_id);
+`
+
+// OAuth: auth_flow_state table stores PKCE state during OAuth flow (temporary, 10-minute expiry)
+const oauthFlowStateSchema = `
+CREATE TABLE IF NOT EXISTS auth_flow_state (
+	id TEXT PRIMARY KEY,
+	provider TEXT NOT NULL,
+	code_verifier TEXT NOT NULL,
+	redirect_to TEXT,
+	created_at TEXT NOT NULL,
+	expires_at TEXT NOT NULL
+);
+`
+
 const defaultTemplates = `
 INSERT OR IGNORE INTO auth_email_templates (id, type, subject, body_html, body_text, updated_at) VALUES
 ('tpl-confirmation', 'confirmation', 'Confirm your email',
@@ -238,6 +267,16 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(dashboardSchema)
 	if err != nil {
 		return fmt.Errorf("failed to run dashboard schema migration: %w", err)
+	}
+
+	_, err = db.Exec(oauthIdentitiesSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run OAuth identities schema migration: %w", err)
+	}
+
+	_, err = db.Exec(oauthFlowStateSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run OAuth flow state schema migration: %w", err)
 	}
 
 	return nil
