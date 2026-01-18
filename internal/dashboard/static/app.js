@@ -47,8 +47,12 @@ const App = {
             auth: null,
             templates: [],
             loading: false,
-            expandedSections: { server: true, auth: false, templates: false, export: false },
+            expandedSections: { server: true, auth: false, oauth: false, templates: false, export: false },
             editingTemplate: null,
+            oauth: {
+                providers: {},
+                redirectUrls: [],
+            },
         },
         logs: {
             config: null,
@@ -2301,10 +2305,12 @@ const App = {
         this.render();
 
         try {
-            const [serverRes, authRes, templatesRes] = await Promise.all([
+            const [serverRes, authRes, templatesRes, oauthRes, redirectUrlsRes] = await Promise.all([
                 fetch('/_/api/settings/server'),
                 fetch('/_/api/settings/auth'),
-                fetch('/_/api/settings/templates')
+                fetch('/_/api/settings/templates'),
+                fetch('/_/api/settings/oauth'),
+                fetch('/_/api/settings/oauth/redirect-urls')
             ]);
 
             if (serverRes.ok) {
@@ -2315,6 +2321,13 @@ const App = {
             }
             if (templatesRes.ok) {
                 this.state.settings.templates = await templatesRes.json();
+            }
+            if (oauthRes.ok) {
+                this.state.settings.oauth.providers = await oauthRes.json();
+            }
+            if (redirectUrlsRes.ok) {
+                const data = await redirectUrlsRes.json();
+                this.state.settings.oauth.redirectUrls = data.urls || [];
             }
         } catch (e) {
             this.state.error = 'Failed to load settings';
@@ -2485,7 +2498,7 @@ const App = {
     },
 
     renderSettingsView() {
-        const { server, auth, templates, loading, expandedSections, editingTemplate } = this.state.settings;
+        const { server, auth, templates, loading, expandedSections, editingTemplate, oauth } = this.state.settings;
 
         if (loading) {
             return '<div class="loading">Loading settings...</div>';
@@ -2496,6 +2509,7 @@ const App = {
             <div class="settings-view">
                 ${this.renderServerInfoSection(server, expandedSections.server)}
                 ${this.renderAuthSection(auth, expandedSections.auth)}
+                ${this.renderOAuthSection(oauth, expandedSections.oauth)}
                 ${this.renderTemplatesSection(templates, expandedSections.templates, editingTemplate)}
                 ${this.renderExportSection(expandedSections.export)}
             </div>
@@ -2594,6 +2608,212 @@ const App = {
                 ` : ''}
             </div>
         `;
+    },
+
+    renderOAuthSection(oauth, expanded) {
+        const providers = oauth?.providers || {};
+        const redirectUrls = oauth?.redirectUrls || [];
+
+        return `
+            <div class="settings-section">
+                <div class="section-header" onclick="App.toggleSettingsSection('oauth')">
+                    <span class="section-toggle">${expanded ? '▼' : '▶'}</span>
+                    <h3>OAuth Providers</h3>
+                </div>
+                ${expanded ? `
+                    <div class="section-content">
+                        <div class="oauth-providers">
+                            ${this.renderOAuthProvider('google', 'Google', providers.google)}
+                            ${this.renderOAuthProvider('github', 'GitHub', providers.github)}
+                        </div>
+
+                        <div class="oauth-redirect-urls">
+                            <h4>Allowed Redirect URLs</h4>
+                            <p class="text-muted oauth-redirect-help">
+                                ${redirectUrls.length === 0
+                                    ? 'No redirect URLs configured. All URLs are allowed in development mode.'
+                                    : 'Only these URLs will be allowed as OAuth callback destinations.'}
+                            </p>
+                            <div class="redirect-urls-list">
+                                ${redirectUrls.map(url => `
+                                    <div class="redirect-url-item">
+                                        <span class="redirect-url-value">${this.escapeHtml(url)}</span>
+                                        <button class="btn btn-secondary btn-sm" onclick="App.removeRedirectUrl('${this.escapeHtml(url)}')">
+                                            Remove
+                                        </button>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            <div class="add-redirect-url-form">
+                                <input type="url" id="new-redirect-url" class="form-input"
+                                       placeholder="https://example.com/auth/callback">
+                                <button class="btn btn-primary btn-sm" onclick="App.addRedirectUrl()">
+                                    Add URL
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    renderOAuthProvider(providerId, providerName, config) {
+        const enabled = config?.enabled || false;
+        const clientId = config?.client_id || '';
+        const hasSecret = config?.client_secret_set || false;
+
+        return `
+            <div class="oauth-provider-card ${enabled ? 'enabled' : ''}">
+                <div class="oauth-provider-header">
+                    <h4>${providerName}</h4>
+                    <label class="oauth-toggle">
+                        <input type="checkbox"
+                               ${enabled ? 'checked' : ''}
+                               onchange="App.toggleOAuthProvider('${providerId}', this.checked)">
+                        <span>${enabled ? 'Enabled' : 'Disabled'}</span>
+                    </label>
+                </div>
+                <div class="oauth-provider-fields">
+                    <div class="form-group">
+                        <label class="form-label">Client ID</label>
+                        <input type="text" class="form-input"
+                               value="${this.escapeHtml(clientId)}"
+                               placeholder="Enter client ID"
+                               onchange="App.updateOAuthProviderField('${providerId}', 'client_id', this.value)">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Client Secret</label>
+                        <input type="password" class="form-input"
+                               placeholder="${hasSecret ? '••••••••••••••••' : 'Enter client secret'}"
+                               onchange="App.updateOAuthProviderField('${providerId}', 'client_secret', this.value)">
+                        ${hasSecret ? '<small class="text-muted">Secret is set. Enter a new value to change it.</small>' : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    async toggleOAuthProvider(provider, enabled) {
+        try {
+            const res = await fetch('/_/api/settings/oauth', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [provider]: { enabled } })
+            });
+
+            if (res.ok) {
+                // Update local state
+                if (!this.state.settings.oauth.providers[provider]) {
+                    this.state.settings.oauth.providers[provider] = {};
+                }
+                this.state.settings.oauth.providers[provider].enabled = enabled;
+                this.render();
+            } else {
+                const data = await res.json();
+                this.state.error = data.error || 'Failed to update provider';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to update provider';
+            this.render();
+        }
+    },
+
+    async updateOAuthProviderField(provider, field, value) {
+        if (!value.trim()) return;
+
+        try {
+            const res = await fetch('/_/api/settings/oauth', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [provider]: { [field]: value } })
+            });
+
+            if (res.ok) {
+                // Update local state
+                if (!this.state.settings.oauth.providers[provider]) {
+                    this.state.settings.oauth.providers[provider] = {};
+                }
+                if (field === 'client_id') {
+                    this.state.settings.oauth.providers[provider].client_id = value;
+                } else if (field === 'client_secret') {
+                    this.state.settings.oauth.providers[provider].client_secret_set = true;
+                }
+                this.render();
+            } else {
+                const data = await res.json();
+                this.state.error = data.error || 'Failed to update provider';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to update provider';
+            this.render();
+        }
+    },
+
+    async addRedirectUrl() {
+        const input = document.getElementById('new-redirect-url');
+        const url = input.value.trim();
+
+        if (!url) {
+            this.state.error = 'Please enter a URL';
+            this.render();
+            return;
+        }
+
+        try {
+            new URL(url); // Validate URL format
+        } catch (e) {
+            this.state.error = 'Please enter a valid URL';
+            this.render();
+            return;
+        }
+
+        try {
+            const res = await fetch('/_/api/settings/oauth/redirect-urls', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+
+            if (res.ok) {
+                this.state.settings.oauth.redirectUrls.push(url);
+                input.value = '';
+                this.state.error = null;
+                this.render();
+            } else {
+                const data = await res.json();
+                this.state.error = data.error || 'Failed to add redirect URL';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to add redirect URL';
+            this.render();
+        }
+    },
+
+    async removeRedirectUrl(url) {
+        try {
+            const res = await fetch('/_/api/settings/oauth/redirect-urls', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+
+            if (res.ok) {
+                this.state.settings.oauth.redirectUrls = this.state.settings.oauth.redirectUrls.filter(u => u !== url);
+                this.state.error = null;
+                this.render();
+            } else {
+                const data = await res.json();
+                this.state.error = data.error || 'Failed to remove redirect URL';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to remove redirect URL';
+            this.render();
+        }
     },
 
     renderTemplatesSection(templates, expanded, editingTemplate) {
