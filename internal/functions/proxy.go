@@ -22,6 +22,24 @@ func NewFunctionsProxy(runtimePort int) *FunctionsProxy {
 	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", runtimePort))
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+
+	// Customize director to strip /functions/v1 prefix
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		// Strip /functions/v1 prefix from path
+		// /functions/v1/test-function -> /test-function
+		// /functions/v1/test-function/foo -> /test-function/foo
+		path := req.URL.Path
+		if strings.HasPrefix(path, "/functions/v1/") {
+			req.URL.Path = "/" + strings.TrimPrefix(path, "/functions/v1/")
+			req.URL.RawPath = "" // Clear RawPath to force recalculation
+		} else if strings.HasPrefix(path, "/functions/v1") {
+			req.URL.Path = "/"
+			req.URL.RawPath = ""
+		}
+	}
+
 	proxy.ModifyResponse = modifyProxyResponse
 	proxy.ErrorHandler = handleProxyError
 

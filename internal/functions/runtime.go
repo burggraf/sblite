@@ -81,11 +81,17 @@ func (rm *RuntimeManager) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to resolve functions directory: %w", err)
 	}
 
+	// Ensure main service exists (the router that dispatches to user functions)
+	mainServiceDir, err := ensureMainService(functionsDir)
+	if err != nil {
+		return fmt.Errorf("failed to create main service: %w", err)
+	}
+
 	// Build command arguments
 	// Edge runtime expects: edge-runtime start --main-service <path> --port <port>
 	args := []string{
 		"start",
-		"--main-service", functionsDir,
+		"--main-service", mainServiceDir,
 		"--port", fmt.Sprintf("%d", rm.config.Port),
 	}
 
@@ -255,10 +261,14 @@ func (rm *RuntimeManager) buildEnv() []string {
 		sbliteURL = "http://127.0.0.1:8080"
 	}
 
+	// Resolve functions directory path for the main service
+	functionsDir, _ := filepath.Abs(rm.config.FunctionsDir)
+
 	env = append(env,
 		fmt.Sprintf("SUPABASE_URL=%s", sbliteURL),
 		fmt.Sprintf("SUPABASE_ANON_KEY=%s", rm.config.AnonKey),
 		fmt.Sprintf("SUPABASE_SERVICE_ROLE_KEY=%s", rm.config.ServiceKey),
+		fmt.Sprintf("SBLITE_FUNCTIONS_PATH=%s", functionsDir),
 	)
 
 	// Add DB path if available (for reference, not direct access)
