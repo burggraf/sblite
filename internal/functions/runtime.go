@@ -224,6 +224,11 @@ func (rm *RuntimeManager) ensureBinary() (string, error) {
 		return path, nil
 	}
 
+	// Check if platform supports automatic download
+	if !IsSupported() {
+		return "", UnsupportedPlatformError()
+	}
+
 	// Try to download
 	downloader := NewDownloader(DefaultDownloadDir())
 	path, err := downloader.EnsureBinary()

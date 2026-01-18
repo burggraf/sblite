@@ -406,15 +406,27 @@ func verifyChecksum(path, expected string) error {
 }
 
 // IsSupported returns true if the current platform is supported.
+// Note: Edge runtime only provides Linux binaries via GHCR.
+// macOS users need to either:
+// 1. Use Docker: docker run -p 9000:9000 ghcr.io/supabase/edge-runtime:v1.67.4
+// 2. Build from source: https://github.com/supabase/edge-runtime
 func IsSupported() bool {
-	switch runtime.GOOS {
-	case "darwin", "linux":
+	// Only Linux is supported (edge-runtime doesn't publish macOS binaries)
+	if runtime.GOOS == "linux" {
 		switch runtime.GOARCH {
 		case "amd64", "arm64":
 			return true
 		}
 	}
 	return false
+}
+
+// UnsupportedPlatformError returns a helpful error message for unsupported platforms.
+func UnsupportedPlatformError() error {
+	if runtime.GOOS == "darwin" {
+		return fmt.Errorf("edge functions not available on macOS (edge-runtime only provides Linux binaries).\n\nOptions:\n1. Use Docker: docker run -d -p 9000:9000 -v ./functions:/functions ghcr.io/supabase/edge-runtime:v1.67.4 start --main-service /functions\n2. Build from source: https://github.com/supabase/edge-runtime\n3. Deploy to a Linux server for production use")
+	}
+	return fmt.Errorf("edge functions not supported on %s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
 // PlatformString returns a human-readable platform string.
