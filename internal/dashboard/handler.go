@@ -225,6 +225,16 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Delete("/{name}", h.handleDeleteFunction)
 			r.Get("/{name}/config", h.handleGetFunctionConfig)
 			r.Patch("/{name}/config", h.handleUpdateFunctionConfig)
+
+			// File operations (rename must come before wildcard routes)
+			r.Get("/{name}/files", h.handleListFunctionFiles)
+			r.Post("/{name}/files/rename", h.handleRenameFunctionFile)
+			r.Get("/{name}/files/*", h.handleReadFunctionFile)
+			r.Put("/{name}/files/*", h.handleWriteFunctionFile)
+			r.Delete("/{name}/files/*", h.handleDeleteFunctionFile)
+
+			// Runtime operations
+			r.Post("/{name}/restart", h.handleRestartFunctions)
 		})
 
 		// Secrets management routes (require auth)
