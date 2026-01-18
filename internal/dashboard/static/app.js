@@ -5183,6 +5183,172 @@ const App = {
         this.render();
     },
 
+    // =====================
+    // Editor State Methods
+    // =====================
+
+    async loadFunctionFiles(name) {
+        this.state.functions.editor.loading = true;
+        this.render();
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files`);
+            if (res.ok) {
+                const tree = await res.json();
+                this.state.functions.editor.tree = tree;
+
+                // Auto-open index.ts if exists
+                const indexFile = this.findFileInTree(tree, 'index.ts');
+                if (indexFile) {
+                    await this.openFunctionFile('index.ts');
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load function files:', err);
+        }
+
+        this.state.functions.editor.loading = false;
+        this.render();
+    },
+
+    findFileInTree(node, filename) {
+        if (node.type === 'file' && node.name === filename) return node;
+        if (node.children) {
+            for (const child of node.children) {
+                const found = this.findFileInTree(child, filename);
+                if (found) return found;
+            }
+        }
+        return null;
+    },
+
+    async openFunctionFile(path) {
+        const name = this.state.functions.selected;
+        if (!name) return;
+
+        // Check for unsaved changes
+        if (this.state.functions.editor.isDirty) {
+            if (!confirm('You have unsaved changes. Discard them?')) return;
+        }
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files/${path}`);
+            if (res.ok) {
+                const data = await res.json();
+                this.state.functions.editor.currentFile = path;
+                this.state.functions.editor.content = data.content;
+                this.state.functions.editor.originalContent = data.content;
+                this.state.functions.editor.isDirty = false;
+
+                // Update Monaco editor if it exists
+                if (this.state.functions.editor.monacoEditor) {
+                    this.state.functions.editor.monacoEditor.setValue(data.content);
+                    this.setMonacoLanguage(path);
+                }
+
+                this.render();
+            }
+        } catch (err) {
+            console.error('Failed to open file:', err);
+        }
+    },
+
+    async saveFunctionFile() {
+        const { selected } = this.state.functions;
+        const { currentFile, monacoEditor } = this.state.functions.editor;
+        if (!selected || !currentFile) return;
+
+        const content = monacoEditor ? monacoEditor.getValue() : this.state.functions.editor.content;
+
+        try {
+            const res = await fetch(`/_/api/functions/${selected}/files/${currentFile}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content })
+            });
+
+            if (res.ok) {
+                this.state.functions.editor.originalContent = content;
+                this.state.functions.editor.content = content;
+                this.state.functions.editor.isDirty = false;
+                this.render();
+
+                // Ask about restart
+                if (confirm('File saved. Restart edge runtime to apply changes?')) {
+                    await this.restartFunctionsRuntime();
+                }
+            }
+        } catch (err) {
+            console.error('Failed to save file:', err);
+            alert('Failed to save file');
+        }
+    },
+
+    async restartFunctionsRuntime() {
+        const { selected } = this.state.functions;
+        try {
+            const res = await fetch(`/_/api/functions/${selected}/restart`, { method: 'POST' });
+            if (res.ok) {
+                await this.loadFunctionsStatus();
+                this.render();
+            } else {
+                alert('Failed to restart runtime');
+            }
+        } catch (err) {
+            console.error('Failed to restart runtime:', err);
+        }
+    },
+
+    async loadFunctionsStatus() {
+        try {
+            const res = await fetch('/_/api/functions/status');
+            if (res.ok) {
+                const statusData = await res.json();
+                this.state.functions.status = { ...this.state.functions.status, ...statusData };
+            }
+        } catch (err) {
+            console.error('Failed to load functions status:', err);
+        }
+    },
+
+    setMonacoLanguage(path) {
+        const editor = this.state.functions.editor.monacoEditor;
+        if (!editor) return;
+
+        const ext = path.split('.').pop();
+        const languageMap = {
+            'ts': 'typescript',
+            'tsx': 'typescript',
+            'js': 'javascript',
+            'jsx': 'javascript',
+            'mjs': 'javascript',
+            'json': 'json',
+            'html': 'html',
+            'css': 'css',
+            'md': 'markdown',
+            'txt': 'plaintext'
+        };
+
+        const language = languageMap[ext] || 'plaintext';
+        monaco.editor.setModelLanguage(editor.getModel(), language);
+    },
+
+    toggleEditorExpand() {
+        this.state.functions.editor.isExpanded = !this.state.functions.editor.isExpanded;
+        this.render();
+
+        // Resize Monaco editor
+        if (this.state.functions.editor.monacoEditor) {
+            setTimeout(() => this.state.functions.editor.monacoEditor.layout(), 100);
+        }
+    },
+
+    toggleFolder(path) {
+        const expanded = this.state.functions.editor.expandedFolders;
+        expanded[path] = !expanded[path];
+        this.render();
+    },
+
     // Functions view rendering
     renderFunctionsView() {
         const { loading, status, list, selected, config, secrets, secretsLoading } = this.state.functions;
