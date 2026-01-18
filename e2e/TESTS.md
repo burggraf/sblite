@@ -42,8 +42,13 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Edge Functions | 17 | 14 | 0 | 3 |
 | Edge Functions - Config | 8 | 8 | 0 | 0 |
 | Edge Functions - Dashboard | 9 | 6 | 0 | 3 |
+| Storage - Buckets | 13 | 13 | 0 | 0 |
+| Storage - Objects | 19 | 19 | 0 | 0 |
+| Storage - Public Access | 6 | 6 | 0 | 0 |
+| Storage - RLS | 11 | 11 | 0 | 0 |
+| Storage - Signed URLs | 12 | 12 | 0 | 0 |
 | Dashboard - Storage | 16 | 16 | 0 | 0 |
-| **TOTAL** | **391** | **323** | **0** | **67** |
+| **TOTAL** | **452** | **384** | **0** | **67** |
 
 *Last tested: 2026-01-18*
 
@@ -826,6 +831,147 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 ---
 
+## Storage API Tests
+
+### `tests/storage/buckets.test.ts`
+
+**1. Create bucket**
+- ✅ should create a new bucket
+- ✅ should create a public bucket
+- ✅ should create a bucket with file size limit
+- ✅ should create a bucket with allowed MIME types
+- ✅ should fail to create duplicate bucket
+
+**2. Get bucket**
+- ✅ should retrieve a bucket by id
+- ✅ should return error for non-existent bucket
+
+**3. List buckets**
+- ✅ should list all buckets
+
+**4. Update bucket**
+- ✅ should update bucket to public
+- ✅ should update bucket file size limit
+
+**5. Delete bucket**
+- ✅ should delete an empty bucket
+- ✅ should fail to delete non-empty bucket
+
+**6. Empty bucket**
+- ✅ should empty a bucket with files
+
+---
+
+### `tests/storage/objects.test.ts`
+
+**1. Upload file**
+- ✅ should upload a file
+- ✅ should upload a file to a folder
+- ✅ should fail to upload duplicate without upsert
+- ✅ should upsert a file
+- ✅ should upload with custom content type
+
+**2. Download file**
+- ✅ should download a file
+- ✅ should return error for non-existent file
+
+**3. List files**
+- ✅ should list all files in bucket root
+- ✅ should list files in a folder
+- ✅ should list with limit
+- ✅ should list with search
+- ✅ should list with sorting
+
+**4. Remove files**
+- ✅ should remove a single file
+- ✅ should remove multiple files
+
+**5. Move file**
+- ✅ should move a file to a new location
+- ✅ should move a file to a folder
+
+**6. Copy file**
+- ✅ should copy a file
+
+**7. Get public URL**
+- ✅ should get public URL for a file
+- ✅ should include download query param
+
+---
+
+### `tests/storage/public-access.test.ts`
+
+**1. Public bucket access**
+- ✅ should access file in public bucket via public URL
+- ✅ should return correct content-type for public files
+
+**2. Private bucket access**
+- ✅ should fail to access file in private bucket via public URL
+
+**3. Download parameter**
+- ✅ should set Content-Disposition header when download param is set
+
+**4. Image files**
+- ✅ should serve image files with correct content type
+
+**5. Non-existent files**
+- ✅ should return 404 for non-existent file in public bucket
+
+---
+
+### `tests/storage/rls.test.ts`
+
+**1. Default RLS State**
+- ✅ RLS should be enabled by default on storage_objects
+
+**2. Service Role Bypass**
+- ✅ service_role should be able to upload files regardless of RLS
+- ✅ service_role should be able to download files regardless of RLS
+- ✅ service_role should be able to delete files regardless of RLS
+
+**3. Authenticated User Access without Policies**
+- ✅ authenticated user should be denied upload without INSERT policy
+- ✅ authenticated user should be denied download without SELECT policy
+
+**4. Owner-based Access with Policies**
+- ✅ user should be able to upload their own files
+- ✅ user should be able to download their own files
+- ✅ user should NOT be able to download another user's files
+- ✅ user should be able to delete their own files
+- ✅ user should NOT be able to delete another user's files
+
+---
+
+### `tests/storage/signed-urls.test.ts`
+
+**1. createSignedUrl**
+- ✅ should create a signed URL for an existing file
+- ✅ should be able to download file using signed URL
+- ✅ should reject invalid token
+- ✅ should reject token for wrong path
+
+**2. createSignedUrls (batch)**
+- ✅ should create multiple signed URLs
+
+**3. createSignedUploadUrl**
+- ✅ should create a signed upload URL
+- ✅ should be able to upload using signed URL
+- ✅ should reject upload with invalid token
+- ✅ should reject upload to wrong path
+
+**4. Token expiration**
+- ✅ should reject expired download token
+
+**5. Download with options**
+- ✅ should support download query parameter
+
+**6. Service role access**
+- ✅ service role should be able to create signed URLs for any file
+
+---
+
+## Dashboard Tests
+
 ### `tests/dashboard/storage.test.ts`
 
 **Storage Navigation**
@@ -911,4 +1057,9 @@ Each test maps to examples from the Supabase JavaScript documentation:
 | functions.test.ts | https://supabase.com/docs/reference/javascript/functions-invoke |
 | functions-config.test.ts | (sblite-specific per-function configuration) |
 | functions-dashboard.test.ts | (sblite-specific dashboard API for functions) |
+| buckets.test.ts | https://supabase.com/docs/reference/javascript/storage-createbucket |
+| objects.test.ts | https://supabase.com/docs/reference/javascript/storage-from-upload |
+| public-access.test.ts | https://supabase.com/docs/reference/javascript/storage-from-getpublicurl |
+| rls.test.ts | https://supabase.com/docs/guides/storage/security/access-control |
+| signed-urls.test.ts | https://supabase.com/docs/reference/javascript/storage-from-createsignedurl |
 | storage.test.ts | (sblite-specific dashboard API for storage) |
