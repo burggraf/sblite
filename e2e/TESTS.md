@@ -31,6 +31,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Auth - State Change | 11 | 6 | 0 | 5 |
 | Auth - Password Reset | 6 | 3 | 0 | 3 |
 | Auth - Anonymous | 22 | 22 | 0 | 0 |
+| Dashboard - Anonymous Settings | 19 | 19 | 0 | 0 |
 | Email - Mail API | 13 | 13 | 0 | 0 |
 | Email - Flows | 11 | 8 | 0 | 3 |
 | Email - Verification | 11 | 9 | 0 | 2 |
@@ -41,7 +42,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Edge Functions | 17 | 14 | 0 | 3 |
 | Edge Functions - Config | 8 | 8 | 0 | 0 |
 | Edge Functions - Dashboard | 9 | 6 | 0 | 3 |
-| **TOTAL** | **356** | **288** | **0** | **67** |
+| **TOTAL** | **375** | **307** | **0** | **67** |
 
 *Last tested: 2026-01-18*
 
@@ -577,6 +578,43 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should create unique anonymous user each time
 - ✅ should handle multiple anonymous sessions
 - ✅ should reject conversion without password
+
+---
+
+### `tests/dashboard/anonymous-settings.test.ts`
+
+**Auth Config Endpoint**
+- ✅ GET /settings/auth-config returns allow_anonymous field
+- ✅ GET /settings/auth-config returns anonymous_user_count
+
+**Toggle Anonymous Sign-in**
+- ✅ toggle anonymous sign-in setting off
+- ✅ toggle anonymous sign-in setting on
+
+**Public Settings Endpoint**
+- ✅ shows external.anonymous=true when enabled
+- ✅ shows external.anonymous=false when disabled
+
+**Anonymous Sign-in Enforcement**
+- ✅ returns 403 error when anonymous sign-in is disabled
+- ✅ returns error message mentioning anonymous is disabled
+- ✅ creates anonymous user when enabled
+- ✅ increments anonymous user count after signup
+
+**User Filter Endpoint**
+- ✅ filter users list by anonymous
+- ✅ filter users list by regular
+- ✅ returns all users when no filter specified
+- ✅ returns all users when filter=all
+- ✅ includes is_anonymous field in user objects
+
+**Anonymous User Deletion**
+- ✅ delete anonymous user via dashboard API
+- ✅ decrements anonymous user count after deletion
+
+**Immediate Effect**
+- ✅ allows creating anonymous user immediately after enabling
+- ✅ blocks anonymous user immediately after disabling
 
 ---
 

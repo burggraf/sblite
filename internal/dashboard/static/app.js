@@ -38,6 +38,7 @@ const App = {
             pageSize: 25,
             totalUsers: 0,
             loading: false,
+            filter: 'all',  // 'all', 'regular', 'anonymous'
         },
         policies: {
             tables: [],           // Tables with RLS info
@@ -1686,9 +1687,9 @@ const App = {
         this.render();
 
         try {
-            const { page, pageSize } = this.state.users;
+            const { page, pageSize, filter } = this.state.users;
             const offset = (page - 1) * pageSize;
-            const res = await fetch(`/_/api/users?limit=${pageSize}&offset=${offset}`);
+            const res = await fetch(`/_/api/users?limit=${pageSize}&offset=${offset}&filter=${filter || 'all'}`);
             if (res.ok) {
                 const data = await res.json();
                 this.state.users.list = data.users;
@@ -1716,6 +1717,12 @@ const App = {
                 <div class="table-toolbar">
                     <h2>Users</h2>
                     <div class="toolbar-actions">
+                        <select class="form-input" style="width: auto;"
+                                onchange="App.setUserFilter(this.value)">
+                            <option value="all" ${this.state.users.filter === 'all' ? 'selected' : ''}>All Users</option>
+                            <option value="regular" ${this.state.users.filter === 'regular' ? 'selected' : ''}>Regular</option>
+                            <option value="anonymous" ${this.state.users.filter === 'anonymous' ? 'selected' : ''}>Anonymous</option>
+                        </select>
                         <button class="btn btn-primary btn-sm" onclick="App.showCreateUserModal()">+ Create User</button>
                         <button class="btn btn-secondary btn-sm" onclick="App.showInviteUserModal()">Invite User</button>
                         <span class="text-muted">${totalUsers} user${totalUsers !== 1 ? 's' : ''}</span>
@@ -1753,13 +1760,18 @@ const App = {
 
         return `
             <tr>
-                <td>${user.email}</td>
+                <td>
+                    ${user.is_anonymous ? `
+                        <span class="text-muted">(anonymous)</span>
+                        <span class="badge badge-muted">Anon</span>
+                    ` : this.escapeHtml(user.email || '')}
+                </td>
                 <td>${createdAt}</td>
                 <td>${lastSignIn}</td>
                 <td class="${user.email_confirmed_at ? 'text-success' : 'text-muted'}">${confirmed}</td>
                 <td class="actions-col">
                     <button class="btn-icon" onclick="App.showUserModal('${user.id}')">View</button>
-                    <button class="btn-icon" onclick="App.confirmDeleteUser('${user.id}', '${user.email}')">Delete</button>
+                    <button class="btn-icon" onclick="App.confirmDeleteUser('${user.id}', '${user.email || ''}')">Delete</button>
                 </td>
             </tr>
         `;
@@ -1799,6 +1811,12 @@ const App = {
         this.loadUsers();
     },
 
+    setUserFilter(filter) {
+        this.state.users.filter = filter;
+        this.state.users.page = 1;
+        this.loadUsers();
+    },
+
     prevUsersPage() {
         if (this.state.users.page > 1) {
             this.state.users.page--;
@@ -1829,7 +1847,30 @@ const App = {
     },
 
     async confirmDeleteUser(userId, email) {
-        if (!confirm(`Delete user "${email}"? This will also delete their sessions and cannot be undone.`)) return;
+        // Find the user in the list to check if they're anonymous
+        const user = this.state.users.list.find(u => u.id === userId);
+
+        let confirmMessage;
+        if (user && user.is_anonymous) {
+            // Enhanced dialog for anonymous users
+            const truncatedId = userId.length > 20 ? userId.substring(0, 20) + '...' : userId;
+            const createdDate = user.created_at ? new Date(user.created_at).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            }) : 'Unknown';
+
+            confirmMessage = `Delete Anonymous User?\n\n` +
+                `This will permanently delete this anonymous user and all associated data.\n\n` +
+                `User ID: ${truncatedId}\n` +
+                `Created: ${createdDate}\n\n` +
+                `This action cannot be undone.`;
+        } else {
+            // Regular user confirmation
+            confirmMessage = `Delete user "${email}"? This will also delete their sessions and cannot be undone.`;
+        }
+
+        if (!confirm(confirmMessage)) return;
 
         try {
             const res = await fetch(`/_/api/users/${userId}`, { method: 'DELETE' });
@@ -3062,6 +3103,19 @@ const App = {
                                 When enabled, users must verify their email address before signing in.
                             </p>
                         </div>
+                        <div class="setting-group">
+                            <label class="setting-toggle">
+                                <input type="checkbox"
+                                       ${authConfig.allow_anonymous ? 'checked' : ''}
+                                       onchange="App.toggleAnonymousSignin(this.checked)">
+                                <span>Allow anonymous sign-in</span>
+                            </label>
+                            <p class="text-muted" style="margin-top: 4px; margin-left: 24px;">
+                                When enabled, users can sign in without email or password.
+                                ${authConfig.anonymous_user_count !== undefined ?
+                                  `<br>Anonymous users: <strong>${authConfig.anonymous_user_count}</strong>` : ''}
+                            </p>
+                        </div>
                         <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border-color);">
                         <div class="info-grid">
                             <div class="info-item">
@@ -3201,6 +3255,30 @@ const App = {
             }
         } catch (e) {
             this.state.error = 'Failed to update setting';
+            this.render();
+        }
+    },
+
+    async toggleAnonymousSignin(enabled) {
+        try {
+            const res = await fetch('/_/api/settings/auth-config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ allow_anonymous: enabled })
+            });
+
+            if (!res.ok) throw new Error('Failed to update setting');
+
+            this.showToast(
+                enabled ? 'Anonymous sign-in enabled' : 'Anonymous sign-in disabled',
+                'success'
+            );
+
+            // Reload settings to refresh count
+            await this.loadSettings();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+            // Revert checkbox on error
             this.render();
         }
     },
