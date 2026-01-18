@@ -5647,7 +5647,10 @@ const App = {
                         <button class="btn btn-sm ${viewMode === 'grid' ? 'active' : ''}" onclick="App.setStorageViewMode('grid')" title="Grid view">&#8862;</button>
                         <button class="btn btn-sm ${viewMode === 'list' ? 'active' : ''}" onclick="App.setStorageViewMode('list')" title="List view">&#9776;</button>
                     </div>
-                    ${selectedFiles.length > 0 ? `<button class="btn btn-sm btn-danger" onclick="App.deleteSelectedFiles()">Delete (${selectedFiles.length})</button>` : ''}
+                    ${selectedFiles.length > 0 ? `
+                        <button class="btn btn-sm" onclick="App.downloadSelectedFiles()">Download (${selectedFiles.length})</button>
+                        <button class="btn btn-sm btn-danger" onclick="App.deleteSelectedFiles()">Delete (${selectedFiles.length})</button>
+                    ` : ''}
                 </div>
             </div>
         `;
@@ -6002,19 +6005,77 @@ const App = {
         }
     },
 
-    async downloadFile(filename) {
-        const { selectedBucket } = this.state.storage;
-        // For public buckets, open in new tab; for private, need authenticated download
-        if (selectedBucket.public) {
-            window.open(`/storage/v1/object/public/${selectedBucket.name}/${filename}`, '_blank');
-        } else {
-            this.showToast('Authenticated download coming in next task', 'info');
+    downloadFile(filename) {
+        const { selectedBucket, currentPath } = this.state.storage;
+        const path = currentPath + filename;
+        const url = `/_/api/storage/objects/download?bucket=${encodeURIComponent(selectedBucket.name)}&path=${encodeURIComponent(path)}`;
+
+        // Create temporary link and click
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    },
+
+    async downloadSelectedFiles() {
+        const { selectedFiles } = this.state.storage;
+        if (selectedFiles.length === 0) return;
+
+        // Download files sequentially with small delay
+        for (const filename of selectedFiles) {
+            this.downloadFile(filename);
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
     },
 
     async deleteSelectedFiles() {
-        // Will be implemented in Task 7 (File operations)
-        this.showToast('Delete functionality coming in next task', 'info');
+        const { selectedBucket, currentPath, selectedFiles } = this.state.storage;
+        if (selectedFiles.length === 0) return;
+
+        const confirmed = confirm(`Delete ${selectedFiles.length} file(s)? This cannot be undone.`);
+        if (!confirmed) return;
+
+        try {
+            const paths = selectedFiles.map(f => currentPath + f);
+            const res = await fetch('/_/api/storage/objects', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    bucket: selectedBucket.name,
+                    paths: paths
+                })
+            });
+
+            if (!res.ok && res.status !== 207) {
+                throw new Error('Failed to delete files');
+            }
+
+            this.state.storage.selectedFiles = [];
+            this.showToast('Files deleted', 'success');
+            await this.loadObjects();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
+    },
+
+    selectAllFiles() {
+        const { objects, currentPath } = this.state.storage;
+        const files = [];
+        for (const obj of objects) {
+            const relativePath = obj.name.slice(currentPath.length);
+            if (relativePath && !relativePath.includes('/') && !relativePath.endsWith('/')) {
+                files.push(relativePath);
+            }
+        }
+        this.state.storage.selectedFiles = files;
+        this.render();
+    },
+
+    clearSelection() {
+        this.state.storage.selectedFiles = [];
+        this.render();
     },
 
     showToast(message, type = 'info') {
