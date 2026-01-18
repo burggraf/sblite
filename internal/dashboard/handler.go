@@ -1215,9 +1215,21 @@ func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Build WHERE clause based on filter
+	filter := r.URL.Query().Get("filter")
+	whereClause := ""
+	switch filter {
+	case "regular":
+		whereClause = "WHERE is_anonymous = 0"
+	case "anonymous":
+		whereClause = "WHERE is_anonymous = 1"
+	// "all" or empty = no filter
+	}
+
 	// Get total count
 	var total int
-	err := h.db.QueryRow(`SELECT COUNT(*) FROM auth_users`).Scan(&total)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM auth_users %s", whereClause)
+	err := h.db.QueryRow(countQuery).Scan(&total)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1226,12 +1238,14 @@ func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get users
-	rows, err := h.db.Query(`
+	usersQuery := fmt.Sprintf(`
 		SELECT id, email, email_confirmed_at, last_sign_in_at,
-		       raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+		       raw_app_meta_data, raw_user_meta_data, created_at, updated_at, is_anonymous
 		FROM auth_users
+		%s
 		ORDER BY created_at DESC
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT ? OFFSET ?`, whereClause)
+	rows, err := h.db.Query(usersQuery, limit, offset)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1244,7 +1258,8 @@ func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, email string
 		var emailConfirmedAt, lastSignInAt, appMeta, userMeta, createdAt, updatedAt sql.NullString
-		if err := rows.Scan(&id, &email, &emailConfirmedAt, &lastSignInAt, &appMeta, &userMeta, &createdAt, &updatedAt); err != nil {
+		var isAnonymous int
+		if err := rows.Scan(&id, &email, &emailConfirmedAt, &lastSignInAt, &appMeta, &userMeta, &createdAt, &updatedAt, &isAnonymous); err != nil {
 			continue
 		}
 		user := map[string]interface{}{
@@ -1256,6 +1271,7 @@ func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
 			"raw_user_meta_data": nullStringToInterface(userMeta),
 			"created_at":         nullStringToInterface(createdAt),
 			"updated_at":         nullStringToInterface(updatedAt),
+			"is_anonymous":       isAnonymous == 1,
 		}
 		users = append(users, user)
 	}
