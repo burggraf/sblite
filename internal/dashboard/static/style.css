@@ -945,3 +945,354 @@ small.text-muted {
     margin-top: 0.5rem;
     font-size: 0.75rem;
 }
+
+/* ============================================================================
+   Settings View Styles
+   ============================================================================ */
+
+.settings-view {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.settings-section {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1rem;
+    cursor: pointer;
+    user-select: none;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.section-header:hover {
+    background: var(--bg-secondary);
+}
+
+.section-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.section-toggle {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+.section-content {
+    padding: 1rem;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.info-item label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.info-item span {
+    font-size: 0.875rem;
+    color: var(--text-primary);
+}
+
+.info-item span.mono {
+    font-family: monospace;
+    background: var(--bg-tertiary);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+}
+
+.section-actions {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.section-actions small {
+    color: var(--text-muted);
+}
+
+/* Email Templates */
+.templates-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.template-item {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.template-item.editing {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.template-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.template-header strong {
+    text-transform: capitalize;
+}
+
+.template-form {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.template-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* Export Section */
+.export-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.export-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.export-item small {
+    color: var(--text-muted);
+    flex-basis: 100%;
+    margin-top: 0.25rem;
+}
+
+.btn-danger {
+    background: var(--error);
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+}
+
+/* ============================================================================
+   Logs View Styles
+   ============================================================================ */
+
+.logs-view {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.logs-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.logs-filters {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.logs-filters .form-input {
+    width: auto;
+    min-width: 120px;
+}
+
+.logs-filters select.form-input {
+    min-width: 100px;
+}
+
+.logs-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.logs-table-container {
+    overflow-x: auto;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.logs-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.logs-table th,
+.logs-table td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.logs-table th {
+    background: var(--bg-tertiary);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+
+.log-row {
+    cursor: pointer;
+}
+
+.log-row:hover {
+    background: var(--bg-tertiary);
+}
+
+.log-row.expanded {
+    background: var(--bg-tertiary);
+}
+
+.log-timestamp {
+    font-family: monospace;
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.log-level {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.log-level.level-debug {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+}
+
+.log-level.level-info {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+}
+
+.log-level.level-warn {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+}
+
+.log-level.level-error {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+}
+
+.log-message {
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.log-source {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.log-details-row td {
+    background: var(--bg-secondary);
+    padding: 1rem;
+}
+
+.log-details {
+    font-size: 0.875rem;
+}
+
+.log-details > div {
+    margin-bottom: 0.5rem;
+}
+
+.log-details pre {
+    background: var(--bg-tertiary);
+    padding: 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    overflow-x: auto;
+    margin-top: 0.25rem;
+}
+
+.logs-message {
+    padding: 1rem;
+}
+
+.logs-message .message {
+    margin-bottom: 1rem;
+}
+
+.logs-message code {
+    background: var(--bg-tertiary);
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+}
+
+.tail-output {
+    margin-top: 1rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.tail-output pre {
+    padding: 1rem;
+    margin: 0;
+    font-size: 0.75rem;
+    max-height: 400px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/markb/sblite/internal/dashboard"
 	"github.com/markb/sblite/internal/db"
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
@@ -56,6 +57,18 @@ var serveCmd = &cobra.Command{
 		migrationsDir, _ := cmd.Flags().GetString("migrations-dir")
 
 		srv := server.New(database, jwtSecret, mailConfig, migrationsDir)
+
+		// Set dashboard config for settings display
+		srv.SetDashboardConfig(&dashboard.ServerConfig{
+			Version: "0.1.0",
+			Host:    host,
+			Port:    port,
+			DBPath:  dbPath,
+			LogMode: logConfig.Mode,
+			LogFile: logConfig.FilePath,
+			LogDB:   logConfig.DBPath,
+		})
+
 		addr := fmt.Sprintf("%s:%d", host, port)
 		log.Info("starting server",
 			"addr", addr,

@@ -42,6 +42,25 @@ const App = {
             list: [],             // Policies for selected table
             loading: false,
         },
+        settings: {
+            server: null,
+            auth: null,
+            templates: [],
+            loading: false,
+            expandedSections: { server: true, auth: false, templates: false, export: false },
+            editingTemplate: null,
+        },
+        logs: {
+            config: null,
+            list: [],
+            total: 0,
+            page: 1,
+            pageSize: 50,
+            filters: { level: 'all', since: '', until: '', search: '', user_id: '', request_id: '' },
+            loading: false,
+            tailLines: [],
+            expandedLog: null,
+        },
     },
 
     async init() {
@@ -276,6 +295,10 @@ const App = {
             this.loadUsers();
         } else if (view === 'policies') {
             this.loadPoliciesTables();
+        } else if (view === 'settings') {
+            this.loadSettings();
+        } else if (view === 'logs') {
+            this.loadLogs();
         } else {
             this.render();
         }
@@ -411,9 +434,9 @@ const App = {
             case 'policies':
                 return this.renderPoliciesView();
             case 'settings':
-                return '<div class="card"><h2 class="card-title">Settings</h2><p>Settings panel coming in Phase 6</p></div>';
+                return this.renderSettingsView();
             case 'logs':
-                return '<div class="card"><h2 class="card-title">Logs</h2><p>Log viewer coming in Phase 6</p></div>';
+                return this.renderLogsView();
             default:
                 return '<div class="card">Select a section from the sidebar</div>';
         }
@@ -832,6 +855,9 @@ const App = {
             case 'createPolicy':
             case 'editPolicy':
                 content = this.renderPolicyModal();
+                break;
+            case 'regenerateSecret':
+                content = this.renderRegenerateSecretModal();
                 break;
         }
 
@@ -2222,6 +2248,645 @@ const App = {
                 // Ignore error, test will work with anonymous
             }
         }
+    },
+
+    // ========================================================================
+    // Settings View Methods
+    // ========================================================================
+
+    async loadSettings() {
+        this.state.settings.loading = true;
+        this.render();
+
+        try {
+            const [serverRes, authRes, templatesRes] = await Promise.all([
+                fetch('/_/api/settings/server'),
+                fetch('/_/api/settings/auth'),
+                fetch('/_/api/settings/templates')
+            ]);
+
+            if (serverRes.ok) {
+                this.state.settings.server = await serverRes.json();
+            }
+            if (authRes.ok) {
+                this.state.settings.auth = await authRes.json();
+            }
+            if (templatesRes.ok) {
+                this.state.settings.templates = await templatesRes.json();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load settings';
+        }
+
+        this.state.settings.loading = false;
+        this.render();
+    },
+
+    toggleSettingsSection(section) {
+        this.state.settings.expandedSections[section] = !this.state.settings.expandedSections[section];
+        this.render();
+    },
+
+    startEditingTemplate(type) {
+        const template = this.state.settings.templates.find(t => t.type === type);
+        if (template) {
+            this.state.settings.editingTemplate = { ...template };
+            this.render();
+        }
+    },
+
+    cancelEditingTemplate() {
+        this.state.settings.editingTemplate = null;
+        this.render();
+    },
+
+    updateTemplateField(field, value) {
+        if (this.state.settings.editingTemplate) {
+            this.state.settings.editingTemplate[field] = value;
+        }
+    },
+
+    async saveTemplate() {
+        const template = this.state.settings.editingTemplate;
+        if (!template) return;
+
+        try {
+            const res = await fetch(`/_/api/settings/templates/${template.type}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    subject: template.subject,
+                    body_html: template.body_html,
+                    body_text: template.body_text
+                })
+            });
+
+            if (res.ok) {
+                // Update in list
+                const idx = this.state.settings.templates.findIndex(t => t.type === template.type);
+                if (idx >= 0) {
+                    this.state.settings.templates[idx] = { ...template, updated_at: new Date().toISOString() };
+                }
+                this.state.settings.editingTemplate = null;
+            } else {
+                const err = await res.json();
+                alert(err.error || 'Failed to save template');
+            }
+        } catch (e) {
+            alert('Failed to save template');
+        }
+        this.render();
+    },
+
+    async resetTemplate(type) {
+        if (!confirm(`Reset ${type} template to default? Your changes will be lost.`)) return;
+
+        try {
+            const res = await fetch(`/_/api/settings/templates/${type}/reset`, { method: 'POST' });
+            if (res.ok) {
+                const data = await res.json();
+                const idx = this.state.settings.templates.findIndex(t => t.type === type);
+                if (idx >= 0) {
+                    this.state.settings.templates[idx] = {
+                        ...this.state.settings.templates[idx],
+                        subject: data.subject,
+                        body_html: data.body_html,
+                        body_text: data.body_text,
+                        updated_at: new Date().toISOString()
+                    };
+                }
+                if (this.state.settings.editingTemplate?.type === type) {
+                    this.state.settings.editingTemplate = null;
+                }
+                this.render();
+            }
+        } catch (e) {
+            alert('Failed to reset template');
+        }
+    },
+
+    showRegenerateSecretModal() {
+        this.state.modal = {
+            type: 'regenerateSecret',
+            data: { confirmation: '', error: null }
+        };
+        this.render();
+    },
+
+    async regenerateSecret() {
+        const { confirmation } = this.state.modal.data;
+
+        try {
+            const res = await fetch('/_/api/settings/auth/regenerate-secret', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confirmation })
+            });
+
+            const data = await res.json();
+            if (res.ok) {
+                this.closeModal();
+                await this.loadSettings();
+                alert('JWT secret regenerated. All user sessions have been invalidated.');
+            } else {
+                this.state.modal.data.error = data.error;
+                this.render();
+            }
+        } catch (e) {
+            this.state.modal.data.error = 'Failed to regenerate secret';
+            this.render();
+        }
+    },
+
+    renderRegenerateSecretModal() {
+        const { confirmation, error } = this.state.modal.data;
+
+        return `
+            <div class="modal-header">
+                <h3>Regenerate JWT Secret</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="message message-warning">
+                    <strong>Warning:</strong> This will invalidate ALL user sessions. Users will need to log in again.
+                </div>
+                ${error ? `<div class="message message-error">${error}</div>` : ''}
+                <div class="form-group">
+                    <label class="form-label">Type REGENERATE to confirm</label>
+                    <input type="text" class="form-input" value="${confirmation}"
+                        placeholder="REGENERATE"
+                        oninput="App.state.modal.data.confirmation = this.value">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="App.regenerateSecret()">Regenerate Secret</button>
+            </div>
+        `;
+    },
+
+    async exportSchema() {
+        window.location.href = '/_/api/export/schema';
+    },
+
+    async exportData(format) {
+        const tables = this.state.tables.list.map(t => t.name).join(',');
+        if (!tables) {
+            alert('No tables to export');
+            return;
+        }
+        window.location.href = `/_/api/export/data?tables=${encodeURIComponent(tables)}&format=${format}`;
+    },
+
+    async exportBackup() {
+        window.location.href = '/_/api/export/backup';
+    },
+
+    renderSettingsView() {
+        const { server, auth, templates, loading, expandedSections, editingTemplate } = this.state.settings;
+
+        if (loading) {
+            return '<div class="loading">Loading settings...</div>';
+        }
+
+        return `
+            <div class="card-title">Settings</div>
+            <div class="settings-view">
+                ${this.renderServerInfoSection(server, expandedSections.server)}
+                ${this.renderAuthSection(auth, expandedSections.auth)}
+                ${this.renderTemplatesSection(templates, expandedSections.templates, editingTemplate)}
+                ${this.renderExportSection(expandedSections.export)}
+            </div>
+        `;
+    },
+
+    renderServerInfoSection(server, expanded) {
+        return `
+            <div class="settings-section">
+                <div class="section-header" onclick="App.toggleSettingsSection('server')">
+                    <span class="section-toggle">${expanded ? '▼' : '▶'}</span>
+                    <h3>Server Information</h3>
+                </div>
+                ${expanded ? `
+                    <div class="section-content">
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <label>Version</label>
+                                <span>${server?.version || 'Unknown'}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Host</label>
+                                <span>${server?.host || 'Unknown'}:${server?.port || 'Unknown'}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Database</label>
+                                <span>${server?.db_path || 'Unknown'}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Log Mode</label>
+                                <span>${server?.log_mode || 'console'}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Uptime</label>
+                                <span>${server?.uptime_human || 'Unknown'}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Memory</label>
+                                <span>${server?.memory_mb || 0} MB (${server?.memory_sys_mb || 0} MB sys)</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Goroutines</label>
+                                <span>${server?.goroutines || 0}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Go Version</label>
+                                <span>${server?.go_version || 'Unknown'}</span>
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    renderAuthSection(auth, expanded) {
+        return `
+            <div class="settings-section">
+                <div class="section-header" onclick="App.toggleSettingsSection('auth')">
+                    <span class="section-toggle">${expanded ? '▼' : '▶'}</span>
+                    <h3>Authentication</h3>
+                </div>
+                ${expanded ? `
+                    <div class="section-content">
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <label>JWT Secret</label>
+                                <span class="mono">${auth?.jwt_secret_masked || 'Not set'}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Secret Source</label>
+                                <span>${auth?.jwt_secret_source || 'Unknown'}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Access Token Expiry</label>
+                                <span>${auth?.access_token_expiry || '1 hour'}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Refresh Token Expiry</label>
+                                <span>${auth?.refresh_token_expiry || '1 week'}</span>
+                            </div>
+                        </div>
+                        ${auth?.can_regenerate ? `
+                            <div class="section-actions">
+                                <button class="btn btn-danger btn-sm" onclick="App.showRegenerateSecretModal()">
+                                    Regenerate JWT Secret
+                                </button>
+                                <small class="text-muted">Warning: This will invalidate all user sessions</small>
+                            </div>
+                        ` : `
+                            <div class="message message-info">
+                                JWT secret is set via environment variable and cannot be changed from the dashboard.
+                            </div>
+                        `}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    renderTemplatesSection(templates, expanded, editingTemplate) {
+        return `
+            <div class="settings-section">
+                <div class="section-header" onclick="App.toggleSettingsSection('templates')">
+                    <span class="section-toggle">${expanded ? '▼' : '▶'}</span>
+                    <h3>Email Templates</h3>
+                </div>
+                ${expanded ? `
+                    <div class="section-content">
+                        <div class="templates-list">
+                            ${templates.map(t => this.renderTemplateItem(t, editingTemplate)).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    renderTemplateItem(template, editingTemplate) {
+        const isEditing = editingTemplate?.type === template.type;
+
+        if (isEditing) {
+            return `
+                <div class="template-item editing">
+                    <div class="template-header">
+                        <strong>${template.type}</strong>
+                    </div>
+                    <div class="template-form">
+                        <div class="form-group">
+                            <label class="form-label">Subject</label>
+                            <input type="text" class="form-input" value="${editingTemplate.subject}"
+                                oninput="App.updateTemplateField('subject', this.value)">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">HTML Body</label>
+                            <textarea class="form-input code-input" rows="6"
+                                oninput="App.updateTemplateField('body_html', this.value)">${editingTemplate.body_html}</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Text Body</label>
+                            <textarea class="form-input code-input" rows="4"
+                                oninput="App.updateTemplateField('body_text', this.value)">${editingTemplate.body_text || ''}</textarea>
+                        </div>
+                        <div class="template-actions">
+                            <button class="btn btn-primary btn-sm" onclick="App.saveTemplate()">Save</button>
+                            <button class="btn btn-secondary btn-sm" onclick="App.cancelEditingTemplate()">Cancel</button>
+                            <button class="btn btn-danger btn-sm" onclick="App.resetTemplate('${template.type}')">Reset to Default</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="template-item">
+                <div class="template-header">
+                    <strong>${template.type}</strong>
+                    <span class="text-muted">${template.subject}</span>
+                </div>
+                <div class="template-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="App.startEditingTemplate('${template.type}')">Edit</button>
+                </div>
+            </div>
+        `;
+    },
+
+    renderExportSection(expanded) {
+        return `
+            <div class="settings-section">
+                <div class="section-header" onclick="App.toggleSettingsSection('export')">
+                    <span class="section-toggle">${expanded ? '▼' : '▶'}</span>
+                    <h3>Export & Backup</h3>
+                </div>
+                ${expanded ? `
+                    <div class="section-content">
+                        <div class="export-buttons">
+                            <div class="export-item">
+                                <button class="btn btn-primary" onclick="App.exportSchema()">
+                                    Export PostgreSQL Schema
+                                </button>
+                                <small>Download SQL file for migration to Supabase</small>
+                            </div>
+                            <div class="export-item">
+                                <button class="btn btn-secondary" onclick="App.exportData('json')">
+                                    Export Data (JSON)
+                                </button>
+                                <button class="btn btn-secondary" onclick="App.exportData('csv')">
+                                    Export Data (CSV)
+                                </button>
+                                <small>Export all table data</small>
+                            </div>
+                            <div class="export-item">
+                                <button class="btn btn-secondary" onclick="App.exportBackup()">
+                                    Download Database Backup
+                                </button>
+                                <small>Download the entire SQLite database file</small>
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    // ========================================================================
+    // Logs View Methods
+    // ========================================================================
+
+    async loadLogs() {
+        this.state.logs.loading = true;
+        this.render();
+
+        try {
+            // Load log config
+            const configRes = await fetch('/_/api/logs/config');
+            if (configRes.ok) {
+                this.state.logs.config = await configRes.json();
+            }
+
+            // Load logs based on mode
+            if (this.state.logs.config?.mode === 'database') {
+                await this.queryLogs();
+            } else if (this.state.logs.config?.mode === 'file') {
+                await this.tailLogs();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load logs';
+        }
+
+        this.state.logs.loading = false;
+        this.render();
+    },
+
+    async queryLogs() {
+        const { filters, page, pageSize } = this.state.logs;
+        const params = new URLSearchParams();
+
+        if (filters.level && filters.level !== 'all') params.set('level', filters.level);
+        if (filters.since) params.set('since', filters.since);
+        if (filters.until) params.set('until', filters.until);
+        if (filters.search) params.set('search', filters.search);
+        if (filters.user_id) params.set('user_id', filters.user_id);
+        if (filters.request_id) params.set('request_id', filters.request_id);
+        params.set('limit', pageSize.toString());
+        params.set('offset', ((page - 1) * pageSize).toString());
+
+        try {
+            const res = await fetch(`/_/api/logs?${params}`);
+            if (res.ok) {
+                const data = await res.json();
+                this.state.logs.list = data.logs || [];
+                this.state.logs.total = data.total || 0;
+            }
+        } catch (e) {
+            this.state.logs.list = [];
+        }
+    },
+
+    async tailLogs() {
+        try {
+            const res = await fetch('/_/api/logs/tail?lines=100');
+            if (res.ok) {
+                const data = await res.json();
+                this.state.logs.tailLines = data.lines || [];
+            }
+        } catch (e) {
+            this.state.logs.tailLines = [];
+        }
+    },
+
+    updateLogFilter(field, value) {
+        this.state.logs.filters[field] = value;
+        this.state.logs.page = 1;
+    },
+
+    async applyLogFilters() {
+        this.state.logs.loading = true;
+        this.render();
+        await this.queryLogs();
+        this.state.logs.loading = false;
+        this.render();
+    },
+
+    clearLogFilters() {
+        this.state.logs.filters = { level: 'all', since: '', until: '', search: '', user_id: '', request_id: '' };
+        this.state.logs.page = 1;
+        this.applyLogFilters();
+    },
+
+    async refreshLogs() {
+        await this.loadLogs();
+    },
+
+    setLogsPage(page) {
+        this.state.logs.page = page;
+        this.applyLogFilters();
+    },
+
+    toggleLogExpand(logId) {
+        if (this.state.logs.expandedLog === logId) {
+            this.state.logs.expandedLog = null;
+        } else {
+            this.state.logs.expandedLog = logId;
+        }
+        this.render();
+    },
+
+    renderLogsView() {
+        const { config, loading } = this.state.logs;
+
+        if (loading) {
+            return '<div class="loading">Loading logs...</div>';
+        }
+
+        return `
+            <div class="card-title">Logs</div>
+            <div class="logs-view">
+                ${config?.mode === 'database' ? this.renderDatabaseLogs() : this.renderNonDatabaseLogs()}
+            </div>
+        `;
+    },
+
+    renderDatabaseLogs() {
+        const { list, total, page, pageSize, filters, expandedLog } = this.state.logs;
+        const totalPages = Math.ceil(total / pageSize);
+
+        return `
+            <div class="logs-toolbar">
+                <div class="logs-filters">
+                    <select class="form-input" onchange="App.updateLogFilter('level', this.value)">
+                        <option value="all" ${filters.level === 'all' ? 'selected' : ''}>All Levels</option>
+                        <option value="debug" ${filters.level === 'debug' ? 'selected' : ''}>Debug</option>
+                        <option value="info" ${filters.level === 'info' ? 'selected' : ''}>Info</option>
+                        <option value="warn" ${filters.level === 'warn' ? 'selected' : ''}>Warn</option>
+                        <option value="error" ${filters.level === 'error' ? 'selected' : ''}>Error</option>
+                    </select>
+                    <input type="text" class="form-input" placeholder="Search message..."
+                        value="${filters.search}" oninput="App.updateLogFilter('search', this.value)">
+                    <input type="text" class="form-input" placeholder="User ID"
+                        value="${filters.user_id}" oninput="App.updateLogFilter('user_id', this.value)">
+                    <input type="text" class="form-input" placeholder="Request ID"
+                        value="${filters.request_id}" oninput="App.updateLogFilter('request_id', this.value)">
+                    <button class="btn btn-primary btn-sm" onclick="App.applyLogFilters()">Filter</button>
+                    <button class="btn btn-secondary btn-sm" onclick="App.clearLogFilters()">Clear</button>
+                </div>
+                <div class="logs-actions">
+                    <span class="text-muted">${total} logs</span>
+                    <button class="btn btn-secondary btn-sm" onclick="App.refreshLogs()">Refresh</button>
+                </div>
+            </div>
+
+            <div class="logs-table-container">
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Level</th>
+                            <th>Message</th>
+                            <th>Source</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${list.length === 0 ? `
+                            <tr><td colspan="4" class="empty-state">No logs match your filters</td></tr>
+                        ` : list.map(log => this.renderLogRow(log, expandedLog)).join('')}
+                    </tbody>
+                </table>
+            </div>
+
+            ${totalPages > 1 ? `
+                <div class="pagination">
+                    <button class="btn btn-secondary btn-sm" ${page <= 1 ? 'disabled' : ''} onclick="App.setLogsPage(${page - 1})">Previous</button>
+                    <span>Page ${page} of ${totalPages}</span>
+                    <button class="btn btn-secondary btn-sm" ${page >= totalPages ? 'disabled' : ''} onclick="App.setLogsPage(${page + 1})">Next</button>
+                </div>
+            ` : ''}
+        `;
+    },
+
+    renderLogRow(log, expandedLog) {
+        const isExpanded = expandedLog === log.id;
+        const levelClass = `level-${log.level.toLowerCase()}`;
+
+        return `
+            <tr class="log-row ${isExpanded ? 'expanded' : ''}" onclick="App.toggleLogExpand(${log.id})">
+                <td class="log-timestamp">${new Date(log.timestamp).toLocaleString()}</td>
+                <td><span class="log-level ${levelClass}">${log.level}</span></td>
+                <td class="log-message">${this.escapeHtml(log.message)}</td>
+                <td class="log-source">${log.source || ''}</td>
+            </tr>
+            ${isExpanded ? `
+                <tr class="log-details-row">
+                    <td colspan="4">
+                        <div class="log-details">
+                            ${log.request_id ? `<div><strong>Request ID:</strong> ${log.request_id}</div>` : ''}
+                            ${log.user_id ? `<div><strong>User ID:</strong> ${log.user_id}</div>` : ''}
+                            ${log.extra ? `<div><strong>Extra:</strong> <pre>${JSON.stringify(log.extra, null, 2)}</pre></div>` : ''}
+                        </div>
+                    </td>
+                </tr>
+            ` : ''}
+        `;
+    },
+
+    renderNonDatabaseLogs() {
+        const { config, tailLines } = this.state.logs;
+
+        return `
+            <div class="logs-message">
+                <div class="message message-info">
+                    <p>Logs are being written to: <strong>${config?.mode === 'file' ? config.file_path : 'console'}</strong></p>
+                    <p>For full log filtering, start the server with <code>--log-mode=database</code></p>
+                </div>
+
+                ${config?.mode === 'file' ? `
+                    <div class="logs-toolbar">
+                        <button class="btn btn-secondary" onclick="App.tailLogs().then(() => App.render())">
+                            Tail Recent Logs
+                        </button>
+                    </div>
+                    ${tailLines.length > 0 ? `
+                        <div class="tail-output">
+                            <pre>${tailLines.map(l => this.escapeHtml(l)).join('\n')}</pre>
+                        </div>
+                    ` : ''}
+                ` : ''}
+            </div>
+        `;
+    },
+
+    escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 };
 

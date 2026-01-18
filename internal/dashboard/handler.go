@@ -1,15 +1,19 @@
 package dashboard
 
 import (
+	"bufio"
 	"database/sql"
 	"embed"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +35,19 @@ type Handler struct {
 	auth          *Auth
 	sessions      *SessionManager
 	migrationsDir string
+	startTime     time.Time
+	serverConfig  *ServerConfig
+}
+
+// ServerConfig holds server configuration for display in settings.
+type ServerConfig struct {
+	Version  string
+	Host     string
+	Port     int
+	DBPath   string
+	LogMode  string
+	LogFile  string
+	LogDB    string
 }
 
 // NewHandler creates a new Handler.
@@ -42,7 +59,14 @@ func NewHandler(db *sql.DB, migrationsDir string) *Handler {
 		auth:          NewAuth(store),
 		sessions:      NewSessionManager(store),
 		migrationsDir: migrationsDir,
+		startTime:     time.Now(),
+		serverConfig:  &ServerConfig{Version: "0.1.0"},
 	}
+}
+
+// SetServerConfig sets the server configuration for display.
+func (h *Handler) SetServerConfig(cfg *ServerConfig) {
+	h.serverConfig = cfg
 }
 
 // RegisterRoutes registers the dashboard routes.
@@ -102,6 +126,33 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Use(h.requireAuth)
 			r.Get("/", h.handleGetTableRLS)
 			r.Patch("/", h.handleSetTableRLS)
+		})
+
+		// Settings API routes (require auth)
+		r.Route("/settings", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/server", h.handleGetServerInfo)
+			r.Get("/auth", h.handleGetAuthSettings)
+			r.Post("/auth/regenerate-secret", h.handleRegenerateSecret)
+			r.Get("/templates", h.handleListTemplates)
+			r.Patch("/templates/{type}", h.handleUpdateTemplate)
+			r.Post("/templates/{type}/reset", h.handleResetTemplate)
+		})
+
+		// Export API routes (require auth)
+		r.Route("/export", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/schema", h.handleExportSchema)
+			r.Get("/data", h.handleExportData)
+			r.Get("/backup", h.handleExportBackup)
+		})
+
+		// Logs API routes (require auth)
+		r.Route("/logs", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/", h.handleQueryLogs)
+			r.Get("/config", h.handleGetLogConfig)
+			r.Get("/tail", h.handleTailLogs)
 		})
 	})
 
@@ -1955,4 +2006,779 @@ func (h *Handler) handleTestPolicy(w http.ResponseWriter, r *http.Request) {
 // escapeSQLString escapes single quotes in SQL strings
 func escapeSQLString(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
+}
+
+// ============================================================================
+// Settings Handlers
+// ============================================================================
+
+func (h *Handler) handleGetServerInfo(w http.ResponseWriter, r *http.Request) {
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	uptime := time.Since(h.startTime)
+
+	cfg := h.serverConfig
+	if cfg == nil {
+		cfg = &ServerConfig{Version: "0.1.0"}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"version":        cfg.Version,
+		"host":           cfg.Host,
+		"port":           cfg.Port,
+		"db_path":        cfg.DBPath,
+		"log_mode":       cfg.LogMode,
+		"uptime_seconds": int(uptime.Seconds()),
+		"uptime_human":   formatDuration(uptime),
+		"memory_mb":      memStats.Alloc / 1024 / 1024,
+		"memory_sys_mb":  memStats.Sys / 1024 / 1024,
+		"goroutines":     runtime.NumGoroutine(),
+		"go_version":     runtime.Version(),
+	})
+}
+
+func formatDuration(d time.Duration) string {
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	}
+	return fmt.Sprintf("%dm", minutes)
+}
+
+func (h *Handler) handleGetAuthSettings(w http.ResponseWriter, r *http.Request) {
+	// Get JWT secret from _dashboard table or env
+	var maskedSecret string
+	var secretSource string
+
+	// Check env first
+	if secret := os.Getenv("SBLITE_JWT_SECRET"); secret != "" {
+		secretSource = "environment"
+		if len(secret) > 6 {
+			maskedSecret = "***..." + secret[len(secret)-6:]
+		} else {
+			maskedSecret = "***"
+		}
+	} else {
+		// Check _dashboard table
+		var secret string
+		err := h.db.QueryRow("SELECT value FROM _dashboard WHERE key = 'jwt_secret'").Scan(&secret)
+		if err == nil && secret != "" {
+			secretSource = "database"
+			if len(secret) > 6 {
+				maskedSecret = "***..." + secret[len(secret)-6:]
+			} else {
+				maskedSecret = "***"
+			}
+		} else {
+			secretSource = "default (insecure)"
+			maskedSecret = "using default secret"
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"jwt_secret_masked":     maskedSecret,
+		"jwt_secret_source":     secretSource,
+		"access_token_expiry":   "1 hour",
+		"refresh_token_expiry":  "1 week",
+		"can_regenerate":        secretSource != "environment",
+	})
+}
+
+func (h *Handler) handleRegenerateSecret(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Confirmation string `json:"confirmation"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		return
+	}
+
+	if req.Confirmation != "REGENERATE" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Please type REGENERATE to confirm"})
+		return
+	}
+
+	// Check if secret is from environment (can't change)
+	if os.Getenv("SBLITE_JWT_SECRET") != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Cannot regenerate: JWT secret is set via environment variable"})
+		return
+	}
+
+	// Generate new secret
+	newSecret := uuid.New().String() + "-" + uuid.New().String()
+
+	// Store in _dashboard table
+	_, err := h.db.Exec(`
+		INSERT INTO _dashboard (key, value, updated_at) VALUES ('jwt_secret', ?, datetime('now'))
+		ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')
+	`, newSecret, newSecret)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to save new secret"})
+		return
+	}
+
+	// Invalidate all refresh tokens
+	_, err = h.db.Exec("UPDATE auth_refresh_tokens SET revoked = 1")
+	if err != nil {
+		// Log but don't fail - secret is already changed
+	}
+
+	// Delete all sessions
+	_, err = h.db.Exec("DELETE FROM auth_sessions")
+	if err != nil {
+		// Log but don't fail
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":           true,
+		"message":           "JWT secret regenerated. All user sessions have been invalidated.",
+		"new_secret_masked": "***..." + newSecret[len(newSecret)-6:],
+	})
+}
+
+func (h *Handler) handleListTemplates(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(`
+		SELECT id, type, subject, body_html, body_text, updated_at
+		FROM auth_email_templates
+		ORDER BY type
+	`)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var templates []map[string]interface{}
+	for rows.Next() {
+		var id, ttype, subject, bodyHTML, updatedAt string
+		var bodyText sql.NullString
+		if err := rows.Scan(&id, &ttype, &subject, &bodyHTML, &bodyText, &updatedAt); err != nil {
+			continue
+		}
+		templates = append(templates, map[string]interface{}{
+			"id":         id,
+			"type":       ttype,
+			"subject":    subject,
+			"body_html":  bodyHTML,
+			"body_text":  bodyText.String,
+			"updated_at": updatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(templates)
+}
+
+func (h *Handler) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
+	templateType := chi.URLParam(r, "type")
+
+	var req struct {
+		Subject  string `json:"subject"`
+		BodyHTML string `json:"body_html"`
+		BodyText string `json:"body_text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request"})
+		return
+	}
+
+	result, err := h.db.Exec(`
+		UPDATE auth_email_templates
+		SET subject = ?, body_html = ?, body_text = ?, updated_at = datetime('now')
+		WHERE type = ?
+	`, req.Subject, req.BodyHTML, req.BodyText, templateType)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Template not found"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"type":    templateType,
+	})
+}
+
+func (h *Handler) handleResetTemplate(w http.ResponseWriter, r *http.Request) {
+	templateType := chi.URLParam(r, "type")
+
+	// Default templates
+	defaults := map[string]struct {
+		subject  string
+		bodyHTML string
+		bodyText string
+	}{
+		"confirmation": {
+			subject:  "Confirm your email",
+			bodyHTML: `<h2>Confirm your email</h2><p>Click the link below to confirm your email address:</p><p><a href="{{.ConfirmationURL}}">Confirm Email</a></p><p>This link expires in {{.ExpiresIn}}.</p>`,
+			bodyText: "Confirm your email\n\nClick the link below to confirm your email address:\n{{.ConfirmationURL}}\n\nThis link expires in {{.ExpiresIn}}.",
+		},
+		"recovery": {
+			subject:  "Reset your password",
+			bodyHTML: `<h2>Reset your password</h2><p>Click the link below to reset your password:</p><p><a href="{{.ConfirmationURL}}">Reset Password</a></p><p>This link expires in {{.ExpiresIn}}.</p>`,
+			bodyText: "Reset your password\n\nClick the link below to reset your password:\n{{.ConfirmationURL}}\n\nThis link expires in {{.ExpiresIn}}.",
+		},
+		"magic_link": {
+			subject:  "Your login link",
+			bodyHTML: `<h2>Your login link</h2><p>Click the link below to sign in:</p><p><a href="{{.ConfirmationURL}}">Sign In</a></p><p>This link expires in {{.ExpiresIn}}.</p>`,
+			bodyText: "Your login link\n\nClick the link below to sign in:\n{{.ConfirmationURL}}\n\nThis link expires in {{.ExpiresIn}}.",
+		},
+		"email_change": {
+			subject:  "Confirm email change",
+			bodyHTML: `<h2>Confirm your new email</h2><p>Click the link below to confirm your new email address:</p><p><a href="{{.ConfirmationURL}}">Confirm New Email</a></p><p>This link expires in {{.ExpiresIn}}.</p>`,
+			bodyText: "Confirm your new email\n\nClick the link below to confirm your new email address:\n{{.ConfirmationURL}}\n\nThis link expires in {{.ExpiresIn}}.",
+		},
+		"invite": {
+			subject:  "You have been invited",
+			bodyHTML: `<h2>You have been invited</h2><p>Click the link below to accept your invitation and set your password:</p><p><a href="{{.ConfirmationURL}}">Accept Invitation</a></p><p>This link expires in {{.ExpiresIn}}.</p>`,
+			bodyText: "You have been invited\n\nClick the link below to accept your invitation and set your password:\n{{.ConfirmationURL}}\n\nThis link expires in {{.ExpiresIn}}.",
+		},
+	}
+
+	def, ok := defaults[templateType]
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unknown template type"})
+		return
+	}
+
+	_, err := h.db.Exec(`
+		UPDATE auth_email_templates
+		SET subject = ?, body_html = ?, body_text = ?, updated_at = datetime('now')
+		WHERE type = ?
+	`, def.subject, def.bodyHTML, def.bodyText, templateType)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"type":      templateType,
+		"subject":   def.subject,
+		"body_html": def.bodyHTML,
+		"body_text": def.bodyText,
+	})
+}
+
+// ============================================================================
+// Export Handlers
+// ============================================================================
+
+func (h *Handler) handleExportSchema(w http.ResponseWriter, r *http.Request) {
+	// Get all user tables
+	rows, err := h.db.Query(`
+		SELECT name FROM sqlite_master
+		WHERE type = 'table'
+		AND name NOT LIKE 'sqlite_%'
+		AND name NOT LIKE 'auth_%'
+		AND name NOT LIKE '_rls_%'
+		AND name NOT LIKE '_columns'
+		AND name NOT LIKE '_schema_%'
+		AND name NOT LIKE '_dashboard'
+		ORDER BY name
+	`)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			tables = append(tables, name)
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("-- PostgreSQL Schema Export from sblite\n")
+	sb.WriteString("-- Generated at: " + time.Now().Format(time.RFC3339) + "\n\n")
+
+	for _, table := range tables {
+		sb.WriteString(h.generatePostgreSQLDDL(table))
+		sb.WriteString("\n")
+	}
+
+	w.Header().Set("Content-Type", "application/sql")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=schema_%s.sql", time.Now().Format("20060102_150405")))
+	w.Write([]byte(sb.String()))
+}
+
+func (h *Handler) generatePostgreSQLDDL(tableName string) string {
+	var sb strings.Builder
+
+	// Get column metadata from _columns table
+	rows, err := h.db.Query(`
+		SELECT column_name, pg_type, is_nullable, default_value, is_primary
+		FROM _columns
+		WHERE table_name = ?
+		ORDER BY rowid
+	`, tableName)
+	if err != nil {
+		// Fallback to basic table definition
+		sb.WriteString(fmt.Sprintf("-- Table: %s (no metadata available)\n", tableName))
+		return sb.String()
+	}
+	defer rows.Close()
+
+	sb.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", tableName))
+
+	var columns []string
+	var primaryKeys []string
+	first := true
+
+	for rows.Next() {
+		var colName, pgType string
+		var isNullable, isPrimary int
+		var defaultVal sql.NullString
+
+		if err := rows.Scan(&colName, &pgType, &isNullable, &defaultVal, &isPrimary); err != nil {
+			continue
+		}
+
+		var colDef strings.Builder
+		if !first {
+			colDef.WriteString(",\n")
+		}
+		first = false
+
+		colDef.WriteString(fmt.Sprintf("    %s %s", colName, pgType))
+
+		if isNullable == 0 {
+			colDef.WriteString(" NOT NULL")
+		}
+
+		if defaultVal.Valid && defaultVal.String != "" {
+			colDef.WriteString(fmt.Sprintf(" DEFAULT %s", defaultVal.String))
+		}
+
+		if isPrimary == 1 {
+			primaryKeys = append(primaryKeys, colName)
+		}
+
+		columns = append(columns, colDef.String())
+	}
+
+	sb.WriteString(strings.Join(columns, ""))
+
+	if len(primaryKeys) > 0 {
+		sb.WriteString(fmt.Sprintf(",\n    PRIMARY KEY (%s)", strings.Join(primaryKeys, ", ")))
+	}
+
+	sb.WriteString("\n);\n")
+
+	return sb.String()
+}
+
+func (h *Handler) handleExportData(w http.ResponseWriter, r *http.Request) {
+	tablesParam := r.URL.Query().Get("tables")
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "json"
+	}
+
+	if tablesParam == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "tables parameter required"})
+		return
+	}
+
+	tables := strings.Split(tablesParam, ",")
+
+	switch format {
+	case "json":
+		h.exportDataJSON(w, tables)
+	case "csv":
+		h.exportDataCSV(w, tables)
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "format must be json or csv"})
+	}
+}
+
+func (h *Handler) exportDataJSON(w http.ResponseWriter, tables []string) {
+	result := make(map[string][]map[string]interface{})
+
+	for _, table := range tables {
+		table = strings.TrimSpace(table)
+		// Validate table name (prevent SQL injection)
+		if !isValidIdentifier(table) {
+			continue
+		}
+
+		rows, err := h.db.Query(fmt.Sprintf("SELECT * FROM %s", table))
+		if err != nil {
+			continue
+		}
+
+		columns, _ := rows.Columns()
+		var tableData []map[string]interface{}
+
+		for rows.Next() {
+			values := make([]interface{}, len(columns))
+			valuePtrs := make([]interface{}, len(columns))
+			for i := range values {
+				valuePtrs[i] = &values[i]
+			}
+
+			if err := rows.Scan(valuePtrs...); err != nil {
+				continue
+			}
+
+			row := make(map[string]interface{})
+			for i, col := range columns {
+				row[col] = values[i]
+			}
+			tableData = append(tableData, row)
+		}
+		rows.Close()
+
+		result[table] = tableData
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=data_%s.json", time.Now().Format("20060102_150405")))
+	json.NewEncoder(w).Encode(result)
+}
+
+func (h *Handler) exportDataCSV(w http.ResponseWriter, tables []string) {
+	// For CSV, we only export the first table
+	if len(tables) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "No tables specified"})
+		return
+	}
+
+	table := strings.TrimSpace(tables[0])
+	if !isValidIdentifier(table) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid table name"})
+		return
+	}
+
+	rows, err := h.db.Query(fmt.Sprintf("SELECT * FROM %s", table))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	columns, _ := rows.Columns()
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s_%s.csv", table, time.Now().Format("20060102_150405")))
+
+	csvWriter := csv.NewWriter(w)
+	csvWriter.Write(columns)
+
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			continue
+		}
+
+		record := make([]string, len(columns))
+		for i, v := range values {
+			if v == nil {
+				record[i] = ""
+			} else {
+				record[i] = fmt.Sprintf("%v", v)
+			}
+		}
+		csvWriter.Write(record)
+	}
+
+	csvWriter.Flush()
+}
+
+func (h *Handler) handleExportBackup(w http.ResponseWriter, r *http.Request) {
+	dbPath := h.serverConfig.DBPath
+	if dbPath == "" {
+		dbPath = "./data.db"
+	}
+
+	file, err := os.Open(dbPath)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Cannot open database file"})
+		return
+	}
+	defer file.Close()
+
+	stat, _ := file.Stat()
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=backup_%s.db", time.Now().Format("20060102_150405")))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", stat.Size()))
+
+	io.Copy(w, file)
+}
+
+func isValidIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, c := range s {
+		if i == 0 && c >= '0' && c <= '9' {
+			return false
+		}
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// ============================================================================
+// Logs Handlers
+// ============================================================================
+
+func (h *Handler) handleGetLogConfig(w http.ResponseWriter, r *http.Request) {
+	cfg := h.serverConfig
+	if cfg == nil {
+		cfg = &ServerConfig{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"mode":      cfg.LogMode,
+		"file_path": cfg.LogFile,
+		"db_path":   cfg.LogDB,
+	})
+}
+
+func (h *Handler) handleQueryLogs(w http.ResponseWriter, r *http.Request) {
+	cfg := h.serverConfig
+	if cfg == nil || cfg.LogMode != "database" || cfg.LogDB == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"logs":    []interface{}{},
+			"total":   0,
+			"message": "Database logging is not enabled. Start server with --log-mode=database",
+		})
+		return
+	}
+
+	// Open log database
+	logDB, err := sql.Open("sqlite", cfg.LogDB+"?mode=ro")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Cannot open log database"})
+		return
+	}
+	defer logDB.Close()
+
+	// Parse query params
+	level := r.URL.Query().Get("level")
+	since := r.URL.Query().Get("since")
+	until := r.URL.Query().Get("until")
+	search := r.URL.Query().Get("search")
+	userID := r.URL.Query().Get("user_id")
+	requestID := r.URL.Query().Get("request_id")
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+
+	limit := 50
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 500 {
+		limit = l
+	}
+	offset := 0
+	if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+		offset = o
+	}
+
+	// Build query
+	var conditions []string
+	var args []interface{}
+
+	if level != "" && level != "all" {
+		conditions = append(conditions, "level = ?")
+		args = append(args, strings.ToUpper(level))
+	}
+	if since != "" {
+		conditions = append(conditions, "timestamp >= ?")
+		args = append(args, since)
+	}
+	if until != "" {
+		conditions = append(conditions, "timestamp <= ?")
+		args = append(args, until)
+	}
+	if search != "" {
+		conditions = append(conditions, "message LIKE ?")
+		args = append(args, "%"+search+"%")
+	}
+	if userID != "" {
+		conditions = append(conditions, "user_id = ?")
+		args = append(args, userID)
+	}
+	if requestID != "" {
+		conditions = append(conditions, "request_id = ?")
+		args = append(args, requestID)
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	// Count total
+	var total int
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM logs %s", whereClause)
+	logDB.QueryRow(countQuery, args...).Scan(&total)
+
+	// Fetch logs
+	query := fmt.Sprintf(`
+		SELECT id, timestamp, level, message, source, request_id, user_id, extra
+		FROM logs %s
+		ORDER BY timestamp DESC
+		LIMIT ? OFFSET ?
+	`, whereClause)
+
+	args = append(args, limit, offset)
+	rows, err := logDB.Query(query, args...)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var logs []map[string]interface{}
+	for rows.Next() {
+		var id int64
+		var timestamp, level, message string
+		var source, reqID, uID, extra sql.NullString
+
+		if err := rows.Scan(&id, &timestamp, &level, &message, &source, &reqID, &uID, &extra); err != nil {
+			continue
+		}
+
+		log := map[string]interface{}{
+			"id":         id,
+			"timestamp":  timestamp,
+			"level":      level,
+			"message":    message,
+			"source":     source.String,
+			"request_id": reqID.String,
+			"user_id":    uID.String,
+		}
+
+		if extra.Valid && extra.String != "" {
+			var extraData interface{}
+			if json.Unmarshal([]byte(extra.String), &extraData) == nil {
+				log["extra"] = extraData
+			}
+		}
+
+		logs = append(logs, log)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"logs":     logs,
+		"total":    total,
+		"has_more": offset+len(logs) < total,
+	})
+}
+
+func (h *Handler) handleTailLogs(w http.ResponseWriter, r *http.Request) {
+	cfg := h.serverConfig
+	if cfg == nil || cfg.LogMode != "file" || cfg.LogFile == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"lines":   []string{},
+			"message": "File logging is not enabled or no log file configured",
+		})
+		return
+	}
+
+	linesStr := r.URL.Query().Get("lines")
+	numLines := 100
+	if n, err := strconv.Atoi(linesStr); err == nil && n > 0 && n <= 1000 {
+		numLines = n
+	}
+
+	file, err := os.Open(cfg.LogFile)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Cannot open log file: " + err.Error()})
+		return
+	}
+	defer file.Close()
+
+	// Read all lines (simple approach for small files)
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+
+	// Return last N lines
+	start := 0
+	if len(lines) > numLines {
+		start = len(lines) - numLines
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"lines":      lines[start:],
+		"total":      len(lines),
+		"showing":    len(lines) - start,
+		"file_path":  cfg.LogFile,
+	})
 }

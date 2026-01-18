@@ -71,6 +71,11 @@ func New(database *db.DB, jwtSecret string, mailConfig *mail.Config, migrationsD
 	return s
 }
 
+// SetDashboardConfig sets the dashboard server configuration for display in settings.
+func (s *Server) SetDashboardConfig(cfg *dashboard.ServerConfig) {
+	s.dashboardHandler.SetServerConfig(cfg)
+}
+
 // initMail initializes the mail services based on configuration.
 func (s *Server) initMail() {
 	switch s.mailConfig.Mode {
