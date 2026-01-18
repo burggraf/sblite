@@ -38,6 +38,7 @@ const App = {
             pageSize: 25,
             totalUsers: 0,
             loading: false,
+            filter: 'all',  // 'all', 'regular', 'anonymous'
         },
         policies: {
             tables: [],           // Tables with RLS info
@@ -1653,9 +1654,9 @@ const App = {
         this.render();
 
         try {
-            const { page, pageSize } = this.state.users;
+            const { page, pageSize, filter } = this.state.users;
             const offset = (page - 1) * pageSize;
-            const res = await fetch(`/_/api/users?limit=${pageSize}&offset=${offset}`);
+            const res = await fetch(`/_/api/users?limit=${pageSize}&offset=${offset}&filter=${filter || 'all'}`);
             if (res.ok) {
                 const data = await res.json();
                 this.state.users.list = data.users;
@@ -1683,6 +1684,12 @@ const App = {
                 <div class="table-toolbar">
                     <h2>Users</h2>
                     <div class="toolbar-actions">
+                        <select class="form-select" style="width: auto;"
+                                onchange="App.setUserFilter(this.value)">
+                            <option value="all" ${this.state.users.filter === 'all' ? 'selected' : ''}>All Users</option>
+                            <option value="regular" ${this.state.users.filter === 'regular' ? 'selected' : ''}>Regular</option>
+                            <option value="anonymous" ${this.state.users.filter === 'anonymous' ? 'selected' : ''}>Anonymous</option>
+                        </select>
                         <button class="btn btn-primary btn-sm" onclick="App.showCreateUserModal()">+ Create User</button>
                         <button class="btn btn-secondary btn-sm" onclick="App.showInviteUserModal()">Invite User</button>
                         <span class="text-muted">${totalUsers} user${totalUsers !== 1 ? 's' : ''}</span>
@@ -1720,13 +1727,18 @@ const App = {
 
         return `
             <tr>
-                <td>${user.email}</td>
+                <td>
+                    ${user.is_anonymous ? `
+                        <span class="text-muted">(anonymous)</span>
+                        <span class="badge badge-muted">Anon</span>
+                    ` : this.escapeHtml(user.email || '')}
+                </td>
                 <td>${createdAt}</td>
                 <td>${lastSignIn}</td>
                 <td class="${user.email_confirmed_at ? 'text-success' : 'text-muted'}">${confirmed}</td>
                 <td class="actions-col">
                     <button class="btn-icon" onclick="App.showUserModal('${user.id}')">View</button>
-                    <button class="btn-icon" onclick="App.confirmDeleteUser('${user.id}', '${user.email}')">Delete</button>
+                    <button class="btn-icon" onclick="App.confirmDeleteUser('${user.id}', '${user.email || ''}')">Delete</button>
                 </td>
             </tr>
         `;
@@ -1762,6 +1774,12 @@ const App = {
 
     changeUsersPageSize(size) {
         this.state.users.pageSize = parseInt(size);
+        this.state.users.page = 1;
+        this.loadUsers();
+    },
+
+    setUserFilter(filter) {
+        this.state.users.filter = filter;
         this.state.users.page = 1;
         this.loadUsers();
     },
