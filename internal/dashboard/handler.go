@@ -154,6 +154,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/config", h.handleGetLogConfig)
 			r.Get("/tail", h.handleTailLogs)
 		})
+
+		// SQL Browser route (require auth)
+		r.Route("/sql", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Post("/", h.handleExecuteSQL)
+		})
 	})
 
 	// Static files - use Route group to ensure priority
@@ -2781,4 +2787,139 @@ func (h *Handler) handleTailLogs(w http.ResponseWriter, r *http.Request) {
 		"showing":    len(lines) - start,
 		"file_path":  cfg.LogFile,
 	})
+}
+
+// SQL Browser handlers
+
+type SQLRequest struct {
+	Query  string        `json:"query"`
+	Params []interface{} `json:"params"`
+}
+
+type SQLResponse struct {
+	Columns         []string        `json:"columns"`
+	Rows            [][]interface{} `json:"rows"`
+	RowCount        int             `json:"row_count"`
+	AffectedRows    int64           `json:"affected_rows,omitempty"`
+	ExecutionTimeMs int64           `json:"execution_time_ms"`
+	Type            string          `json:"type"`
+	Error           string          `json:"error,omitempty"`
+}
+
+func (h *Handler) handleExecuteSQL(w http.ResponseWriter, r *http.Request) {
+	var req SQLRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if strings.TrimSpace(req.Query) == "" {
+		http.Error(w, `{"error": "Query cannot be empty"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Detect query type
+	queryType := detectQueryType(req.Query)
+
+	startTime := time.Now()
+	var response SQLResponse
+	response.Type = queryType
+
+	if queryType == "SELECT" || queryType == "PRAGMA" {
+		// For SELECT queries, return rows
+		rows, err := h.db.Query(req.Query)
+		if err != nil {
+			response.Error = err.Error()
+			response.ExecutionTimeMs = time.Since(startTime).Milliseconds()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK) // Return 200 with error in body for SQL errors
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+		defer rows.Close()
+
+		// Get column names
+		columns, err := rows.Columns()
+		if err != nil {
+			response.Error = err.Error()
+			response.ExecutionTimeMs = time.Since(startTime).Milliseconds()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+		response.Columns = columns
+
+		// Fetch all rows
+		var resultRows [][]interface{}
+		for rows.Next() {
+			// Create slice of interface{} pointers for scanning
+			values := make([]interface{}, len(columns))
+			valuePtrs := make([]interface{}, len(columns))
+			for i := range values {
+				valuePtrs[i] = &values[i]
+			}
+
+			if err := rows.Scan(valuePtrs...); err != nil {
+				response.Error = err.Error()
+				break
+			}
+
+			// Convert values to JSON-friendly types
+			row := make([]interface{}, len(columns))
+			for i, v := range values {
+				switch val := v.(type) {
+				case []byte:
+					row[i] = string(val)
+				case nil:
+					row[i] = nil
+				default:
+					row[i] = val
+				}
+			}
+			resultRows = append(resultRows, row)
+		}
+
+		response.Rows = resultRows
+		response.RowCount = len(resultRows)
+	} else {
+		// For non-SELECT queries (INSERT, UPDATE, DELETE, etc.)
+		result, err := h.db.Exec(req.Query)
+		if err != nil {
+			response.Error = err.Error()
+			response.ExecutionTimeMs = time.Since(startTime).Milliseconds()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		affected, _ := result.RowsAffected()
+		response.AffectedRows = affected
+		response.RowCount = int(affected)
+	}
+
+	response.ExecutionTimeMs = time.Since(startTime).Milliseconds()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func detectQueryType(query string) string {
+	// Normalize query: trim whitespace and convert to uppercase for detection
+	normalized := strings.ToUpper(strings.TrimSpace(query))
+
+	// Check for common query types
+	prefixes := []string{
+		"SELECT", "INSERT", "UPDATE", "DELETE",
+		"CREATE", "DROP", "ALTER", "TRUNCATE",
+		"PRAGMA", "EXPLAIN", "VACUUM", "REINDEX",
+		"BEGIN", "COMMIT", "ROLLBACK",
+	}
+
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(normalized, prefix) {
+			return prefix
+		}
+	}
+
+	return "UNKNOWN"
 }

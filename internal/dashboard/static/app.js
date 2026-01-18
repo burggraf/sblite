@@ -72,6 +72,19 @@ const App = {
             activeTab: 'body',
             showHistory: false,
         },
+        sqlBrowser: {
+            query: 'SELECT * FROM ',
+            results: null,
+            loading: false,
+            error: null,
+            history: [],
+            page: 1,
+            pageSize: 50,
+            sort: { column: null, direction: null },
+            showHistory: false,
+            showTablePicker: false,
+            tables: [],
+        },
     },
 
     async init() {
@@ -312,6 +325,8 @@ const App = {
             this.loadLogs();
         } else if (view === 'apiConsole') {
             this.initApiConsole();
+        } else if (view === 'sqlBrowser') {
+            this.initSqlBrowser();
         } else {
             this.render();
         }
@@ -424,6 +439,8 @@ const App = {
                                onclick="App.navigate('logs')">Logs</a>
                             <a class="nav-item ${this.state.currentView === 'apiConsole' ? 'active' : ''}"
                                onclick="App.navigate('apiConsole')">API Console</a>
+                            <a class="nav-item ${this.state.currentView === 'sqlBrowser' ? 'active' : ''}"
+                               onclick="App.navigate('sqlBrowser')">SQL Browser</a>
                         </div>
                     </nav>
 
@@ -454,6 +471,8 @@ const App = {
                 return this.renderLogsView();
             case 'apiConsole':
                 return this.renderApiConsoleView();
+            case 'sqlBrowser':
+                return this.renderSqlBrowserView();
             default:
                 return '<div class="card">Select a section from the sidebar</div>';
         }
@@ -875,6 +894,9 @@ const App = {
                 break;
             case 'regenerateSecret':
                 content = this.renderRegenerateSecretModal();
+                break;
+            case 'confirmDestructive':
+                content = this.renderConfirmDestructiveModal();
                 break;
         }
 
@@ -3387,6 +3409,550 @@ const App = {
             .replace(/: (\d+)/g, ': <span class="json-number">$1</span>')
             .replace(/: (true|false)/g, ': <span class="json-boolean">$1</span>')
             .replace(/: (null)/g, ': <span class="json-null">$1</span>');
+    },
+
+    // SQL Browser methods
+
+    sqlKeywords: [
+        'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN',
+        'ORDER', 'BY', 'ASC', 'DESC', 'LIMIT', 'OFFSET', 'GROUP', 'HAVING',
+        'JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER', 'ON', 'AS', 'DISTINCT',
+        'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'CREATE', 'TABLE',
+        'DROP', 'ALTER', 'ADD', 'COLUMN', 'INDEX', 'PRIMARY', 'KEY', 'FOREIGN',
+        'REFERENCES', 'NULL', 'NOT NULL', 'DEFAULT', 'UNIQUE', 'CHECK',
+        'TRUNCATE', 'BEGIN', 'COMMIT', 'ROLLBACK', 'TRANSACTION',
+        'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'CAST', 'COALESCE', 'NULLIF',
+        'EXISTS', 'ALL', 'ANY', 'UNION', 'INTERSECT', 'EXCEPT',
+        'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'PRAGMA'
+    ],
+
+    async initSqlBrowser() {
+        // Load history from localStorage
+        const saved = localStorage.getItem('sblite_sql_browser_history');
+        if (saved) {
+            try {
+                this.state.sqlBrowser.history = JSON.parse(saved);
+            } catch (e) {
+                this.state.sqlBrowser.history = [];
+            }
+        }
+
+        // Load table list for autocomplete
+        try {
+            const res = await fetch('/_/api/tables');
+            if (res.ok) {
+                const tables = await res.json();
+                this.state.sqlBrowser.tables = tables;
+            }
+        } catch (e) {
+            console.error('Failed to load tables for autocomplete', e);
+        }
+
+        this.render();
+    },
+
+    saveSqlBrowserHistory() {
+        const history = this.state.sqlBrowser.history.slice(0, 30);
+        localStorage.setItem('sblite_sql_browser_history', JSON.stringify(history));
+    },
+
+    updateSqlQuery(query) {
+        this.state.sqlBrowser.query = query;
+        // Don't re-render on every keystroke
+    },
+
+    async runSqlQuery() {
+        // Get current query from textarea
+        const textarea = document.getElementById('sql-editor-input');
+        const query = textarea ? textarea.value : this.state.sqlBrowser.query;
+        this.state.sqlBrowser.query = query;
+
+        if (!query.trim()) {
+            this.state.sqlBrowser.error = 'Query cannot be empty';
+            this.render();
+            return;
+        }
+
+        // Check for destructive queries
+        const upperQuery = query.toUpperCase().trim();
+        const isDestructive = upperQuery.startsWith('DELETE') ||
+                              upperQuery.startsWith('DROP') ||
+                              upperQuery.startsWith('TRUNCATE') ||
+                              upperQuery.startsWith('ALTER');
+
+        if (isDestructive) {
+            const confirmed = await this.confirmDestructiveQuery(query);
+            if (!confirmed) return;
+        }
+
+        this.state.sqlBrowser.loading = true;
+        this.state.sqlBrowser.error = null;
+        this.state.sqlBrowser.results = null;
+        this.state.sqlBrowser.page = 1;
+        this.render();
+
+        try {
+            const res = await fetch('/_/api/sql', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query })
+            });
+
+            const data = await res.json();
+
+            if (data.error) {
+                this.state.sqlBrowser.error = data.error;
+            } else {
+                this.state.sqlBrowser.results = data;
+
+                // Add to history
+                const historyEntry = {
+                    id: Date.now().toString(),
+                    query: query,
+                    rowCount: data.row_count,
+                    type: data.type,
+                    timestamp: Date.now()
+                };
+
+                // Don't add duplicate consecutive queries
+                const lastEntry = this.state.sqlBrowser.history[0];
+                if (!lastEntry || lastEntry.query !== query) {
+                    this.state.sqlBrowser.history.unshift(historyEntry);
+                    this.saveSqlBrowserHistory();
+                }
+            }
+        } catch (e) {
+            this.state.sqlBrowser.error = 'Failed to execute query: ' + e.message;
+        }
+
+        this.state.sqlBrowser.loading = false;
+        this.render();
+    },
+
+    async confirmDestructiveQuery(query) {
+        const upperQuery = query.toUpperCase().trim();
+        const needsTyping = upperQuery.startsWith('DROP') || upperQuery.startsWith('TRUNCATE');
+        const isDeleteAll = upperQuery.startsWith('DELETE') && !upperQuery.includes('WHERE');
+
+        return new Promise((resolve) => {
+            this.state.modal = {
+                type: 'confirmDestructive',
+                data: {
+                    query,
+                    needsTyping,
+                    isDeleteAll,
+                    confirmText: '',
+                    resolve
+                }
+            };
+            this.render();
+        });
+    },
+
+    confirmDestructiveAction() {
+        const { needsTyping, confirmText, resolve } = this.state.modal.data;
+        if (needsTyping && confirmText !== 'CONFIRM') {
+            this.state.error = 'Please type CONFIRM to proceed';
+            this.render();
+            return;
+        }
+        this.closeModal();
+        resolve(true);
+    },
+
+    cancelDestructiveAction() {
+        const { resolve } = this.state.modal.data;
+        this.closeModal();
+        resolve(false);
+    },
+
+    updateDestructiveConfirmText(text) {
+        this.state.modal.data.confirmText = text;
+        // Don't re-render on every keystroke
+    },
+
+    clearSqlQuery() {
+        this.state.sqlBrowser.query = '';
+        this.state.sqlBrowser.results = null;
+        this.state.sqlBrowser.error = null;
+        this.render();
+    },
+
+    loadFromSqlHistory(id) {
+        const entry = this.state.sqlBrowser.history.find(h => h.id === id);
+        if (!entry) return;
+
+        this.state.sqlBrowser.query = entry.query;
+        this.state.sqlBrowser.showHistory = false;
+        this.render();
+    },
+
+    clearSqlHistory() {
+        this.state.sqlBrowser.history = [];
+        localStorage.removeItem('sblite_sql_browser_history');
+        this.state.sqlBrowser.showHistory = false;
+        this.render();
+    },
+
+    toggleSqlHistory() {
+        this.state.sqlBrowser.showHistory = !this.state.sqlBrowser.showHistory;
+        this.render();
+    },
+
+    toggleSqlTablePicker() {
+        this.state.sqlBrowser.showTablePicker = !this.state.sqlBrowser.showTablePicker;
+        this.render();
+    },
+
+    insertTableName(tableName) {
+        const textarea = document.getElementById('sql-editor-input');
+        if (textarea) {
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const text = textarea.value;
+            textarea.value = text.substring(0, start) + tableName + text.substring(end);
+            textarea.selectionStart = textarea.selectionEnd = start + tableName.length;
+            textarea.focus();
+            this.state.sqlBrowser.query = textarea.value;
+        }
+        this.state.sqlBrowser.showTablePicker = false;
+        this.render();
+    },
+
+    setSqlPage(page) {
+        this.state.sqlBrowser.page = page;
+        this.render();
+    },
+
+    sortSqlResults(column) {
+        const { sort } = this.state.sqlBrowser;
+        if (sort.column === column) {
+            // Toggle direction or clear
+            if (sort.direction === 'asc') {
+                this.state.sqlBrowser.sort = { column, direction: 'desc' };
+            } else if (sort.direction === 'desc') {
+                this.state.sqlBrowser.sort = { column: null, direction: null };
+            }
+        } else {
+            this.state.sqlBrowser.sort = { column, direction: 'asc' };
+        }
+        this.state.sqlBrowser.page = 1;
+        this.render();
+    },
+
+    exportSqlResults(format) {
+        const { results } = this.state.sqlBrowser;
+        if (!results || !results.rows || results.rows.length === 0) return;
+
+        let content, filename, mimeType;
+
+        if (format === 'csv') {
+            const headers = results.columns.join(',');
+            const rows = results.rows.map(row =>
+                row.map(cell => {
+                    if (cell === null) return '';
+                    const str = String(cell);
+                    return str.includes(',') || str.includes('"') || str.includes('\n')
+                        ? '"' + str.replace(/"/g, '""') + '"'
+                        : str;
+                }).join(',')
+            );
+            content = headers + '\n' + rows.join('\n');
+            filename = 'query_results.csv';
+            mimeType = 'text/csv';
+        } else {
+            content = JSON.stringify(results.rows.map(row => {
+                const obj = {};
+                results.columns.forEach((col, i) => obj[col] = row[i]);
+                return obj;
+            }), null, 2);
+            filename = 'query_results.json';
+            mimeType = 'application/json';
+        }
+
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+    },
+
+    highlightSql(sql) {
+        if (!sql) return '';
+        let result = this.escapeHtml(sql);
+
+        // Highlight strings (single quotes)
+        result = result.replace(/'([^']*)'/g, '<span class="sql-string">\'$1\'</span>');
+
+        // Highlight numbers
+        result = result.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="sql-number">$1</span>');
+
+        // Highlight keywords (case insensitive)
+        this.sqlKeywords.forEach(keyword => {
+            const regex = new RegExp('\\b(' + keyword + ')\\b', 'gi');
+            result = result.replace(regex, '<span class="sql-keyword">$1</span>');
+        });
+
+        // Highlight comments
+        result = result.replace(/--(.*)$/gm, '<span class="sql-comment">--$1</span>');
+
+        return result;
+    },
+
+    renderSqlBrowserView() {
+        const { query, results, loading, error, history, showHistory, showTablePicker, tables, page, pageSize, sort } = this.state.sqlBrowser;
+
+        return `
+            <div class="card-title">
+                SQL Browser
+                <div class="sql-browser-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="App.toggleSqlHistory()">
+                        History (${history.length})
+                    </button>
+                    ${showHistory ? this.renderSqlHistoryDropdown() : ''}
+                </div>
+            </div>
+            <div class="sql-browser-view">
+                <div class="sql-editor-container">
+                    <div class="sql-editor-header">
+                        <span>SQL Editor</span>
+                        <div class="sql-editor-toolbar">
+                            <div class="table-picker-container">
+                                <button class="btn btn-secondary btn-sm" onclick="App.toggleSqlTablePicker()">
+                                    Tables ▼
+                                </button>
+                                ${showTablePicker ? this.renderTablePicker() : ''}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sql-editor-wrapper">
+                        <pre class="sql-editor-highlight" aria-hidden="true">${this.highlightSql(query)}</pre>
+                        <textarea
+                            id="sql-editor-input"
+                            class="sql-editor-input"
+                            spellcheck="false"
+                            placeholder="Enter SQL query..."
+                            onkeydown="if(event.ctrlKey && event.key === 'Enter') { event.preventDefault(); App.runSqlQuery(); }"
+                            oninput="App.updateSqlQuery(this.value); document.querySelector('.sql-editor-highlight').innerHTML = App.highlightSql(this.value);"
+                        >${this.escapeHtml(query)}</textarea>
+                    </div>
+                    <div class="sql-editor-footer">
+                        <div class="sql-editor-buttons">
+                            <button class="btn btn-primary" onclick="App.runSqlQuery()" ${loading ? 'disabled' : ''}>
+                                ${loading ? 'Running...' : 'Run Query'} <span class="shortcut">Ctrl+Enter</span>
+                            </button>
+                            <button class="btn btn-secondary" onclick="App.clearSqlQuery()">Clear</button>
+                        </div>
+                        ${results && results.rows && results.rows.length > 0 ? `
+                            <div class="sql-export-buttons">
+                                <button class="btn btn-secondary btn-sm" onclick="App.exportSqlResults('csv')">Export CSV</button>
+                                <button class="btn btn-secondary btn-sm" onclick="App.exportSqlResults('json')">Export JSON</button>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <div class="sql-results-container">
+                    ${error ? `
+                        <div class="sql-error">
+                            <strong>Error:</strong> ${this.escapeHtml(error)}
+                        </div>
+                    ` : ''}
+
+                    ${results ? this.renderSqlResults() : `
+                        <div class="sql-results-empty">
+                            Run a query to see results
+                        </div>
+                    `}
+                </div>
+            </div>
+        `;
+    },
+
+    renderSqlResults() {
+        const { results, page, pageSize, sort } = this.state.sqlBrowser;
+
+        if (results.type !== 'SELECT' && results.type !== 'PRAGMA') {
+            return `
+                <div class="sql-results-message">
+                    <div class="sql-success">Query executed successfully</div>
+                    <div class="sql-affected">${results.affected_rows || 0} row${results.affected_rows !== 1 ? 's' : ''} affected</div>
+                    <div class="sql-time">${results.execution_time_ms}ms</div>
+                </div>
+            `;
+        }
+
+        if (!results.rows || results.rows.length === 0) {
+            return `
+                <div class="sql-results-message">
+                    <div>Query returned 0 rows</div>
+                    <div class="sql-time">${results.execution_time_ms}ms</div>
+                </div>
+            `;
+        }
+
+        // Sort rows if needed
+        let sortedRows = [...results.rows];
+        if (sort.column !== null) {
+            const colIndex = results.columns.indexOf(sort.column);
+            if (colIndex !== -1) {
+                sortedRows.sort((a, b) => {
+                    const aVal = a[colIndex];
+                    const bVal = b[colIndex];
+                    if (aVal === null) return 1;
+                    if (bVal === null) return -1;
+                    if (typeof aVal === 'number' && typeof bVal === 'number') {
+                        return sort.direction === 'asc' ? aVal - bVal : bVal - aVal;
+                    }
+                    const aStr = String(aVal);
+                    const bStr = String(bVal);
+                    return sort.direction === 'asc' ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+                });
+            }
+        }
+
+        // Paginate
+        const totalPages = Math.ceil(sortedRows.length / pageSize);
+        const startIdx = (page - 1) * pageSize;
+        const pageRows = sortedRows.slice(startIdx, startIdx + pageSize);
+
+        return `
+            <div class="sql-results-header">
+                <span>${results.row_count} row${results.row_count !== 1 ? 's' : ''}, ${results.execution_time_ms}ms</span>
+                <span>Page ${page} of ${totalPages}</span>
+            </div>
+            <div class="sql-results-table-wrapper">
+                <table class="sql-results-table">
+                    <thead>
+                        <tr>
+                            ${results.columns.map(col => `
+                                <th onclick="App.sortSqlResults('${col}')" class="sortable">
+                                    ${this.escapeHtml(col)}
+                                    ${sort.column === col ? (sort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                                </th>
+                            `).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${pageRows.map(row => `
+                            <tr>
+                                ${row.map(cell => `
+                                    <td title="${this.escapeHtml(String(cell ?? ''))}">
+                                        ${cell === null
+                                            ? '<span class="sql-null">null</span>'
+                                            : this.escapeHtml(String(cell).substring(0, 100)) + (String(cell).length > 100 ? '...' : '')}
+                                    </td>
+                                `).join('')}
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+            ${totalPages > 1 ? `
+                <div class="sql-pagination">
+                    <button class="btn btn-secondary btn-sm" onclick="App.setSqlPage(1)" ${page === 1 ? 'disabled' : ''}>First</button>
+                    <button class="btn btn-secondary btn-sm" onclick="App.setSqlPage(${page - 1})" ${page === 1 ? 'disabled' : ''}>Prev</button>
+                    ${this.renderSqlPageNumbers(page, totalPages)}
+                    <button class="btn btn-secondary btn-sm" onclick="App.setSqlPage(${page + 1})" ${page === totalPages ? 'disabled' : ''}>Next</button>
+                    <button class="btn btn-secondary btn-sm" onclick="App.setSqlPage(${totalPages})" ${page === totalPages ? 'disabled' : ''}>Last</button>
+                </div>
+            ` : ''}
+        `;
+    },
+
+    renderSqlPageNumbers(current, total) {
+        const pages = [];
+        const maxVisible = 5;
+
+        if (total <= maxVisible) {
+            for (let i = 1; i <= total; i++) pages.push(i);
+        } else {
+            pages.push(1);
+            if (current > 3) pages.push('...');
+            for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) {
+                pages.push(i);
+            }
+            if (current < total - 2) pages.push('...');
+            pages.push(total);
+        }
+
+        return pages.map(p => {
+            if (p === '...') return '<span class="page-ellipsis">...</span>';
+            return `<button class="btn btn-sm ${p === current ? 'btn-primary' : 'btn-secondary'}" onclick="App.setSqlPage(${p})">${p}</button>`;
+        }).join('');
+    },
+
+    renderSqlHistoryDropdown() {
+        const { history } = this.state.sqlBrowser;
+
+        return `
+            <div class="sql-history-dropdown">
+                ${history.length === 0 ? `
+                    <div class="history-empty">No history yet</div>
+                ` : `
+                    ${history.map(h => `
+                        <div class="history-item" onclick="App.loadFromSqlHistory('${h.id}')">
+                            <span class="history-query">${this.escapeHtml(h.query.substring(0, 40))}${h.query.length > 40 ? '...' : ''}</span>
+                            <span class="history-meta">${h.rowCount ?? '-'} rows</span>
+                            <span class="history-time">${this.formatTimeAgo(h.timestamp)}</span>
+                        </div>
+                    `).join('')}
+                    <div class="history-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="App.clearSqlHistory()">Clear History</button>
+                    </div>
+                `}
+            </div>
+        `;
+    },
+
+    renderTablePicker() {
+        const { tables } = this.state.sqlBrowser;
+
+        return `
+            <div class="table-picker-dropdown">
+                ${tables.length === 0 ? `
+                    <div class="picker-empty">No tables found</div>
+                ` : `
+                    ${tables.map(t => `
+                        <div class="picker-item" onclick="App.insertTableName('${t.name}')">
+                            ${this.escapeHtml(t.name)}
+                        </div>
+                    `).join('')}
+                `}
+            </div>
+        `;
+    },
+
+    renderConfirmDestructiveModal() {
+        const { query, needsTyping, isDeleteAll, confirmText } = this.state.modal.data;
+
+        return `
+            <div class="modal-header">
+                <h3>⚠️ Confirm Destructive Query</h3>
+                <button class="btn-icon" onclick="App.cancelDestructiveAction()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="warning-text">This query may modify or delete data:</p>
+                <pre class="destructive-query">${this.escapeHtml(query)}</pre>
+                ${isDeleteAll ? `
+                    <p class="danger-text">⚠️ Warning: This DELETE has no WHERE clause and will delete ALL rows!</p>
+                ` : ''}
+                ${needsTyping ? `
+                    <p>Type <strong>CONFIRM</strong> to proceed:</p>
+                    <input type="text" class="form-input" placeholder="Type CONFIRM"
+                        onchange="App.updateDestructiveConfirmText(this.value)"
+                        oninput="App.state.modal.data.confirmText = this.value">
+                ` : ''}
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.cancelDestructiveAction()">Cancel</button>
+                <button class="btn btn-danger" onclick="App.confirmDestructiveAction()">
+                    ${needsTyping ? 'Execute' : 'Yes, Execute'}
+                </button>
+            </div>
+        `;
     },
 
     escapeHtml(str) {
