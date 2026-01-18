@@ -123,7 +123,10 @@ const App = {
             viewMode: 'grid',
             selectedFiles: [],
             uploading: [],
-            loading: false
+            loading: false,
+            offset: 0,
+            hasMore: false,
+            pageSize: 100
         },
     },
 
@@ -5795,6 +5798,8 @@ const App = {
 
         const allItems = [...folders, ...files];
 
+        const { hasMore } = this.state.storage;
+
         return `
             <div class="file-browser">
                 ${this.renderFileBrowserToolbar()}
@@ -5802,7 +5807,7 @@ const App = {
                      ondragover="App.handleDragOver(event)"
                      ondragleave="App.handleDragLeave(event)"
                      ondrop="App.handleDrop(event)">
-                    ${loading ? '<div class="loading">Loading...</div>' : ''}
+                    ${loading && !hasMore ? '<div class="loading">Loading...</div>' : ''}
                     ${!loading && allItems.length === 0 ? `
                         <div class="file-browser-empty">
                             <p>No files in this ${currentPath ? 'folder' : 'bucket'}</p>
@@ -5810,6 +5815,13 @@ const App = {
                         </div>
                     ` : ''}
                     ${viewMode === 'grid' ? this.renderFileGrid(allItems) : this.renderFileList(allItems)}
+                    ${hasMore ? `
+                        <div class="load-more-container">
+                            <button class="btn btn-secondary" onclick="App.loadMoreObjects()" ${loading ? 'disabled' : ''}>
+                                ${loading ? 'Loading...' : 'Load More'}
+                            </button>
+                        </div>
+                    ` : ''}
                 </div>
                 ${this.renderUploadProgress()}
             </div>
@@ -5830,7 +5842,7 @@ const App = {
                         </span>
                         ${pathParts.map((part, i) => `
                             <span class="breadcrumb-sep">/</span>
-                            <span class="breadcrumb-item clickable" onclick="App.navigateToFolder('${pathParts.slice(0, i + 1).join('/')}/')">
+                            <span class="breadcrumb-item clickable" onclick="App.navigateToFolder('${this.escapeJsString(pathParts.slice(0, i + 1).join('/'))}/')">
                                 ${this.escapeHtml(part)}
                             </span>
                         `).join('')}
@@ -5861,7 +5873,7 @@ const App = {
                 ${items.map(item => {
                     if (item.isFolder) {
                         return `
-                            <div class="file-card folder" ondblclick="App.navigateToFolder('${currentPath}${item.name}/')">
+                            <div class="file-card folder" ondblclick="App.navigateToFolder('${this.escapeJsString(currentPath + item.name)}/')">
                                 <div class="file-icon folder-icon">&#128193;</div>
                                 <div class="file-name">${this.escapeHtml(item.name)}</div>
                             </div>
@@ -5875,11 +5887,13 @@ const App = {
 
                         return `
                             <div class="file-card ${isSelected ? 'selected' : ''}"
-                                 onclick="App.toggleFileSelection('${item.name}')"
-                                 ondblclick="App.downloadFile('${item.name}')">
+                                 data-filename="${this.escapeHtml(item.name)}"
+                                 onclick="App.toggleFileSelection(this.dataset.filename)"
+                                 ondblclick="App.downloadFile(this.dataset.filename)">
                                 <div class="file-select">
                                     <input type="checkbox" ${isSelected ? 'checked' : ''}
-                                           onclick="event.stopPropagation(); App.toggleFileSelection('${item.name}')">
+                                           data-filename="${this.escapeHtml(item.name)}"
+                                           onclick="event.stopPropagation(); App.toggleFileSelection(this.dataset.filename)">
                                 </div>
                                 ${thumbUrl ? `
                                     <div class="file-thumbnail" style="background-image: url('${thumbUrl}')"></div>
@@ -5916,7 +5930,7 @@ const App = {
                         ${items.map(item => {
                             if (item.isFolder) {
                                 return `
-                                    <tr class="file-row folder" ondblclick="App.navigateToFolder('${currentPath}${item.name}/')">
+                                    <tr class="file-row folder" ondblclick="App.navigateToFolder('${this.escapeJsString(currentPath + item.name)}/')">
                                         <td class="col-checkbox"></td>
                                         <td class="col-name">
                                             <span class="file-icon">&#128193;</span>
@@ -5931,11 +5945,13 @@ const App = {
                                 const isSelected = selectedFiles.includes(item.name);
                                 return `
                                     <tr class="file-row ${isSelected ? 'selected' : ''}"
-                                        onclick="App.toggleFileSelection('${item.name}')"
-                                        ondblclick="App.downloadFile('${item.name}')">
+                                        data-filename="${this.escapeHtml(item.name)}"
+                                        onclick="App.toggleFileSelection(this.dataset.filename)"
+                                        ondblclick="App.downloadFile(this.dataset.filename)">
                                         <td class="col-checkbox">
                                             <input type="checkbox" ${isSelected ? 'checked' : ''}
-                                                   onclick="event.stopPropagation(); App.toggleFileSelection('${item.name}')">
+                                                   data-filename="${this.escapeHtml(item.name)}"
+                                                   onclick="event.stopPropagation(); App.toggleFileSelection(this.dataset.filename)">
                                         </td>
                                         <td class="col-name">
                                             <span class="file-icon">${this.getFileIcon(item.displayName)}</span>
@@ -5954,11 +5970,17 @@ const App = {
         `;
     },
 
-    async loadObjects() {
-        const { selectedBucket, currentPath } = this.state.storage;
+    async loadObjects(loadMore = false) {
+        const { selectedBucket, currentPath, pageSize } = this.state.storage;
         if (!selectedBucket) return;
 
         this.state.storage.loading = true;
+
+        // Reset offset if not loading more
+        if (!loadMore) {
+            this.state.storage.offset = 0;
+        }
+
         this.render();
 
         try {
@@ -5968,18 +5990,43 @@ const App = {
                 body: JSON.stringify({
                     bucket: selectedBucket.name,
                     prefix: currentPath,
-                    limit: 100
+                    limit: pageSize + 1, // Request one extra to check if there's more
+                    offset: this.state.storage.offset
                 })
             });
             if (!res.ok) throw new Error('Failed to load objects');
-            this.state.storage.objects = await res.json() || [];
+            let objects = await res.json() || [];
+
+            // Check if there are more items
+            if (objects.length > pageSize) {
+                this.state.storage.hasMore = true;
+                objects = objects.slice(0, pageSize); // Remove the extra item
+            } else {
+                this.state.storage.hasMore = false;
+            }
+
+            if (loadMore) {
+                // Append to existing objects
+                this.state.storage.objects = [...this.state.storage.objects, ...objects];
+            } else {
+                this.state.storage.objects = objects;
+            }
+
+            // Update offset for next load
+            this.state.storage.offset += objects.length;
         } catch (err) {
             this.showToast(err.message, 'error');
-            this.state.storage.objects = [];
+            if (!loadMore) {
+                this.state.storage.objects = [];
+            }
         } finally {
             this.state.storage.loading = false;
             this.render();
         }
+    },
+
+    async loadMoreObjects() {
+        await this.loadObjects(true);
     },
 
     // File browser helper methods
@@ -6299,6 +6346,12 @@ const App = {
     escapeHtml(str) {
         if (!str) return '';
         return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    },
+
+    // Escape string for use in JavaScript string literals (single-quoted)
+    escapeJsString(str) {
+        if (!str) return '';
+        return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r');
     }
 };
 

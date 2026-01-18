@@ -3051,3 +3051,15 @@ small.text-muted {
 .file-browser-content.drag-over * {
     pointer-events: none;
 }
+
+/* Load More Button */
+.load-more-container {
+    display: flex;
+    justify-content: center;
+    padding: 1.5rem;
+    margin-top: 1rem;
+}
+
+.load-more-container .btn {
+    min-width: 150px;
+}
