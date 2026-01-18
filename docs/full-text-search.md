@@ -218,6 +218,43 @@ curl -X DELETE http://localhost:8080/admin/v1/tables/articles/fts/search \
   -H "Authorization: Bearer $SERVICE_KEY"
 ```
 
+## Dashboard UI
+
+FTS indexes can also be managed through the web dashboard at `http://localhost:8080/_`.
+
+### Accessing FTS Management
+
+1. Navigate to a table in the Tables view
+2. Click the **Schema** button
+3. Scroll down to the **Full-Text Search Indexes** section
+
+### Creating an Index
+
+1. Click **+ Create FTS Index**
+2. Enter an index name (e.g., "search")
+3. Select one or more text columns to index
+4. Choose a tokenizer:
+   - **Unicode61** (default) - Multi-language support
+   - **Porter Stemming** - English word stems
+   - **ASCII** - Simple ASCII tokenizer
+   - **Trigram** - Fuzzy/substring matching
+5. Click **Create Index**
+
+### Testing Search
+
+1. Click **Test** next to an index
+2. Enter a search query
+3. Select a query type (Plain, Phrase, Websearch, or FTS Query)
+4. Click **Search** to see results
+5. The modal shows:
+   - The FTS5 query translation
+   - Matching results with relevance scores
+
+### Other Actions
+
+- **Rebuild**: Re-index all data (useful after bulk imports)
+- **Delete**: Remove the FTS index
+
 ## How It Works
 
 ### External Content Tables
