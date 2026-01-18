@@ -5473,43 +5473,90 @@ const App = {
 
     renderFunctionDetail() {
         const { selected, config } = this.state.functions;
+        const { tree, currentFile, isDirty, isExpanded, loading } = this.state.functions.editor;
         const fn = this.state.functions.list.find(f => f.name === selected);
 
         if (!fn) return '';
 
+        if (loading) {
+            return `<div class="function-detail loading">Loading files...</div>`;
+        }
+
         return `
-            <div class="function-detail">
+            <div class="function-detail ${isExpanded ? 'expanded' : ''}">
                 <div class="function-detail-header">
-                    <h2>${this.escapeHtml(selected)}</h2>
-                    <div class="function-actions">
+                    <div class="header-left">
+                        <button class="btn btn-link" onclick="App.deselectFunction()">← Back</button>
+                        <h2>${this.escapeHtml(selected)}</h2>
+                    </div>
+                    <div class="header-right">
+                        <div class="dropdown">
+                            <button class="btn btn-secondary btn-sm dropdown-toggle" onclick="this.nextElementSibling.classList.toggle('show')">
+                                Config ▼
+                            </button>
+                            <div class="dropdown-menu">
+                                <label class="dropdown-item">
+                                    <input type="checkbox" ${fn.verify_jwt !== false ? 'checked' : ''}
+                                        onchange="App.toggleFunctionJWT('${selected}', this.checked)">
+                                    Require JWT
+                                </label>
+                            </div>
+                        </div>
+                        <div class="dropdown">
+                            <button class="btn btn-secondary btn-sm dropdown-toggle" onclick="this.nextElementSibling.classList.toggle('show')">
+                                Test ▼
+                            </button>
+                            <div class="dropdown-menu test-dropdown">
+                                ${this.renderFunctionTestConsole ? this.renderFunctionTestConsole() : '<div class="p-2">Test console</div>'}
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="App.toggleEditorExpand()" title="Toggle expand">
+                            ${isExpanded ? '⛶' : '⛶'}
+                        </button>
                         <button class="btn btn-danger btn-sm" onclick="App.deleteFunction('${selected}')">Delete</button>
                     </div>
                 </div>
 
-                <div class="function-section">
-                    <h3>Endpoint</h3>
-                    <div class="endpoint-info">
-                        <code>/functions/v1/${this.escapeHtml(selected)}</code>
-                        <button class="btn btn-secondary btn-xs" onclick="App.copyToClipboard('/functions/v1/${this.escapeHtml(selected)}')" title="Copy">Copy</button>
+                <div class="editor-container">
+                    ${!isExpanded ? `
+                        <div class="file-tree-panel">
+                            <div class="file-tree-header">
+                                <span>Files</span>
+                                <div class="file-tree-actions">
+                                    <button class="btn btn-xs" onclick="App.createNewFile()" title="New File">+ File</button>
+                                    <button class="btn btn-xs" onclick="App.createNewFolder()" title="New Folder">+ Folder</button>
+                                </div>
+                            </div>
+                            <div class="file-tree">
+                                ${tree ? this.renderFileTree(tree) : '<div class="empty">No files</div>'}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <div class="editor-panel">
+                        <div class="editor-header">
+                            <span class="current-file">
+                                ${currentFile ? this.escapeHtml(currentFile) : 'No file selected'}
+                                ${isDirty ? ' ●' : ''}
+                            </span>
+                            <div class="editor-actions">
+                                <button class="btn btn-primary btn-sm" onclick="App.saveFunctionFile()"
+                                    ${!currentFile || !isDirty ? 'disabled' : ''}>Save</button>
+                                <button class="btn btn-secondary btn-sm" onclick="App.restartFunctionsRuntime()"
+                                    title="Restart Runtime">⟳</button>
+                            </div>
+                        </div>
+                        <div id="monaco-editor-container" class="editor-content"></div>
                     </div>
                 </div>
+            </div>
 
-                <div class="function-section">
-                    <h3>Configuration</h3>
-                    <div class="config-item">
-                        <label>
-                            <input type="checkbox" ${fn.verify_jwt !== false ? 'checked' : ''}
-                                onchange="App.toggleFunctionJWT('${selected}', this.checked)">
-                            Require JWT Verification
-                        </label>
-                        <p class="config-help">When enabled, requests must include a valid Authorization header.</p>
-                    </div>
-                </div>
-
-                <div class="function-section">
-                    <h3>Test Function</h3>
-                    ${this.renderFunctionTestConsole()}
-                </div>
+            <!-- Context Menu -->
+            <div id="file-context-menu" class="context-menu" style="display: none;">
+                <div class="ctx-item ctx-new-file" onclick="App.createNewFile()">New File</div>
+                <div class="ctx-item ctx-new-folder" onclick="App.createNewFolder()">New Folder</div>
+                <div class="ctx-item" onclick="App.renameFile()">Rename</div>
+                <div class="ctx-item ctx-delete" onclick="App.deleteFile()">Delete</div>
             </div>
         `;
     },
