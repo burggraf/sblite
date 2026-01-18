@@ -277,20 +277,58 @@ These triggers ensure your FTS index is always up-to-date with your data.
 
 ## Migration to Supabase
 
-When migrating to Supabase/PostgreSQL:
+When migrating to Supabase/PostgreSQL, the `sblite migrate export` command automatically generates PostgreSQL DDL including FTS indexes.
 
-1. **Query syntax**: The textSearch API is compatible, so your client code will continue to work
-2. **Index recreation**: You'll need to create PostgreSQL tsvector indexes:
+### Automatic FTS Export
 
-```sql
--- Create GIN index for full-text search
-CREATE INDEX articles_search_idx ON articles
-USING GIN (to_tsvector('english', title || ' ' || body));
+```bash
+# Export schema including FTS indexes
+sblite migrate export --db data.db -o schema.sql
 ```
 
-3. **Tokenizers**: Map sblite tokenizers to PostgreSQL text search configurations:
-   - `unicode61` → `simple` or language-specific (e.g., `english`)
-   - `porter` → `english` (includes stemming)
+This generates:
+1. **CREATE TABLE** statements for all tables
+2. **CREATE INDEX** statements for FTS indexes using PostgreSQL's GIN indexes
+
+Example output:
+```sql
+CREATE TABLE articles (
+    id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    PRIMARY KEY (id)
+);
+
+-- Full-Text Search Indexes
+CREATE INDEX articles_search_fts_idx ON articles
+USING GIN (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(body, '')));
+```
+
+### Tokenizer Mapping
+
+sblite tokenizers are mapped to PostgreSQL text search configurations:
+
+| sblite Tokenizer | PostgreSQL Config | Notes |
+|------------------|-------------------|-------|
+| `porter` | `english` | Full English stemming support |
+| `unicode61` | `simple` | Unicode tokenization, no stemming |
+| `ascii` | `simple` | Basic tokenization |
+| `trigram` | `simple` | See note below |
+
+**Note on Trigram**: For true trigram/fuzzy search in PostgreSQL, enable the `pg_trgm` extension and modify the generated index to use `gin_trgm_ops`:
+
+```sql
+-- Enable extension
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- Modify the generated index
+CREATE INDEX articles_fuzzy_idx ON articles
+USING GIN (title gin_trgm_ops, body gin_trgm_ops);
+```
+
+### Query Compatibility
+
+The textSearch API is compatible, so your client code will continue to work without changes after migration
 
 ## Limitations
 

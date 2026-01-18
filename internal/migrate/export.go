@@ -3,22 +3,33 @@
 package migrate
 
 import (
+	"database/sql"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/markb/sblite/internal/fts"
 	"github.com/markb/sblite/internal/schema"
 )
 
 // Exporter generates PostgreSQL DDL from sblite schema metadata.
 type Exporter struct {
 	schema *schema.Schema
+	fts    *fts.Manager
 }
 
 // New creates a new Exporter with the given schema.
 func New(schema *schema.Schema) *Exporter {
 	return &Exporter{schema: schema}
+}
+
+// NewWithFTS creates a new Exporter with schema and FTS support.
+func NewWithFTS(schema *schema.Schema, db *sql.DB) *Exporter {
+	return &Exporter{
+		schema: schema,
+		fts:    fts.NewManager(db),
+	}
 }
 
 // ExportDDL generates PostgreSQL DDL for all user tables registered in the schema.
@@ -50,6 +61,18 @@ func (e *Exporter) ExportDDL() (string, error) {
 		sb.WriteString(tableDDL)
 		if i < len(tables)-1 {
 			sb.WriteString("\n")
+		}
+	}
+
+	// Export FTS indexes if FTS manager is available
+	if e.fts != nil {
+		ftsDDL, err := e.exportFTSIndexes(tables)
+		if err != nil {
+			return "", fmt.Errorf("failed to export FTS indexes: %w", err)
+		}
+		if ftsDDL != "" {
+			sb.WriteString("\n")
+			sb.WriteString(ftsDDL)
 		}
 	}
 
@@ -179,4 +202,76 @@ var numericRegex = regexp.MustCompile(`^-?\d+(\.\d+)?$`)
 
 func isNumeric(s string) bool {
 	return numericRegex.MatchString(s)
+}
+
+// exportFTSIndexes generates PostgreSQL DDL for FTS indexes.
+// Creates GIN indexes on to_tsvector() expressions.
+func (e *Exporter) exportFTSIndexes(tables []string) (string, error) {
+	var sb strings.Builder
+	hasIndexes := false
+
+	for _, tableName := range tables {
+		indexes, err := e.fts.ListIndexes(tableName)
+		if err != nil {
+			continue // Skip if error (table might not have FTS)
+		}
+
+		for _, idx := range indexes {
+			if !hasIndexes {
+				sb.WriteString("-- Full-Text Search Indexes\n")
+				sb.WriteString("-- Note: PostgreSQL uses tsvector columns and GIN indexes for FTS\n")
+				sb.WriteString("-- Adjust the text search configuration ('english') as needed\n")
+				sb.WriteString("\n")
+				hasIndexes = true
+			}
+
+			// Map sblite tokenizer to PostgreSQL text search configuration
+			tsConfig := mapTokenizerToTSConfig(idx.Tokenizer)
+
+			// Build the to_tsvector expression for multiple columns
+			// PostgreSQL uses: to_tsvector('english', coalesce(col1, '') || ' ' || coalesce(col2, ''))
+			var tsvectorExpr string
+			if len(idx.Columns) == 1 {
+				tsvectorExpr = fmt.Sprintf("to_tsvector('%s', coalesce(%s, ''))",
+					tsConfig, idx.Columns[0])
+			} else {
+				parts := make([]string, len(idx.Columns))
+				for i, col := range idx.Columns {
+					parts[i] = fmt.Sprintf("coalesce(%s, '')", col)
+				}
+				tsvectorExpr = fmt.Sprintf("to_tsvector('%s', %s)",
+					tsConfig, strings.Join(parts, " || ' ' || "))
+			}
+
+			// Generate index name: {table}_{index_name}_fts_idx
+			indexName := fmt.Sprintf("%s_%s_fts_idx", tableName, idx.IndexName)
+
+			// Write the CREATE INDEX statement
+			sb.WriteString(fmt.Sprintf("CREATE INDEX %s ON %s USING GIN (%s);\n",
+				indexName, tableName, tsvectorExpr))
+		}
+	}
+
+	return sb.String(), nil
+}
+
+// mapTokenizerToTSConfig maps sblite tokenizer names to PostgreSQL text search configurations.
+func mapTokenizerToTSConfig(tokenizer string) string {
+	switch tokenizer {
+	case "porter":
+		// Porter stemming maps to 'english' which includes stemming
+		return "english"
+	case "unicode61":
+		// Unicode-aware maps to 'simple' (no stemming, just tokenization)
+		return "simple"
+	case "ascii":
+		// ASCII maps to 'simple'
+		return "simple"
+	case "trigram":
+		// Trigram requires pg_trgm extension - use 'simple' and note in comment
+		// The user will need to create a GIN index with gin_trgm_ops instead
+		return "simple"
+	default:
+		return "simple"
+	}
 }

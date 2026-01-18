@@ -51,9 +51,9 @@ Examples:
 		}
 		defer database.Close()
 
-		// Create schema and exporter
+		// Create schema and exporter with FTS support
 		sch := schema.New(database.DB)
-		exporter := migrate.New(sch)
+		exporter := migrate.NewWithFTS(sch, database.DB)
 
 		// Export DDL
 		ddl, err := exporter.ExportDDL()

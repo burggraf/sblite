@@ -241,3 +241,86 @@ func TestMapDefaultToPostgres(t *testing.T) {
 		}
 	}
 }
+
+func TestExportDDL_WithFTSIndex(t *testing.T) {
+	database, sch := setupTestDB(t)
+
+	// Create test table
+	_, err := database.DB.Exec(`CREATE TABLE articles (
+		id INTEGER PRIMARY KEY,
+		title TEXT NOT NULL,
+		body TEXT NOT NULL
+	)`)
+	if err != nil {
+		t.Fatalf("failed to create table: %v", err)
+	}
+
+	// Register columns
+	cols := []schema.Column{
+		{TableName: "articles", ColumnName: "id", PgType: "integer", IsNullable: false, IsPrimary: true},
+		{TableName: "articles", ColumnName: "title", PgType: "text", IsNullable: false},
+		{TableName: "articles", ColumnName: "body", PgType: "text", IsNullable: false},
+	}
+	for _, col := range cols {
+		if err := sch.RegisterColumn(col); err != nil {
+			t.Fatalf("RegisterColumn failed: %v", err)
+		}
+	}
+
+	// Create FTS exporter with FTS support
+	exporter := NewWithFTS(sch, database.DB)
+
+	// Create FTS index using the fts package
+	ftsManager := exporter.fts
+	err = ftsManager.CreateIndex("articles", "search", []string{"title", "body"}, "porter")
+	if err != nil {
+		t.Fatalf("CreateIndex failed: %v", err)
+	}
+
+	// Export DDL
+	ddl, err := exporter.ExportDDL()
+	if err != nil {
+		t.Fatalf("ExportDDL failed: %v", err)
+	}
+
+	// Verify FTS index is included
+	if !strings.Contains(ddl, "Full-Text Search Indexes") {
+		t.Error("expected DDL to contain FTS section header")
+	}
+	if !strings.Contains(ddl, "articles_search_fts_idx") {
+		t.Error("expected DDL to contain FTS index name")
+	}
+	if !strings.Contains(ddl, "USING GIN") {
+		t.Error("expected DDL to contain GIN index type")
+	}
+	if !strings.Contains(ddl, "to_tsvector('english'") {
+		t.Error("expected DDL to contain to_tsvector with 'english' config for porter tokenizer")
+	}
+	if !strings.Contains(ddl, "coalesce(title, '')") {
+		t.Error("expected DDL to contain coalesce for title column")
+	}
+	if !strings.Contains(ddl, "coalesce(body, '')") {
+		t.Error("expected DDL to contain coalesce for body column")
+	}
+}
+
+func TestMapTokenizerToTSConfig(t *testing.T) {
+	tests := []struct {
+		tokenizer string
+		expected  string
+	}{
+		{"porter", "english"},
+		{"unicode61", "simple"},
+		{"ascii", "simple"},
+		{"trigram", "simple"},
+		{"unknown", "simple"},
+		{"", "simple"},
+	}
+
+	for _, tt := range tests {
+		result := mapTokenizerToTSConfig(tt.tokenizer)
+		if result != tt.expected {
+			t.Errorf("mapTokenizerToTSConfig(%q) = %q, want %q", tt.tokenizer, result, tt.expected)
+		}
+	}
+}
