@@ -220,6 +220,150 @@ func TestParseSelectAliasedInnerJoin(t *testing.T) {
 	}
 }
 
+func TestParseSelectWithHint(t *testing.T) {
+	// Test FK hint: users!sender_id(name)
+	p, err := ParseSelectString("id, content, users!sender_id(name)")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(p.Columns) != 3 {
+		t.Fatalf("expected 3 columns, got %d", len(p.Columns))
+	}
+
+	rel := p.Columns[2].Relation
+	if rel == nil {
+		t.Fatal("column 2: expected relation, got nil")
+	}
+	if rel.Name != "users" {
+		t.Errorf("relation name: expected 'users', got '%s'", rel.Name)
+	}
+	if rel.Hint != "sender_id" {
+		t.Errorf("relation hint: expected 'sender_id', got '%s'", rel.Hint)
+	}
+	if rel.Inner {
+		t.Error("relation should not be inner join")
+	}
+}
+
+func TestParseSelectWithAliasAndHint(t *testing.T) {
+	// Test alias with FK hint: sender:users!sender_id(name)
+	p, err := ParseSelectString("id, sender:users!sender_id(name)")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(p.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(p.Columns))
+	}
+
+	rel := p.Columns[1].Relation
+	if rel == nil {
+		t.Fatal("column 1: expected relation, got nil")
+	}
+	if rel.Name != "users" {
+		t.Errorf("relation name: expected 'users', got '%s'", rel.Name)
+	}
+	if rel.Alias != "sender" {
+		t.Errorf("relation alias: expected 'sender', got '%s'", rel.Alias)
+	}
+	if rel.Hint != "sender_id" {
+		t.Errorf("relation hint: expected 'sender_id', got '%s'", rel.Hint)
+	}
+}
+
+func TestParseSelectWithInnerAndHint(t *testing.T) {
+	// Test inner join with FK hint: users!inner!sender_id(name)
+	p, err := ParseSelectString("id, users!inner!sender_id(name)")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(p.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(p.Columns))
+	}
+
+	rel := p.Columns[1].Relation
+	if rel == nil {
+		t.Fatal("column 1: expected relation, got nil")
+	}
+	if rel.Name != "users" {
+		t.Errorf("relation name: expected 'users', got '%s'", rel.Name)
+	}
+	if !rel.Inner {
+		t.Error("relation should be inner join")
+	}
+	if rel.Hint != "sender_id" {
+		t.Errorf("relation hint: expected 'sender_id', got '%s'", rel.Hint)
+	}
+}
+
+func TestParseSelectWithAliasInnerAndHint(t *testing.T) {
+	// Test full syntax: sender:users!inner!sender_id(name)
+	p, err := ParseSelectString("id, sender:users!inner!sender_id(name)")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(p.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(p.Columns))
+	}
+
+	rel := p.Columns[1].Relation
+	if rel == nil {
+		t.Fatal("column 1: expected relation, got nil")
+	}
+	if rel.Name != "users" {
+		t.Errorf("relation name: expected 'users', got '%s'", rel.Name)
+	}
+	if rel.Alias != "sender" {
+		t.Errorf("relation alias: expected 'sender', got '%s'", rel.Alias)
+	}
+	if !rel.Inner {
+		t.Error("relation should be inner join")
+	}
+	if rel.Hint != "sender_id" {
+		t.Errorf("relation hint: expected 'sender_id', got '%s'", rel.Hint)
+	}
+}
+
+func TestParseSelectMultipleHints(t *testing.T) {
+	// Test multiple relations with hints (self-referential query pattern)
+	p, err := ParseSelectString("id, content, sender:users!sender_id(name), receiver:users!receiver_id(name)")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(p.Columns) != 4 {
+		t.Fatalf("expected 4 columns, got %d", len(p.Columns))
+	}
+
+	// Check sender relation
+	sender := p.Columns[2].Relation
+	if sender == nil {
+		t.Fatal("column 2: expected relation, got nil")
+	}
+	if sender.Name != "users" {
+		t.Errorf("sender relation name: expected 'users', got '%s'", sender.Name)
+	}
+	if sender.Alias != "sender" {
+		t.Errorf("sender alias: expected 'sender', got '%s'", sender.Alias)
+	}
+	if sender.Hint != "sender_id" {
+		t.Errorf("sender hint: expected 'sender_id', got '%s'", sender.Hint)
+	}
+
+	// Check receiver relation
+	receiver := p.Columns[3].Relation
+	if receiver == nil {
+		t.Fatal("column 3: expected relation, got nil")
+	}
+	if receiver.Name != "users" {
+		t.Errorf("receiver relation name: expected 'users', got '%s'", receiver.Name)
+	}
+	if receiver.Alias != "receiver" {
+		t.Errorf("receiver alias: expected 'receiver', got '%s'", receiver.Alias)
+	}
+	if receiver.Hint != "receiver_id" {
+		t.Errorf("receiver hint: expected 'receiver_id', got '%s'", receiver.Hint)
+	}
+}
+
 func TestParseSelectTwoLevel(t *testing.T) {
 	p, err := ParseSelectString("name, country(name, continent(name))")
 	if err != nil {

@@ -626,3 +626,250 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+func TestIsJunctionTable(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create tables for M2M relationship: users <-> user_roles <-> roles
+	_, err := db.Exec(`
+		CREATE TABLE users (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		t.Fatalf("failed to create users table: %v", err)
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE roles (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		t.Fatalf("failed to create roles table: %v", err)
+	}
+
+	// Junction table with composite PK containing both FKs
+	_, err = db.Exec(`
+		CREATE TABLE user_roles (
+			user_id TEXT REFERENCES users(id),
+			role_id TEXT REFERENCES roles(id),
+			PRIMARY KEY (user_id, role_id)
+		)
+	`)
+	if err != nil {
+		t.Fatalf("failed to create user_roles table: %v", err)
+	}
+
+	cache := NewRelationshipCache(db)
+
+	// Test that user_roles is detected as a junction table
+	isJunction, table1, table2, err := cache.isJunctionTable("user_roles")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isJunction {
+		t.Error("user_roles should be detected as a junction table")
+	}
+	// Check both tables are detected (order may vary)
+	if (table1 != "users" && table1 != "roles") || (table2 != "users" && table2 != "roles") {
+		t.Errorf("expected tables users and roles, got %s and %s", table1, table2)
+	}
+	if table1 == table2 {
+		t.Error("junction table should connect two different tables")
+	}
+
+	// Test that regular tables are not junction tables
+	isJunction, _, _, err = cache.isJunctionTable("users")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isJunction {
+		t.Error("users should not be a junction table")
+	}
+}
+
+func TestIsJunctionTable_NotJunction(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create a table with 2 FKs but they're not both in the PK
+	_, err := db.Exec(`CREATE TABLE countries (id TEXT PRIMARY KEY)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE cities (id TEXT PRIMARY KEY)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE city_links (
+			id TEXT PRIMARY KEY,
+			country_id TEXT REFERENCES countries(id),
+			city_id TEXT REFERENCES cities(id)
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cache := NewRelationshipCache(db)
+
+	// city_links has 2 FKs but they're not both in the PK
+	isJunction, _, _, err := cache.isJunctionTable("city_links")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isJunction {
+		t.Error("city_links should NOT be a junction table (FKs not in PK)")
+	}
+}
+
+func TestFindM2MRelationship(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create M2M relationship: users <-> user_roles <-> roles
+	db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT)`)
+	db.Exec(`CREATE TABLE roles (id TEXT PRIMARY KEY, name TEXT)`)
+	db.Exec(`
+		CREATE TABLE user_roles (
+			user_id TEXT REFERENCES users(id),
+			role_id TEXT REFERENCES roles(id),
+			PRIMARY KEY (user_id, role_id)
+		)
+	`)
+
+	cache := NewRelationshipCache(db)
+
+	// Find M2M from users to roles
+	info, err := cache.FindM2MRelationship("users", "roles")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info == nil {
+		t.Fatal("expected to find M2M relationship")
+	}
+
+	if info.JunctionTable != "user_roles" {
+		t.Errorf("junction table: expected 'user_roles', got '%s'", info.JunctionTable)
+	}
+	if info.SourceColumn != "user_id" {
+		t.Errorf("source column: expected 'user_id', got '%s'", info.SourceColumn)
+	}
+	if info.TargetColumn != "role_id" {
+		t.Errorf("target column: expected 'role_id', got '%s'", info.TargetColumn)
+	}
+
+	// Find M2M from roles to users (reverse direction)
+	info, err = cache.FindM2MRelationship("roles", "users")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info == nil {
+		t.Fatal("expected to find M2M relationship in reverse direction")
+	}
+	if info.JunctionTable != "user_roles" {
+		t.Errorf("junction table: expected 'user_roles', got '%s'", info.JunctionTable)
+	}
+}
+
+func TestFindM2MRelationship_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create tables with no M2M relationship
+	db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY)`)
+	db.Exec(`CREATE TABLE posts (id TEXT PRIMARY KEY)`)
+
+	cache := NewRelationshipCache(db)
+
+	info, err := cache.FindM2MRelationship("users", "posts")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info != nil {
+		t.Error("expected no M2M relationship to be found")
+	}
+}
+
+func TestFindRelationshipWithHint(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create tables with multiple FKs to same table (messages with sender and receiver)
+	db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT)`)
+	db.Exec(`
+		CREATE TABLE messages (
+			id TEXT PRIMARY KEY,
+			content TEXT,
+			sender_id TEXT REFERENCES users(id),
+			receiver_id TEXT REFERENCES users(id)
+		)
+	`)
+
+	cache := NewRelationshipCache(db)
+
+	// Without hint - should work if only one FK to the table
+	// But messages has 2 FKs to users, so let's test with hint
+
+	// Find with sender_id hint
+	rel, err := cache.FindRelationshipWithHint("messages", "users", "sender_id")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel == nil {
+		t.Fatal("expected to find relationship with sender_id hint")
+	}
+	if rel.LocalColumn != "sender_id" {
+		t.Errorf("expected LocalColumn 'sender_id', got '%s'", rel.LocalColumn)
+	}
+
+	// Find with receiver_id hint
+	rel, err = cache.FindRelationshipWithHint("messages", "users", "receiver_id")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel == nil {
+		t.Fatal("expected to find relationship with receiver_id hint")
+	}
+	if rel.LocalColumn != "receiver_id" {
+		t.Errorf("expected LocalColumn 'receiver_id', got '%s'", rel.LocalColumn)
+	}
+
+	// Invalid hint should return error with available hints
+	_, err = cache.FindRelationshipWithHint("messages", "users", "invalid_column")
+	if err == nil {
+		t.Error("expected error for invalid hint")
+	} else {
+		// Error should mention available hints
+		if !contains(err.Error(), "sender_id") || !contains(err.Error(), "receiver_id") {
+			t.Errorf("error should mention available hints, got: %v", err)
+		}
+	}
+}
+
+func TestFindRelationshipWithHint_EmptyHint(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	db.Exec(`CREATE TABLE countries (id TEXT PRIMARY KEY)`)
+	db.Exec(`CREATE TABLE cities (id TEXT PRIMARY KEY, country_id TEXT REFERENCES countries(id))`)
+
+	cache := NewRelationshipCache(db)
+
+	// Empty hint should fall back to FindRelationship
+	rel, err := cache.FindRelationshipWithHint("cities", "countries", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rel == nil {
+		t.Fatal("expected to find relationship with empty hint")
+	}
+	if rel.Name != "countries" {
+		t.Errorf("expected relationship name 'countries', got '%s'", rel.Name)
+	}
+}

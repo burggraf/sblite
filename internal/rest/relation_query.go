@@ -41,7 +41,14 @@ func (rqe *RelationQueryExecutor) ExecuteWithRelations(q Query, parsed *ParsedSe
 	neededColumns := make(map[string]bool)
 	for _, col := range parsed.Columns {
 		if col.Relation != nil {
-			relDef, err := rqe.findRelationByNameOrColumn(q.Table, col.Relation.Name)
+			// Look up relationship, using hint if provided
+			var relDef *Relationship
+			var err error
+			if col.Relation.Hint != "" {
+				relDef, err = rqe.relCache.FindRelationshipWithHint(q.Table, col.Relation.Name, col.Relation.Hint)
+			} else {
+				relDef, err = rqe.findRelationByNameOrColumn(q.Table, col.Relation.Name)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("failed to find relationship %s: %w", col.Relation.Name, err)
 			}
@@ -49,6 +56,16 @@ func (rqe *RelationQueryExecutor) ExecuteWithRelations(q Query, parsed *ParsedSe
 				// For many-to-one, we need the local FK column
 				// For one-to-many, we need the local PK column (usually 'id')
 				neededColumns[relDef.LocalColumn] = true
+			} else {
+				// Check for M2M relationship
+				junctionInfo, err := rqe.relCache.FindM2MRelationship(q.Table, col.Relation.Name)
+				if err != nil {
+					return nil, fmt.Errorf("failed to find M2M relationship %s: %w", col.Relation.Name, err)
+				}
+				if junctionInfo != nil {
+					// For M2M, we need the source reference column (usually 'id')
+					neededColumns[junctionInfo.SourceRef] = true
+				}
 			}
 		}
 	}
@@ -72,7 +89,18 @@ func (rqe *RelationQueryExecutor) ExecuteWithRelations(q Query, parsed *ParsedSe
 		RLSCondition:   q.RLSCondition,
 	}
 
-	mainSQL, args := BuildSelectQuery(mainQ)
+	// Use BuildSelectQueryWithRelations if there are related filters or ordering
+	var mainSQL string
+	var args []any
+	if mainQ.HasRelatedFilters() || mainQ.HasRelatedOrdering() {
+		var err error
+		mainSQL, args, err = BuildSelectQueryWithRelations(mainQ, rqe.relCache)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build query with related filters: %w", err)
+		}
+	} else {
+		mainSQL, args = BuildSelectQuery(mainQ)
+	}
 	rows, err := rqe.db.Query(mainSQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("main query failed: %w", err)
@@ -84,7 +112,16 @@ func (rqe *RelationQueryExecutor) ExecuteWithRelations(q Query, parsed *ParsedSe
 		return nil, fmt.Errorf("failed to scan main results: %w", err)
 	}
 
-	// 4. For each relation in the parsed select, execute sub-query and embed
+	// 4. Collect related filters for each relation
+	// These filters should also be applied to the embedded relation query
+	relatedFilters := make(map[string][]Filter)
+	for _, f := range q.Filters {
+		if f.IsRelatedFilter() {
+			relatedFilters[f.RelatedTable] = append(relatedFilters[f.RelatedTable], f)
+		}
+	}
+
+	// 5. For each relation in the parsed select, execute sub-query and embed
 	// Process inner joins which may filter results
 	for _, col := range parsed.Columns {
 		if col.Relation != nil {
@@ -95,13 +132,29 @@ func (rqe *RelationQueryExecutor) ExecuteWithRelations(q Query, parsed *ParsedSe
 					mods = &m
 				}
 			}
+
+			// Add related filters as filters on the embedded relation
+			if filters, ok := relatedFilters[col.Relation.Name]; ok {
+				if mods == nil {
+					mods = &RelationModifiers{}
+				}
+				// Convert related filters to regular filters for the embedded query
+				for _, f := range filters {
+					mods.Filters = append(mods.Filters, Filter{
+						Column:   f.RelatedColumn,
+						Operator: f.Operator,
+						Value:    f.Value,
+					})
+				}
+			}
+
 			if err := rqe.embedRelation(&results, q.Table, col.Relation, mods); err != nil {
 				return nil, fmt.Errorf("failed to embed relation %s: %w", col.Relation.Name, err)
 			}
 		}
 	}
 
-	// 5. Remove added FK columns that weren't explicitly requested
+	// 6. Remove added FK columns that weren't explicitly requested
 	requestedCols := parsed.ToColumnNames()
 	if !containsColumn(requestedCols, "*") {
 		for _, row := range results {
@@ -124,18 +177,39 @@ func (rqe *RelationQueryExecutor) embedRelation(results *[]map[string]any, table
 		return nil
 	}
 
-	// Look up the relationship definition (supports both table name and FK column name)
-	relDef, err := rqe.findRelationByNameOrColumn(table, rel.Name)
+	embedName := rel.Alias
+	if embedName == "" {
+		embedName = rel.Name
+	}
+
+	// First, try to find a direct relationship (with optional hint for disambiguation)
+	var relDef *Relationship
+	var err error
+
+	if rel.Hint != "" {
+		// Use hint-based lookup for disambiguation
+		relDef, err = rqe.relCache.FindRelationshipWithHint(table, rel.Name, rel.Hint)
+	} else {
+		// Traditional lookup by name or column
+		relDef, err = rqe.findRelationByNameOrColumn(table, rel.Name)
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to find relationship: %w", err)
 	}
 
+	// If no direct relationship found, try M2M through junction table
 	if relDef == nil {
-		// No relationship found - set all results to null for this relation
-		embedName := rel.Alias
-		if embedName == "" {
-			embedName = rel.Name
+		junctionInfo, err := rqe.relCache.FindM2MRelationship(table, rel.Name)
+		if err != nil {
+			return fmt.Errorf("failed to find M2M relationship: %w", err)
 		}
+
+		if junctionInfo != nil {
+			return rqe.embedManyToMany(results, table, junctionInfo, rel, mods)
+		}
+
+		// No relationship found - set all results to null for this relation
 		for _, row := range *results {
 			row[embedName] = nil
 		}
@@ -454,6 +528,167 @@ func (rqe *RelationQueryExecutor) embedOneToMany(results *[]map[string]any, relD
 	}
 
 	// If inner join, filter out rows without matching relations (empty arrays)
+	if rel.Inner {
+		filtered := make([]map[string]any, 0, len(*results))
+		for _, row := range *results {
+			if arr, ok := row[embedName].([]map[string]any); ok && len(arr) > 0 {
+				filtered = append(filtered, row)
+			}
+		}
+		*results = filtered
+	}
+
+	return nil
+}
+
+// embedManyToMany handles many-to-many relationships through a junction table.
+// e.g., users -> user_roles -> roles
+// Each result row gets an array of related objects from the target table.
+func (rqe *RelationQueryExecutor) embedManyToMany(results *[]map[string]any, table string, junctionInfo *JunctionInfo, rel *SelectRelation, mods *RelationModifiers) error {
+	embedName := rel.Alias
+	if embedName == "" {
+		embedName = rel.Name
+	}
+
+	// Initialize all results with empty arrays
+	for _, row := range *results {
+		row[embedName] = []map[string]any{}
+	}
+
+	// Collect all source PK values
+	pkValues := make([]any, 0)
+	pkSet := make(map[any]bool)
+
+	for _, row := range *results {
+		if pk, ok := row[junctionInfo.SourceRef]; ok && pk != nil {
+			if !pkSet[pk] {
+				pkValues = append(pkValues, pk)
+				pkSet[pk] = true
+			}
+		}
+	}
+
+	if len(pkValues) == 0 {
+		if rel.Inner {
+			*results = (*results)[:0]
+		}
+		return nil
+	}
+
+	// Determine which columns to select from the target table
+	cols := extractColumnNames(rel.Columns)
+	// Always include the target PK for matching
+	colsWithPK := ensureColumnIncluded(cols, junctionInfo.TargetRef)
+
+	// Build query that joins through the junction table
+	// SELECT target.* FROM target
+	// JOIN junction ON junction.target_col = target.pk
+	// WHERE junction.source_col IN (?, ?, ...)
+	placeholders := make([]string, len(pkValues))
+	for i := range pkValues {
+		placeholders[i] = "?"
+	}
+
+	quotedCols := make([]string, len(colsWithPK))
+	for i, c := range colsWithPK {
+		if c == "*" {
+			quotedCols[i] = fmt.Sprintf("%s.*", quoteIdentifier(rel.Name))
+		} else {
+			quotedCols[i] = fmt.Sprintf("%s.%s", quoteIdentifier(rel.Name), quoteIdentifier(c))
+		}
+	}
+
+	// We need to include the junction's source_col to know which source row each target belongs to
+	sqlStr := fmt.Sprintf(
+		`SELECT %s.%s AS _junction_source_id, %s FROM %s JOIN %s ON %s.%s = %s.%s WHERE %s.%s IN (%s)`,
+		quoteIdentifier(junctionInfo.JunctionTable), quoteIdentifier(junctionInfo.SourceColumn),
+		strings.Join(quotedCols, ", "),
+		quoteIdentifier(rel.Name),
+		quoteIdentifier(junctionInfo.JunctionTable),
+		quoteIdentifier(junctionInfo.JunctionTable), quoteIdentifier(junctionInfo.TargetColumn),
+		quoteIdentifier(rel.Name), quoteIdentifier(junctionInfo.TargetRef),
+		quoteIdentifier(junctionInfo.JunctionTable), quoteIdentifier(junctionInfo.SourceColumn),
+		strings.Join(placeholders, ", "))
+
+	// Apply relation-specific modifiers
+	args := make([]any, len(pkValues))
+	copy(args, pkValues)
+
+	if mods != nil {
+		// Apply regular filters to the target table
+		for _, f := range mods.Filters {
+			condition, filterArgs := f.ToSQL()
+			// Prefix with target table name
+			sqlStr += " AND " + condition
+			args = append(args, filterArgs...)
+		}
+
+		// Apply ORDER BY
+		if len(mods.Order) > 0 {
+			orderParts := make([]string, len(mods.Order))
+			for i, o := range mods.Order {
+				dir := "ASC"
+				if o.Desc {
+					dir = "DESC"
+				}
+				orderParts[i] = fmt.Sprintf("%s.%s %s", quoteIdentifier(rel.Name), quoteIdentifier(o.Column), dir)
+			}
+			sqlStr += " ORDER BY " + strings.Join(orderParts, ", ")
+		}
+	}
+
+	rows, err := rqe.db.Query(sqlStr, args...)
+	if err != nil {
+		return fmt.Errorf("M2M relation query failed: %w", err)
+	}
+
+	relResults, err := scanRowsGeneric(rows)
+	rows.Close()
+	if err != nil {
+		return fmt.Errorf("failed to scan M2M relation results: %w", err)
+	}
+
+	// Handle nested relations in the related results
+	for _, relCol := range rel.Columns {
+		if relCol.Relation != nil {
+			if err := rqe.embedRelation(&relResults, rel.Name, relCol.Relation, nil); err != nil {
+				return fmt.Errorf("failed to embed nested relation %s: %w", relCol.Relation.Name, err)
+			}
+		}
+	}
+
+	// Group results by source PK
+	relIndex := make(map[any][]map[string]any)
+	for _, relRow := range relResults {
+		sourceKey := relRow["_junction_source_id"]
+		delete(relRow, "_junction_source_id") // Remove the junction tracking column
+
+		// Remove PK column if not explicitly requested
+		if !containsColumn(cols, junctionInfo.TargetRef) && !containsColumn(cols, "*") {
+			delete(relRow, junctionInfo.TargetRef)
+		}
+
+		relIndex[sourceKey] = append(relIndex[sourceKey], relRow)
+	}
+
+	// Apply per-parent limit if specified
+	limitPerParent := 0
+	if mods != nil && mods.Limit > 0 {
+		limitPerParent = mods.Limit
+	}
+
+	// Embed into results
+	for _, row := range *results {
+		pk := row[junctionInfo.SourceRef]
+		if relData, ok := relIndex[pk]; ok {
+			if limitPerParent > 0 && len(relData) > limitPerParent {
+				relData = relData[:limitPerParent]
+			}
+			row[embedName] = relData
+		}
+	}
+
+	// If inner join, filter out rows without matching relations
 	if rel.Inner {
 		filtered := make([]map[string]any, 0, len(*results))
 		for _, row := range *results {

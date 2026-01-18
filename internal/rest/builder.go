@@ -5,7 +5,64 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 )
+
+// SQL reserved words that require quoting when used as identifiers
+var sqlReservedWords = map[string]bool{
+	"select": true, "from": true, "where": true, "and": true, "or": true,
+	"not": true, "null": true, "true": true, "false": true, "is": true,
+	"in": true, "like": true, "between": true, "exists": true, "case": true,
+	"when": true, "then": true, "else": true, "end": true, "as": true,
+	"join": true, "left": true, "right": true, "inner": true, "outer": true,
+	"on": true, "using": true, "group": true, "by": true, "having": true,
+	"order": true, "asc": true, "desc": true, "limit": true, "offset": true,
+	"union": true, "intersect": true, "except": true, "all": true, "distinct": true,
+	"insert": true, "into": true, "values": true, "update": true, "set": true,
+	"delete": true, "create": true, "table": true, "index": true, "drop": true,
+	"alter": true, "add": true, "column": true, "primary": true, "key": true,
+	"foreign": true, "references": true, "default": true, "check": true,
+	"unique": true, "constraint": true, "cascade": true, "restrict": true,
+}
+
+// needsQuoting returns true if the identifier contains characters that require quoting.
+func needsQuoting(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	// Check if it's a reserved word
+	if sqlReservedWords[strings.ToLower(name)] {
+		return true
+	}
+	for i, r := range name {
+		// First character can't be a digit
+		if i == 0 && unicode.IsDigit(r) {
+			return true
+		}
+		// Only allow letters, digits, and underscores without quoting
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
+			return true
+		}
+	}
+	return false
+}
+
+// quoteIdentifier safely quotes a SQL identifier (table or column name).
+// It escapes any embedded double quotes by doubling them.
+func quoteIdentifier(name string) string {
+	// Escape any existing double quotes by doubling them
+	escaped := strings.ReplaceAll(name, `"`, `""`)
+	return `"` + escaped + `"`
+}
+
+// quoteIdentifierIfNeeded only quotes the identifier if it contains special characters.
+// This produces cleaner SQL for simple identifiers.
+func quoteIdentifierIfNeeded(name string) string {
+	if needsQuoting(name) {
+		return quoteIdentifier(name)
+	}
+	return name
+}
 
 // buildSelectColumn converts a column specification to SQL, handling JSON paths.
 // Supports:
@@ -59,15 +116,15 @@ func buildSelectColumn(col string) string {
 			if alias == "" {
 				alias = pathParts[len(pathParts)-1]
 			}
-			return fmt.Sprintf("json_extract(\"%s\", '%s') AS \"%s\"", baseCol, jsonPath, alias)
+			return fmt.Sprintf("json_extract(%s, '%s') AS %s", quoteIdentifier(baseCol), jsonPath, quoteIdentifier(alias))
 		}
 	}
 
 	// Simple column or aliased column
 	if alias != "" {
-		return fmt.Sprintf("\"%s\" AS \"%s\"", remaining, alias)
+		return fmt.Sprintf("%s AS %s", quoteIdentifier(remaining), quoteIdentifier(alias))
 	}
-	return fmt.Sprintf("\"%s\"", col)
+	return quoteIdentifier(col)
 }
 
 // ToSQL converts a LogicalFilter to SQL with grouped conditions
@@ -110,7 +167,8 @@ func BuildSelectQuery(q Query) (string, []any) {
 	}
 
 	// FROM clause
-	sb.WriteString(fmt.Sprintf(" FROM \"%s\"", q.Table))
+	sb.WriteString(" FROM ")
+	sb.WriteString(quoteIdentifier(q.Table))
 
 	// WHERE clause (regular filters and logical filters)
 	// Note: Related filters (f.ToSQL() returns empty string) are skipped here
@@ -157,7 +215,7 @@ func BuildSelectQuery(q Query) (string, []any) {
 			if o.Desc {
 				dir = "DESC"
 			}
-			orders = append(orders, fmt.Sprintf("\"%s\" %s", o.Column, dir))
+			orders = append(orders, fmt.Sprintf("%s %s", quoteIdentifier(o.Column), dir))
 		}
 		sb.WriteString(strings.Join(orders, ", "))
 	}
@@ -226,11 +284,12 @@ func BuildSelectQueryWithRelations(q Query, relCache *RelationshipCache) (string
 	if len(joinedTables) > 0 {
 		// When joining, select main table columns explicitly
 		if len(q.Select) == 0 || (len(q.Select) == 1 && q.Select[0] == "*") {
-			sb.WriteString(fmt.Sprintf("\"%s\".*", mainTable))
+			sb.WriteString(quoteIdentifier(mainTable))
+			sb.WriteString(".*")
 		} else {
 			quotedCols := make([]string, len(q.Select))
 			for i, col := range q.Select {
-				quotedCols[i] = fmt.Sprintf("\"%s\".\"%s\"", mainTable, strings.TrimSpace(col))
+				quotedCols[i] = quoteIdentifier(mainTable) + "." + quoteIdentifier(strings.TrimSpace(col))
 			}
 			sb.WriteString(strings.Join(quotedCols, ", "))
 		}
@@ -240,19 +299,22 @@ func BuildSelectQueryWithRelations(q Query, relCache *RelationshipCache) (string
 		} else {
 			quotedCols := make([]string, len(q.Select))
 			for i, col := range q.Select {
-				quotedCols[i] = fmt.Sprintf("\"%s\"", strings.TrimSpace(col))
+				quotedCols[i] = quoteIdentifier(strings.TrimSpace(col))
 			}
 			sb.WriteString(strings.Join(quotedCols, ", "))
 		}
 	}
 
 	// FROM clause
-	sb.WriteString(fmt.Sprintf(" FROM \"%s\"", mainTable))
+	sb.WriteString(" FROM ")
+	sb.WriteString(quoteIdentifier(mainTable))
 
 	// Add LEFT JOINs for related table ordering
 	for _, jt := range joinedTables {
-		sb.WriteString(fmt.Sprintf(` LEFT JOIN "%s" AS "%s" ON "%s"."%s" = "%s"."%s"`,
-			jt.table, jt.alias, mainTable, jt.localCol, jt.alias, jt.foreignCol))
+		sb.WriteString(fmt.Sprintf(" LEFT JOIN %s AS %s ON %s.%s = %s.%s",
+			quoteIdentifier(jt.table), quoteIdentifier(jt.alias),
+			quoteIdentifier(mainTable), quoteIdentifier(jt.localCol),
+			quoteIdentifier(jt.alias), quoteIdentifier(jt.foreignCol)))
 	}
 
 	// Build WHERE clause
@@ -335,14 +397,14 @@ func BuildSelectQueryWithRelations(q Query, relCache *RelationshipCache) (string
 				// Use the joined table alias
 				if joinedTableIdx < len(joinedTables) {
 					jt := joinedTables[joinedTableIdx]
-					orders = append(orders, fmt.Sprintf("\"%s\".\"%s\" %s", jt.alias, o.Column, dir))
+					orders = append(orders, fmt.Sprintf("%s.%s %s", quoteIdentifier(jt.alias), quoteIdentifier(o.Column), dir))
 					joinedTableIdx++
 				}
 			} else {
 				if len(joinedTables) > 0 {
-					orders = append(orders, fmt.Sprintf("\"%s\".\"%s\" %s", mainTable, o.Column, dir))
+					orders = append(orders, fmt.Sprintf("%s.%s %s", quoteIdentifier(mainTable), quoteIdentifier(o.Column), dir))
 				} else {
-					orders = append(orders, fmt.Sprintf("\"%s\" %s", o.Column, dir))
+					orders = append(orders, fmt.Sprintf("%s %s", quoteIdentifier(o.Column), dir))
 				}
 			}
 		}
@@ -370,20 +432,20 @@ func buildRelatedFilterExists(mainTable string, f Filter, rel *Relationship) (st
 		// Main table has FK to related table
 		// EXISTS (SELECT 1 FROM related WHERE related.id = main.fk_col AND related.column = ?)
 		existsSQL = fmt.Sprintf(
-			`EXISTS (SELECT 1 FROM "%s" WHERE "%s"."%s" = "%s"."%s" AND %s)`,
-			rel.ForeignTable,
-			rel.ForeignTable, rel.ForeignColumn,
-			mainTable, rel.LocalColumn,
+			`EXISTS (SELECT 1 FROM %s WHERE %s.%s = %s.%s AND %s)`,
+			quoteIdentifier(rel.ForeignTable),
+			quoteIdentifier(rel.ForeignTable), quoteIdentifier(rel.ForeignColumn),
+			quoteIdentifier(mainTable), quoteIdentifier(rel.LocalColumn),
 			filterSQL,
 		)
 	} else {
 		// one-to-many: Related table has FK to main table
 		// EXISTS (SELECT 1 FROM related WHERE related.fk_col = main.id AND related.column = ?)
 		existsSQL = fmt.Sprintf(
-			`EXISTS (SELECT 1 FROM "%s" WHERE "%s"."%s" = "%s"."%s" AND %s)`,
-			rel.ForeignTable,
-			rel.ForeignTable, rel.ForeignColumn,
-			mainTable, rel.LocalColumn,
+			`EXISTS (SELECT 1 FROM %s WHERE %s.%s = %s.%s AND %s)`,
+			quoteIdentifier(rel.ForeignTable),
+			quoteIdentifier(rel.ForeignTable), quoteIdentifier(rel.ForeignColumn),
+			quoteIdentifier(mainTable), quoteIdentifier(rel.LocalColumn),
 			filterSQL,
 		)
 	}
@@ -419,7 +481,7 @@ func qualifyColumnWithTable(sql, table string) string {
 	// Pattern: "column" at the start or LOWER("column") etc.
 	if strings.HasPrefix(sql, "\"") {
 		// Simple case: starts with quoted column
-		return fmt.Sprintf("\"%s\".%s", table, sql)
+		return quoteIdentifier(table) + "." + sql
 	}
 	// Case: LOWER("column") or similar function
 	if idx := strings.Index(sql, "(\""); idx != -1 {
@@ -427,10 +489,10 @@ func qualifyColumnWithTable(sql, table string) string {
 		closeIdx := strings.Index(sql[idx+2:], "\"")
 		if closeIdx != -1 {
 			// Extract parts and rebuild with table prefix
-			prefix := sql[:idx+1]                       // "LOWER("
-			column := sql[idx+1 : idx+2+closeIdx+1]     // "\"column\""
-			suffix := sql[idx+2+closeIdx+1:]            // ") LIKE LOWER(?)"
-			return prefix + fmt.Sprintf("\"%s\".%s", table, column) + suffix
+			prefix := sql[:idx+1]                   // "LOWER("
+			column := sql[idx+1 : idx+2+closeIdx+1] // "\"column\""
+			suffix := sql[idx+2+closeIdx+1:]        // ") LIKE LOWER(?)"
+			return prefix + quoteIdentifier(table) + "." + column + suffix
 		}
 	}
 	// Fallback: return as-is
@@ -450,14 +512,14 @@ func BuildInsertQuery(table string, data map[string]any) (string, []any) {
 	args := make([]any, len(keys))
 
 	for i, k := range keys {
-		quotedCols[i] = fmt.Sprintf("\"%s\"", k)
+		quotedCols[i] = quoteIdentifier(k)
 		placeholders[i] = "?"
 		args[i] = data[k]
 	}
 
 	sql := fmt.Sprintf(
-		`INSERT INTO "%s" (%s) VALUES (%s)`,
-		table,
+		`INSERT INTO %s (%s) VALUES (%s)`,
+		quoteIdentifier(table),
 		strings.Join(quotedCols, ", "),
 		strings.Join(placeholders, ", "),
 	)
@@ -476,12 +538,12 @@ func BuildUpdateQuery(q Query, data map[string]any) (string, []any) {
 	var args []any
 	setClauses := make([]string, len(keys))
 	for i, k := range keys {
-		setClauses[i] = fmt.Sprintf("\"%s\" = ?", k)
+		setClauses[i] = fmt.Sprintf("%s = ?", quoteIdentifier(k))
 		args = append(args, data[k])
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`UPDATE "%s" SET %s`, q.Table, strings.Join(setClauses, ", ")))
+	sb.WriteString(fmt.Sprintf(`UPDATE %s SET %s`, quoteIdentifier(q.Table), strings.Join(setClauses, ", ")))
 
 	// WHERE clause from filters (regular and logical)
 	hasConditions := len(q.Filters) > 0 || len(q.LogicalFilters) > 0
@@ -525,7 +587,7 @@ func BuildDeleteQuery(q Query) (string, []any) {
 	var args []any
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf(`DELETE FROM "%s"`, q.Table))
+	sb.WriteString(fmt.Sprintf(`DELETE FROM %s`, quoteIdentifier(q.Table)))
 
 	// WHERE clause from filters (regular and logical)
 	hasConditions := len(q.Filters) > 0 || len(q.LogicalFilters) > 0
@@ -570,7 +632,7 @@ func BuildCountQuery(q Query) (string, []any) {
 	var args []any
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, q.Table))
+	sb.WriteString(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, quoteIdentifier(q.Table)))
 
 	// WHERE clause (regular filters and logical filters)
 	hasConditions := len(q.Filters) > 0 || len(q.LogicalFilters) > 0
@@ -626,7 +688,7 @@ func BuildUpsertQuery(table string, data map[string]any, onConflict []string, ig
 	args := make([]any, len(keys))
 
 	for i, k := range keys {
-		quotedCols[i] = fmt.Sprintf("\"%s\"", k)
+		quotedCols[i] = quoteIdentifier(k)
 		placeholders[i] = "?"
 		args[i] = data[k]
 	}
@@ -640,7 +702,7 @@ func BuildUpsertQuery(table string, data map[string]any, onConflict []string, ig
 	// Quote conflict columns
 	quotedConflictCols := make([]string, len(conflictCols))
 	for i, col := range conflictCols {
-		quotedConflictCols[i] = fmt.Sprintf("\"%s\"", col)
+		quotedConflictCols[i] = quoteIdentifier(col)
 	}
 
 	// Build conflict column set for excluding from update
@@ -652,8 +714,8 @@ func BuildUpsertQuery(table string, data map[string]any, onConflict []string, ig
 	if ignoreDuplicates {
 		// DO NOTHING - skip rows that conflict
 		sql := fmt.Sprintf(
-			`INSERT INTO "%s" (%s) VALUES (%s) ON CONFLICT (%s) DO NOTHING`,
-			table,
+			`INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO NOTHING`,
+			quoteIdentifier(table),
 			strings.Join(quotedCols, ", "),
 			strings.Join(placeholders, ", "),
 			strings.Join(quotedConflictCols, ", "),
@@ -666,7 +728,7 @@ func BuildUpsertQuery(table string, data map[string]any, onConflict []string, ig
 	for _, k := range keys {
 		// Don't update conflict columns (they're used for matching)
 		if !conflictColSet[k] {
-			updateClauses = append(updateClauses, fmt.Sprintf("\"%s\" = excluded.\"%s\"", k, k))
+			updateClauses = append(updateClauses, fmt.Sprintf("%s = excluded.%s", quoteIdentifier(k), quoteIdentifier(k)))
 		}
 	}
 
@@ -676,13 +738,13 @@ func BuildUpsertQuery(table string, data map[string]any, onConflict []string, ig
 		// Use a dummy update that doesn't change anything
 		// This handles the edge case where all columns are conflict columns
 		if len(keys) > 0 {
-			updateClauses = append(updateClauses, fmt.Sprintf("\"%s\" = excluded.\"%s\"", keys[0], keys[0]))
+			updateClauses = append(updateClauses, fmt.Sprintf("%s = excluded.%s", quoteIdentifier(keys[0]), quoteIdentifier(keys[0])))
 		}
 	}
 
 	sql := fmt.Sprintf(
-		`INSERT INTO "%s" (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s`,
-		table,
+		`INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s`,
+		quoteIdentifier(table),
 		strings.Join(quotedCols, ", "),
 		strings.Join(placeholders, ", "),
 		strings.Join(quotedConflictCols, ", "),

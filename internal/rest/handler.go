@@ -225,15 +225,16 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 					q.RelationModifiers[relName] = mods
 					continue
 				default:
-					// This is a filter on relation column: instruments.name=eq.flute
-					// Store in relation modifiers, not main query
+					// This is a filter on relation column: countries.name=eq.Canada
+					// This should filter the main table based on related table values,
+					// so we store it in q.Filters with the full dotted column name.
+					// It will be parsed as a related filter (RelatedTable set).
 					for _, value := range values {
-						filterStr := fmt.Sprintf("%s=%s", modifier, value)
+						filterStr := fmt.Sprintf("%s=%s", key, value)
 						if filter, err := ParseFilter(filterStr); err == nil {
-							mods.Filters = append(mods.Filters, filter)
+							q.Filters = append(q.Filters, filter)
 						}
 					}
-					q.RelationModifiers[relName] = mods
 					continue
 				}
 			}

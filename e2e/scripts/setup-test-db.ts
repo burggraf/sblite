@@ -122,24 +122,26 @@ CREATE TABLE IF NOT EXISTS reservations (
   during TEXT -- Range stored as TEXT
 );
 
--- Messages table (for self-join)
+-- Messages table (for self-join / aliased join testing)
+-- Both sender_id and receiver_id reference users(id)
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY,
   content TEXT NOT NULL,
-  sender_id INTEGER,
-  receiver_id INTEGER
+  sender_id INTEGER REFERENCES users(id),
+  receiver_id INTEGER REFERENCES users(id)
 );
 
--- Teams table
+-- Teams table (for M2M testing)
 CREATE TABLE IF NOT EXISTS teams (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL
 );
 
--- User-Teams junction table
+-- User-Teams junction table (for M2M testing)
+-- Both FKs are part of the composite PK, making this a strict junction table
 CREATE TABLE IF NOT EXISTS user_teams (
-  user_id INTEGER,
-  team_id INTEGER,
+  user_id INTEGER REFERENCES users(id),
+  team_id INTEGER REFERENCES teams(id),
   PRIMARY KEY (user_id, team_id)
 );
 

@@ -214,3 +214,241 @@ func (rc *RelationshipCache) FindRelationship(table, relationName string) (*Rela
 
 	return nil, nil
 }
+
+// FindRelationshipWithHint looks up a relationship with an optional FK hint.
+// If hint is provided, it matches against the FK column name.
+// If hint is empty, it falls back to FindRelationship.
+// Returns an error if the hint doesn't match any FK.
+func (rc *RelationshipCache) FindRelationshipWithHint(table, relationName, hint string) (*Relationship, error) {
+	if hint == "" {
+		return rc.FindRelationship(table, relationName)
+	}
+
+	rels, err := rc.GetRelationships(table)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find relationships matching the relation name and hint
+	var matching []*Relationship
+	var availableHints []string
+
+	for i := range rels {
+		rel := &rels[i]
+		if rel.Name == relationName || rel.ForeignTable == relationName {
+			// Collect available hints for error message
+			availableHints = append(availableHints, rel.LocalColumn)
+
+			// Check if the hint matches the FK column
+			if rel.LocalColumn == hint {
+				matching = append(matching, rel)
+			}
+		}
+	}
+
+	if len(matching) == 0 {
+		if len(availableHints) == 0 {
+			return nil, nil // No relationship found
+		}
+		return nil, fmt.Errorf("no foreign key '%s' found. Available: %v", hint, availableHints)
+	}
+
+	return matching[0], nil
+}
+
+// JunctionInfo describes a many-to-many junction table.
+type JunctionInfo struct {
+	JunctionTable  string // The junction table name (e.g., "user_roles")
+	SourceColumn   string // FK column pointing to source table
+	SourceRef      string // Column in source table being referenced
+	TargetColumn   string // FK column pointing to target table
+	TargetRef      string // Column in target table being referenced
+}
+
+// getTablePrimaryKeyColumns returns the primary key column(s) for a table.
+func (rc *RelationshipCache) getTablePrimaryKeyColumns(table string) ([]string, error) {
+	if !isValidTableName(table) {
+		return nil, fmt.Errorf("invalid table name: %s", table)
+	}
+
+	// PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
+	// pk is 1 for primary key columns (or > 1 for composite PK position)
+	rows, err := rc.db.Query(fmt.Sprintf("PRAGMA table_info('%s')", table))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query table info for %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	var pkCols []string
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notnull, pk int
+		var dfltValue sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notnull, &dfltValue, &pk); err != nil {
+			return nil, fmt.Errorf("failed to scan table info: %w", err)
+		}
+		if pk > 0 {
+			pkCols = append(pkCols, name)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating table info: %w", err)
+	}
+
+	return pkCols, nil
+}
+
+// getTableForeignKeys returns all foreign keys for a table.
+func (rc *RelationshipCache) getTableForeignKeys(table string) ([]struct {
+	LocalColumn   string
+	ForeignTable  string
+	ForeignColumn string
+}, error) {
+	if !isValidTableName(table) {
+		return nil, fmt.Errorf("invalid table name: %s", table)
+	}
+
+	rows, err := rc.db.Query(fmt.Sprintf("PRAGMA foreign_key_list('%s')", table))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query foreign keys for %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	var fks []struct {
+		LocalColumn   string
+		ForeignTable  string
+		ForeignColumn string
+	}
+
+	for rows.Next() {
+		var id, seq int
+		var foreignTable, localCol, foreignCol, onUpdate, onDelete, match string
+		if err := rows.Scan(&id, &seq, &foreignTable, &localCol, &foreignCol, &onUpdate, &onDelete, &match); err != nil {
+			return nil, fmt.Errorf("failed to scan foreign key: %w", err)
+		}
+		fks = append(fks, struct {
+			LocalColumn   string
+			ForeignTable  string
+			ForeignColumn string
+		}{localCol, foreignTable, foreignCol})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating foreign keys: %w", err)
+	}
+
+	return fks, nil
+}
+
+// isJunctionTable checks if a table is a "strict junction" table for M2M relationships.
+// A strict junction table has:
+// 1. Exactly 2 foreign keys pointing to different tables
+// 2. Both FK columns are part of the table's primary key
+func (rc *RelationshipCache) isJunctionTable(table string) (bool, string, string, error) {
+	// Get foreign keys
+	fks, err := rc.getTableForeignKeys(table)
+	if err != nil {
+		return false, "", "", err
+	}
+
+	// Must have exactly 2 FKs to different tables
+	if len(fks) != 2 {
+		return false, "", "", nil
+	}
+	if fks[0].ForeignTable == fks[1].ForeignTable {
+		return false, "", "", nil // Both FKs point to same table
+	}
+
+	// Get primary key columns
+	pkCols, err := rc.getTablePrimaryKeyColumns(table)
+	if err != nil {
+		return false, "", "", err
+	}
+
+	// Both FK columns must be in the primary key
+	pkSet := make(map[string]bool)
+	for _, col := range pkCols {
+		pkSet[col] = true
+	}
+
+	if !pkSet[fks[0].LocalColumn] || !pkSet[fks[1].LocalColumn] {
+		return false, "", "", nil // FK columns not part of PK
+	}
+
+	return true, fks[0].ForeignTable, fks[1].ForeignTable, nil
+}
+
+// FindM2MRelationship finds a many-to-many relationship between source and target tables
+// through a junction table. Returns nil if no such relationship exists.
+func (rc *RelationshipCache) FindM2MRelationship(sourceTable, targetTable string) (*JunctionInfo, error) {
+	if !isValidTableName(sourceTable) || !isValidTableName(targetTable) {
+		return nil, fmt.Errorf("invalid table name")
+	}
+
+	// Get all tables to check for junction tables
+	// Note: Use ESCAPE to properly handle underscore (which is a LIKE wildcard)
+	tables, err := rc.db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'auth_%' AND name NOT LIKE '\\_%%' ESCAPE '\\'")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tables: %w", err)
+	}
+	defer tables.Close()
+
+	var tableNames []string
+	for tables.Next() {
+		var tableName string
+		if err := tables.Scan(&tableName); err != nil {
+			return nil, fmt.Errorf("failed to scan table name: %w", err)
+		}
+		tableNames = append(tableNames, tableName)
+	}
+
+	if err := tables.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating tables: %w", err)
+	}
+
+	// Check each table to see if it's a junction between source and target
+	for _, table := range tableNames {
+		if table == sourceTable || table == targetTable {
+			continue
+		}
+
+		isJunction, table1, table2, err := rc.isJunctionTable(table)
+		if err != nil {
+			continue // Skip tables we can't check
+		}
+
+		if !isJunction {
+			continue
+		}
+
+		// Check if this junction connects source and target
+		if (table1 == sourceTable && table2 == targetTable) ||
+			(table1 == targetTable && table2 == sourceTable) {
+
+			// Get FK details to build JunctionInfo
+			fks, err := rc.getTableForeignKeys(table)
+			if err != nil {
+				return nil, err
+			}
+
+			var info JunctionInfo
+			info.JunctionTable = table
+
+			for _, fk := range fks {
+				if fk.ForeignTable == sourceTable {
+					info.SourceColumn = fk.LocalColumn
+					info.SourceRef = fk.ForeignColumn
+				} else if fk.ForeignTable == targetTable {
+					info.TargetColumn = fk.LocalColumn
+					info.TargetRef = fk.ForeignColumn
+				}
+			}
+
+			return &info, nil
+		}
+	}
+
+	return nil, nil // No junction table found
+}

@@ -115,11 +115,35 @@ describe('REST API - SELECT Operations', () => {
    * Example 5: Query referenced tables through a join table
    * Docs: https://supabase.com/docs/reference/javascript/select#query-referenced-tables-through-a-join-table
    *
-   * Note: Not implemented in Phase 1 - requires embedded resources
+   * Queries through junction tables like user_teams to get users with their teams.
    */
   describe('5. Query referenced tables through join table', () => {
-    it.skip('should query through many-to-many join tables', async () => {
-      // Not implemented in Phase 1
+    it('should query through many-to-many join tables', async () => {
+      // Query users with their teams through the user_teams junction table
+      const { data, error } = await supabase.from('users').select(`
+          id,
+          name,
+          teams (
+            id,
+            name
+          )
+        `)
+
+      expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBeGreaterThan(0)
+
+      // User 1 (John Doe) should have teams
+      const john = data!.find((u) => u.name === 'John Doe')
+      expect(john).toBeDefined()
+      expect(Array.isArray(john!.teams)).toBe(true)
+      expect(john!.teams.length).toBe(2) // John is in both teams
+
+      // User 2 (Jane Smith) should have one team
+      const jane = data!.find((u) => u.name === 'Jane Smith')
+      expect(jane).toBeDefined()
+      expect(Array.isArray(jane!.teams)).toBe(true)
+      expect(jane!.teams.length).toBe(1) // Jane is in Team Alpha only
     })
   })
 
@@ -127,11 +151,43 @@ describe('REST API - SELECT Operations', () => {
    * Example 6: Query the same referenced table multiple times
    * Docs: https://supabase.com/docs/reference/javascript/select#query-the-same-referenced-table-multiple-times
    *
-   * Note: Not implemented in Phase 1 - requires embedded resources with aliases
+   * Uses hint syntax (!) to disambiguate when multiple FKs point to the same table.
    */
   describe('6. Query same referenced table multiple times', () => {
-    it.skip('should allow aliasing for multiple references to same table', async () => {
-      // Not implemented in Phase 1
+    it('should allow aliasing for multiple references to same table', async () => {
+      // Query messages with both sender and receiver user info
+      // Uses !fk_hint syntax to disambiguate the two FKs to users table
+      const { data, error } = await supabase.from('messages').select(`
+          id,
+          content,
+          sender:users!sender_id (
+            id,
+            name
+          ),
+          receiver:users!receiver_id (
+            id,
+            name
+          )
+        `)
+
+      expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBeGreaterThan(0)
+
+      // Check first message structure
+      const msg = data![0]
+      expect(msg).toHaveProperty('id')
+      expect(msg).toHaveProperty('content')
+      expect(msg).toHaveProperty('sender')
+      expect(msg).toHaveProperty('receiver')
+      expect(msg.sender).toHaveProperty('name')
+      expect(msg.receiver).toHaveProperty('name')
+
+      // Verify the relationships are correct (message 1: John -> Jane)
+      const msg1 = data!.find((m) => m.id === 1)
+      expect(msg1).toBeDefined()
+      expect(msg1!.sender.name).toBe('John Doe')
+      expect(msg1!.receiver.name).toBe('Jane Smith')
     })
   })
 
@@ -151,11 +207,23 @@ describe('REST API - SELECT Operations', () => {
    * Example 8: Filtering through referenced tables
    * Docs: https://supabase.com/docs/reference/javascript/select#filtering-through-referenced-tables
    *
-   * Note: Not implemented in Phase 1 - requires embedded resources
+   * Filter main table based on values in referenced tables.
    */
   describe('8. Filtering through referenced tables', () => {
-    it.skip('should filter on fields from referenced tables', async () => {
-      // Not implemented in Phase 1
+    it('should filter on fields from referenced tables', async () => {
+      // Get cities where the country name is 'Canada'
+      const { data, error } = await supabase
+        .from('cities')
+        .select('name, countries(name)')
+        .eq('countries.name', 'Canada')
+
+      expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBe(2) // Toronto and Vancouver
+
+      // All returned cities should be in Canada
+      const cityNames = data!.map((c) => c.name).sort()
+      expect(cityNames).toEqual(['Toronto', 'Vancouver'])
     })
   })
 
@@ -305,8 +373,11 @@ describe('REST API - SELECT Operations', () => {
  * - Inner join syntax (!inner)
  * - JSON path extraction (-> and ->>)
  * - HEAD method for count-only queries (head: true)
+ * - Many-to-many join table queries (through junction tables)
+ * - Aliased joins with FK hints: alias:table!fk_hint(cols)
+ * - Filtering through referenced tables: .eq('relation.col', 'value')
  *
  * NOT IMPLEMENTED:
- * - Many-to-many join table queries
  * - Schema switching (N/A for SQLite)
+ * - Table names with spaces (requires special setup)
  */

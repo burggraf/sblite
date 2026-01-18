@@ -177,9 +177,9 @@ func (f Filter) ToSQL() (string, []any) {
 	var quotedColumn string
 	if f.JSONPath != "" {
 		// Use json_extract for JSON path queries
-		quotedColumn = fmt.Sprintf("json_extract(\"%s\", '%s')", f.Column, f.JSONPath)
+		quotedColumn = fmt.Sprintf("json_extract(%s, '%s')", quoteIdentifier(f.Column), f.JSONPath)
 	} else {
-		quotedColumn = fmt.Sprintf("\"%s\"", f.Column)
+		quotedColumn = quoteIdentifier(f.Column)
 	}
 
 	// Helper to convert filter value to appropriate type for JSON comparisons
@@ -553,7 +553,7 @@ func (f Filter) ToRelatedSQL() (string, []any) {
 		return "", nil
 	}
 
-	quotedColumn := fmt.Sprintf("\"%s\"", f.RelatedColumn)
+	quotedColumn := quoteIdentifier(f.RelatedColumn)
 
 	switch f.Operator {
 	case "is":

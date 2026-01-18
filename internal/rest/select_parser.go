@@ -18,10 +18,12 @@ type SelectColumn struct {
 
 // SelectRelation represents a nested relation in a select statement.
 // Relations are specified as "table(columns)" or "alias:table!inner(columns)".
+// Hints can be used to disambiguate FKs: "alias:table!fk_column(columns)"
 type SelectRelation struct {
 	Name    string         // Relation/table name
 	Alias   string         // Optional alias
 	Inner   bool           // !inner join modifier
+	Hint    string         // FK column or constraint name hint (for disambiguation)
 	Columns []SelectColumn // Nested columns
 }
 
@@ -176,6 +178,9 @@ func parseJSONPath(input string, existingAlias string) (SelectColumn, error) {
 // - "alias:table(cols)"
 // - "table!inner(cols)"
 // - "alias:table!inner(cols)"
+// - "table!fk_hint(cols)" - FK column hint for disambiguation
+// - "alias:table!fk_hint(cols)"
+// - "alias:table!inner!fk_hint(cols)" - both inner and hint
 func parseRelationSelect(part string) (SelectColumn, error) {
 	parenIdx := strings.Index(part, "(")
 	if parenIdx == -1 {
@@ -189,16 +194,38 @@ func parseRelationSelect(part string) (SelectColumn, error) {
 
 	prefix := part[:parenIdx]
 
-	// Check for !inner modifier
-	inner := strings.Contains(prefix, "!inner")
-	prefix = strings.Replace(prefix, "!inner", "", 1)
-
-	var alias, name string
+	// Parse alias if present (before colon)
+	var alias string
 	if colonIdx := strings.Index(prefix, ":"); colonIdx != -1 {
 		alias = prefix[:colonIdx]
-		name = prefix[colonIdx+1:]
-		if alias == "" || name == "" {
+		prefix = prefix[colonIdx+1:]
+		if alias == "" {
 			return SelectColumn{}, fmt.Errorf("invalid relation alias format: %s", part)
+		}
+	}
+
+	// Parse modifiers (after !)
+	// Modifiers can be: !inner, !fk_column_name, or both
+	var name string
+	var inner bool
+	var hint string
+
+	if bangIdx := strings.Index(prefix, "!"); bangIdx != -1 {
+		name = prefix[:bangIdx]
+		modifiers := prefix[bangIdx+1:]
+
+		// Split by ! to get all modifiers
+		for _, mod := range strings.Split(modifiers, "!") {
+			mod = strings.TrimSpace(mod)
+			if mod == "" {
+				continue
+			}
+			if mod == "inner" {
+				inner = true
+			} else {
+				// Any other modifier is treated as a FK hint
+				hint = mod
+			}
 		}
 	} else {
 		name = prefix
@@ -221,6 +248,7 @@ func parseRelationSelect(part string) (SelectColumn, error) {
 			Name:    name,
 			Alias:   alias,
 			Inner:   inner,
+			Hint:    hint,
 			Columns: nested.Columns,
 		},
 	}, nil
