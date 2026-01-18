@@ -275,7 +275,7 @@ Web dashboard accessible at `http://localhost:8080/_`
 | `/_/api/data/{table}` | POST | Insert row |
 | `/_/api/data/{table}` | PATCH | Update rows |
 | `/_/api/data/{table}` | DELETE | Delete rows |
-| `/_/api/users` | GET | List users (paginated) |
+| `/_/api/users` | GET | List users (paginated, supports filter=all/regular/anonymous) |
 | `/_/api/users` | POST | Create user |
 | `/_/api/users/invite` | POST | Invite user by email |
 | `/_/api/users/{id}` | GET | Get user details |
@@ -290,7 +290,8 @@ Web dashboard accessible at `http://localhost:8080/_`
 | `/_/api/rls/{table}` | GET | Get table RLS status |
 | `/_/api/rls/{table}` | PUT | Enable/disable RLS |
 | `/_/api/settings/server` | GET | Get server info |
-| `/_/api/settings/auth` | GET | Get auth settings |
+| `/_/api/settings/auth` | GET | Get auth settings (includes allow_anonymous, anonymous_user_count) |
+| `/_/api/settings/auth` | PATCH | Update auth settings (allow_anonymous) |
 | `/_/api/settings/auth/regenerate` | POST | Regenerate JWT secret |
 | `/_/api/settings/templates` | GET | List email templates |
 | `/_/api/settings/templates/{type}` | PATCH | Update template |
