@@ -5882,6 +5882,143 @@ const App = {
         if (menu) menu.style.display = 'none';
     },
 
+    async createNewFile() {
+        const name = this.state.functions.selected;
+        if (!name) return;
+
+        const path = this._contextMenuPath || '';
+        const filename = prompt('Enter file name (e.g., utils.ts):');
+        if (!filename) return;
+
+        // Validate extension
+        const ext = filename.split('.').pop();
+        const allowed = ['ts', 'js', 'json', 'mjs', 'tsx', 'jsx', 'html', 'css', 'md', 'txt'];
+        if (!allowed.includes(ext)) {
+            alert(`File type .${ext} not allowed. Use: ${allowed.join(', ')}`);
+            return;
+        }
+
+        const fullPath = path && this._contextMenuType === 'dir' ? `${path}/${filename}` : filename;
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files/${fullPath}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: '' })
+            });
+
+            if (res.ok) {
+                await this.loadFunctionFiles(name);
+                await this.openFunctionFile(fullPath);
+            } else {
+                const err = await res.json();
+                alert(err.error || 'Failed to create file');
+            }
+        } catch (err) {
+            console.error('Failed to create file:', err);
+        }
+
+        this.hideContextMenu();
+    },
+
+    async createNewFolder() {
+        const name = this.state.functions.selected;
+        if (!name) return;
+
+        const path = this._contextMenuPath || '';
+        const dirname = prompt('Enter folder name:');
+        if (!dirname) return;
+
+        const fullPath = path && this._contextMenuType === 'dir' ? `${path}/${dirname}` : dirname;
+
+        // Create folder by creating a placeholder file
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files/${fullPath}/.gitkeep`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: '' })
+            });
+
+            if (res.ok) {
+                await this.loadFunctionFiles(name);
+            } else {
+                alert('Failed to create folder');
+            }
+        } catch (err) {
+            console.error('Failed to create folder:', err);
+        }
+
+        this.hideContextMenu();
+    },
+
+    async renameFile() {
+        const name = this.state.functions.selected;
+        const oldPath = this._contextMenuPath;
+        if (!name || !oldPath) return;
+
+        const oldName = oldPath.split('/').pop();
+        const newName = prompt('Enter new name:', oldName);
+        if (!newName || newName === oldName) return;
+
+        const newPath = oldPath.replace(/[^/]+$/, newName);
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files/rename`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ oldPath, newPath })
+            });
+
+            if (res.ok) {
+                // Update current file if it was renamed
+                if (this.state.functions.editor.currentFile === oldPath) {
+                    this.state.functions.editor.currentFile = newPath;
+                }
+                await this.loadFunctionFiles(name);
+            } else {
+                alert('Failed to rename');
+            }
+        } catch (err) {
+            console.error('Failed to rename:', err);
+        }
+
+        this.hideContextMenu();
+    },
+
+    async deleteFile() {
+        const name = this.state.functions.selected;
+        const path = this._contextMenuPath;
+        if (!name || !path) return;
+
+        if (!confirm(`Delete ${path}?`)) return;
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files/${path}`, {
+                method: 'DELETE'
+            });
+
+            if (res.ok) {
+                // Clear editor if deleted file was open
+                if (this.state.functions.editor.currentFile === path) {
+                    this.state.functions.editor.currentFile = null;
+                    this.state.functions.editor.content = '';
+                    this.state.functions.editor.originalContent = '';
+                    this.state.functions.editor.isDirty = false;
+                    if (this.state.functions.editor.monacoEditor) {
+                        this.state.functions.editor.monacoEditor.setValue('// Select a file to edit');
+                    }
+                }
+                await this.loadFunctionFiles(name);
+            } else {
+                alert('Failed to delete');
+            }
+        } catch (err) {
+            console.error('Failed to delete:', err);
+        }
+
+        this.hideContextMenu();
+    },
+
     copyToClipboard(text) {
         navigator.clipboard.writeText(text).then(() => {
             // Could show a toast notification here
