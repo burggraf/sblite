@@ -285,6 +285,10 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+type LogoutRequest struct {
+	Scope string `json:"scope"` // local, global, others
+}
+
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	claims := GetClaimsFromContext(r)
 	if claims == nil {
@@ -298,7 +302,35 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.authService.RevokeSession(sessionID); err != nil {
+	userID, ok := (*claims)["sub"].(string)
+	if !ok || userID == "" {
+		s.writeError(w, http.StatusBadRequest, "invalid_token", "User ID not found in token")
+		return
+	}
+
+	// Parse scope from request body (default to "local")
+	var req LogoutRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		json.NewDecoder(r.Body).Decode(&req)
+	}
+	if req.Scope == "" {
+		req.Scope = "local"
+	}
+
+	var err error
+	switch req.Scope {
+	case "global":
+		err = s.authService.RevokeAllUserSessions(userID)
+	case "others":
+		err = s.authService.RevokeOtherSessions(userID, sessionID)
+	case "local":
+		err = s.authService.RevokeSession(sessionID)
+	default:
+		s.writeError(w, http.StatusBadRequest, "invalid_scope", "Scope must be local, global, or others")
+		return
+	}
+
+	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to revoke session")
 		return
 	}
