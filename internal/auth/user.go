@@ -491,6 +491,52 @@ func (s *Service) ConvertAnonymousUser(userID, email, password string) error {
 	return nil
 }
 
+// ConvertAnonymousUserViaOAuth converts an anonymous user to a regular user via OAuth.
+// Unlike email/password conversion, this doesn't set a password and uses the OAuth provider.
+func (s *Service) ConvertAnonymousUserViaOAuth(userID, email, provider string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+
+	// Check if email already exists
+	var existingID string
+	err := s.db.QueryRow("SELECT id FROM auth_users WHERE email = ? AND deleted_at IS NULL", email).Scan(&existingID)
+	if err == nil {
+		return fmt.Errorf("email already in use")
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check email: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Build app_metadata with the OAuth provider
+	appMetadata := map[string]interface{}{
+		"provider":  provider,
+		"providers": []string{provider},
+	}
+	appMetaJSON, err := json.Marshal(appMetadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal app_metadata: %w", err)
+	}
+
+	// Update user: set email, is_anonymous=0, email_confirmed_at, app_metadata
+	// Note: encrypted_password remains empty for OAuth-only users
+	_, err = s.db.Exec(`
+		UPDATE auth_users
+		SET email = ?,
+		    is_anonymous = 0,
+		    email_confirmed_at = ?,
+		    raw_app_meta_data = ?,
+		    updated_at = ?
+		WHERE id = ?
+	`, email, now, string(appMetaJSON), now, userID)
+
+	if err != nil {
+		return fmt.Errorf("failed to convert anonymous user via OAuth: %w", err)
+	}
+
+	return nil
+}
+
 // RemoveProviderFromUser removes a provider from the user's app_metadata.providers array.
 func (s *Service) RemoveProviderFromUser(userID, provider string) error {
 	// Get current app_metadata

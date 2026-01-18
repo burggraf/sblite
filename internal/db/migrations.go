@@ -177,6 +177,7 @@ CREATE TABLE IF NOT EXISTS auth_flow_state (
 	provider TEXT NOT NULL,
 	code_verifier TEXT NOT NULL,
 	redirect_to TEXT,
+	linking_user_id TEXT,
 	created_at TEXT NOT NULL,
 	expires_at TEXT NOT NULL
 );
