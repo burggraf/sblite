@@ -67,44 +67,6 @@ supabase.from('posts').select().textSearch('content', 'search query')
 
 ## REST API Gaps
 
-### Many-to-Many Relationship Queries
-Query through join tables.
-
-```javascript
-// Example: users -> user_roles -> roles
-supabase.from('users').select('*, roles(*)')
-```
-
-**Current status:** One-to-many and many-to-one work. Join table traversal doesn't.
-
-**Implementation:**
-- Detect junction tables (two foreign keys, minimal other columns)
-- Generate appropriate JOINs
-- Flatten results correctly
-
-**Complexity:** Medium
-**Priority:** Low
-
----
-
-### Aliased Joins / Self-Referential Queries
-Query same table multiple times with different aliases.
-
-```javascript
-// Example: messages with sender and receiver from same users table
-supabase.from('messages').select('*, sender:users!sender_id(*), receiver:users!receiver_id(*)')
-```
-
-**Implementation:**
-- Parse alias syntax in select
-- Generate aliased JOINs in SQL
-- Map results back to aliases
-
-**Complexity:** Medium
-**Priority:** Low
-
----
-
 ### Quoted Identifiers
 Support column/table names with spaces or reserved words.
 
@@ -181,62 +143,18 @@ TOTP-based second factor.
 
 ---
 
-### Password Recovery Email
-Send password reset emails.
-
-```javascript
-supabase.auth.resetPasswordForEmail('user@example.com')
-```
-
-**Current status:** The mail system exists. Need to wire up the `/auth/v1/recover` endpoint to actually send emails.
-
-**Implementation:**
-- Generate recovery token
-- Send email via configured mail service
-- Handle token verification on `/auth/v1/verify`
-
-**Complexity:** Small (infrastructure exists)
-**Priority:** Medium
-
----
-
-### Scoped Sign-Out
-Sign out from specific sessions.
-
-```javascript
-supabase.auth.signOut({ scope: 'local' })  // Current session only
-supabase.auth.signOut({ scope: 'others' }) // All other sessions
-```
-
-**Implementation:**
-- Add scope parameter to logout endpoint
-- Selectively revoke sessions/tokens
-
-**Complexity:** Small
-**Priority:** Low
-
----
-
 ## Priority Summary
 
 | Feature | Priority | Effort | Notes |
 |---------|----------|--------|-------|
-| Password recovery email | High | Small | Infrastructure exists |
 | Realtime subscriptions | Medium | Large | Major feature |
 | File storage | Medium | Large | Major feature |
 | Full-text search | Low | Medium | SQLite FTS5 |
-| Many-to-many queries | Low | Medium | Edge case |
-| Aliased joins | Low | Medium | Edge case |
 | OAuth providers | Low | Large | Per-provider work |
 | Anonymous sign-in | Low | Small | Nice to have |
 | Phone auth | Low | Medium | Requires SMS provider |
 | MFA | Low | Medium | Enterprise feature |
-| Scoped sign-out | Low | Small | Nice to have |
 | Quoted identifiers | Low | Small | Edge case |
-
-## CLAUDE.md Correction
-
-The "Planned" section in CLAUDE.md lists `or() / not() / match() filters` as not implemented, but these ARE implemented. Should be removed from planned list.
 
 ## Notes
 

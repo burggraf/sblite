@@ -392,7 +392,6 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Realtime subscriptions (WebSocket)
 - File storage API
 - Full-text search (SQLite FTS5)
-- Many-to-many relationship queries
 - OAuth providers
 
 See `docs/plans/SBLITE-TODO.md` for detailed tracking.
