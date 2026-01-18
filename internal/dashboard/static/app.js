@@ -974,6 +974,9 @@ const App = {
             case 'createBucket':
                 content = this.renderCreateBucketModal();
                 break;
+            case 'bucketSettings':
+                content = this.renderBucketSettingsModal();
+                break;
         }
 
         // Use larger modal for policy editing and FTS search
@@ -5467,9 +5470,12 @@ const App = {
                             <div class="bucket-item ${selectedBucket?.id === bucket.id ? 'selected' : ''}"
                                  onclick="App.selectBucket('${bucket.id}')">
                                 <span class="bucket-name">${this.escapeHtml(bucket.name)}</span>
-                                <span class="bucket-badge ${bucket.public ? 'public' : 'private'}">
-                                    ${bucket.public ? 'Public' : 'Private'}
-                                </span>
+                                <div class="bucket-actions">
+                                    <span class="bucket-badge ${bucket.public ? 'public' : 'private'}">
+                                        ${bucket.public ? 'Public' : 'Private'}
+                                    </span>
+                                    <button class="btn-icon" onclick="event.stopPropagation(); App.showBucketSettingsModal('${bucket.id}')" title="Settings">&#9881;</button>
+                                </div>
                             </div>
                         `).join('')}
                     </div>
@@ -5573,6 +5579,118 @@ const App = {
                 </form>
             </div>
         `;
+    },
+
+    showBucketSettingsModal(bucketId) {
+        const bucket = this.state.storage.buckets.find(b => b.id === bucketId);
+        if (!bucket) return;
+
+        this.state.modal = {
+            type: 'bucketSettings',
+            bucket: bucket
+        };
+        this.render();
+    },
+
+    renderBucketSettingsModal() {
+        const bucket = this.state.modal.bucket;
+        const mimeTypes = bucket.allowed_mime_types ? bucket.allowed_mime_types.join(', ') : '';
+        const sizeLimit = bucket.file_size_limit ? Math.round(bucket.file_size_limit / 1024 / 1024) : '';
+
+        return `
+            <div class="modal-header">
+                <h3>Bucket Settings: ${this.escapeHtml(bucket.name)}</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form onsubmit="App.updateBucket(event, '${bucket.id}')">
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="bucket-public" ${bucket.public ? 'checked' : ''}>
+                            Public bucket
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">File Size Limit (MB)</label>
+                        <input type="number" class="form-input" id="bucket-size-limit" value="${sizeLimit}" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Allowed MIME Types</label>
+                        <input type="text" class="form-input" id="bucket-mime-types" value="${this.escapeHtml(mimeTypes)}" placeholder="image/*, application/pdf">
+                    </div>
+                    <hr style="margin: 1rem 0">
+                    <div class="danger-zone">
+                        <p class="text-muted">Danger Zone</p>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="App.emptyBucket('${bucket.id}')">Empty Bucket</button>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="App.deleteBucket('${bucket.id}')">Delete Bucket</button>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn" onclick="App.closeModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        `;
+    },
+
+    async updateBucket(event, bucketId) {
+        event.preventDefault();
+        const isPublic = document.getElementById('bucket-public').checked;
+        const sizeLimit = document.getElementById('bucket-size-limit').value;
+        const mimeTypes = document.getElementById('bucket-mime-types').value;
+
+        try {
+            const body = { public: isPublic };
+            if (sizeLimit) body.file_size_limit = parseInt(sizeLimit) * 1024 * 1024;
+            if (mimeTypes) body.allowed_mime_types = mimeTypes.split(',').map(t => t.trim());
+
+            const res = await fetch(`/_/api/storage/buckets/${bucketId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) throw new Error('Failed to update bucket');
+
+            this.closeModal();
+            this.showToast('Bucket updated', 'success');
+            await this.loadBuckets();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
+    },
+
+    async emptyBucket(bucketId) {
+        const confirmed = confirm('Remove all files from this bucket? This cannot be undone.');
+        if (!confirmed) return;
+
+        try {
+            const res = await fetch(`/_/api/storage/buckets/${bucketId}/empty`, { method: 'POST' });
+            if (!res.ok) throw new Error('Failed to empty bucket');
+            this.showToast('Bucket emptied', 'success');
+            await this.loadObjects();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
+    },
+
+    async deleteBucket(bucketId) {
+        const bucket = this.state.storage.buckets.find(b => b.id === bucketId);
+        const confirmed = confirm(`Delete bucket "${bucket?.name}"? The bucket must be empty.`);
+        if (!confirmed) return;
+
+        try {
+            const res = await fetch(`/_/api/storage/buckets/${bucketId}`, { method: 'DELETE' });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.message || 'Failed to delete bucket');
+            }
+            this.closeModal();
+            this.state.storage.selectedBucket = null;
+            this.showToast('Bucket deleted', 'success');
+            await this.loadBuckets();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
     },
 
     renderFileBrowser() {
