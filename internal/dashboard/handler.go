@@ -31,14 +31,15 @@ const sessionCookieName = "_sblite_session"
 
 // Handler serves the dashboard UI and API.
 type Handler struct {
-	db            *sql.DB
-	store         *Store
-	auth          *Auth
-	sessions      *SessionManager
-	migrationsDir string
-	startTime     time.Time
-	serverConfig  *ServerConfig
-	jwtSecret     string
+	db              *sql.DB
+	store           *Store
+	auth            *Auth
+	sessions        *SessionManager
+	migrationsDir   string
+	startTime       time.Time
+	serverConfig    *ServerConfig
+	jwtSecret       string
+	oauthReloadFunc func()
 }
 
 // ServerConfig holds server configuration for display in settings.
@@ -74,6 +75,11 @@ func (h *Handler) SetServerConfig(cfg *ServerConfig) {
 // SetJWTSecret sets the JWT secret for API key generation.
 func (h *Handler) SetJWTSecret(secret string) {
 	h.jwtSecret = secret
+}
+
+// SetOAuthReloadFunc sets the callback function to be called when OAuth settings change.
+func (h *Handler) SetOAuthReloadFunc(f func()) {
+	h.oauthReloadFunc = f
 }
 
 // RegisterRoutes registers the dashboard routes.
@@ -144,6 +150,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/templates", h.handleListTemplates)
 			r.Patch("/templates/{type}", h.handleUpdateTemplate)
 			r.Post("/templates/{type}/reset", h.handleResetTemplate)
+			// OAuth settings routes
+			r.Get("/oauth", h.handleGetOAuthSettings)
+			r.Patch("/oauth", h.handleUpdateOAuthSettings)
+			r.Get("/oauth/redirect-urls", h.handleGetRedirectURLs)
+			r.Post("/oauth/redirect-urls", h.handleAddRedirectURL)
+			r.Delete("/oauth/redirect-urls", h.handleDeleteRedirectURL)
 		})
 
 		// Export API routes (require auth)
