@@ -360,6 +360,48 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for anonymous user conversion (email + password provided for anonymous user)
+	if user.IsAnonymous && req.Email != "" && req.Password != "" {
+		// Validate password length
+		if len(req.Password) < 6 {
+			s.writeError(w, http.StatusBadRequest, "validation_failed", "Password must be at least 6 characters")
+			return
+		}
+
+		// Convert anonymous user to regular user
+		if err := s.authService.ConvertAnonymousUser(user.ID, req.Email, req.Password); err != nil {
+			if strings.Contains(err.Error(), "email already in use") {
+				s.writeError(w, http.StatusBadRequest, "email_exists", "Email address is already in use")
+				return
+			}
+			s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to convert anonymous user")
+			return
+		}
+
+		// Update metadata if provided
+		if req.Data != nil {
+			s.authService.UpdateUserMetadata(user.ID, req.Data)
+		}
+
+		// Refetch user to get updated data (user was just converted, so this should succeed)
+		user, _ = s.authService.GetUserByID(user.ID)
+
+		response := map[string]any{
+			"id":            user.ID,
+			"email":         user.Email,
+			"role":          user.Role,
+			"is_anonymous":  user.IsAnonymous,
+			"created_at":    user.CreatedAt,
+			"updated_at":    user.UpdatedAt,
+			"app_metadata":  user.AppMetadata,
+			"user_metadata": user.UserMetadata,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	if req.Data != nil {
 		if err := s.authService.UpdateUserMetadata(user.ID, req.Data); err != nil {
 			s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to update user")

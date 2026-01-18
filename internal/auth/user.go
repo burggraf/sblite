@@ -450,6 +450,47 @@ func (s *Service) CreateAnonymousUser(userMetadata map[string]any) (*User, error
 	return s.GetUserByID(id)
 }
 
+// ConvertAnonymousUser converts an anonymous user to a regular user with email/password.
+func (s *Service) ConvertAnonymousUser(userID, email, password string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+
+	// Check if email already exists
+	var existingID string
+	err := s.db.QueryRow("SELECT id FROM auth_users WHERE email = ? AND deleted_at IS NULL", email).Scan(&existingID)
+	if err == nil {
+		return fmt.Errorf("email already in use")
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check email: %w", err)
+	}
+
+	// Hash password
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Update user: set email, encrypted_password, is_anonymous=0, email_confirmed_at, app_metadata
+	_, err = s.db.Exec(`
+		UPDATE auth_users
+		SET email = ?,
+		    encrypted_password = ?,
+		    is_anonymous = 0,
+		    email_confirmed_at = ?,
+		    raw_app_meta_data = '{"provider":"email","providers":["email"]}',
+		    updated_at = ?
+		WHERE id = ?
+	`, email, string(hash), now, now, userID)
+
+	if err != nil {
+		return fmt.Errorf("failed to convert anonymous user: %w", err)
+	}
+
+	return nil
+}
+
 // RemoveProviderFromUser removes a provider from the user's app_metadata.providers array.
 func (s *Service) RemoveProviderFromUser(userID, provider string) error {
 	// Get current app_metadata
