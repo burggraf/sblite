@@ -66,6 +66,7 @@ func New(database *db.DB, jwtSecret string, mailConfig *mail.Config, migrationsD
 
 	// Initialize dashboard handler
 	s.dashboardHandler = dashboard.NewHandler(database.DB, migrationsDir)
+	s.dashboardHandler.SetJWTSecret(jwtSecret)
 
 	s.setupRoutes()
 	return s

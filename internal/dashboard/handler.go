@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -37,6 +38,7 @@ type Handler struct {
 	migrationsDir string
 	startTime     time.Time
 	serverConfig  *ServerConfig
+	jwtSecret     string
 }
 
 // ServerConfig holds server configuration for display in settings.
@@ -67,6 +69,11 @@ func NewHandler(db *sql.DB, migrationsDir string) *Handler {
 // SetServerConfig sets the server configuration for display.
 func (h *Handler) SetServerConfig(cfg *ServerConfig) {
 	h.serverConfig = cfg
+}
+
+// SetJWTSecret sets the JWT secret for API key generation.
+func (h *Handler) SetJWTSecret(secret string) {
+	h.jwtSecret = secret
 }
 
 // RegisterRoutes registers the dashboard routes.
@@ -159,6 +166,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Route("/sql", func(r chi.Router) {
 			r.Use(h.requireAuth)
 			r.Post("/", h.handleExecuteSQL)
+		})
+
+		// API Keys route (require auth)
+		r.Route("/apikeys", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/", h.handleGetAPIKeys)
 		})
 	})
 
@@ -2922,4 +2935,50 @@ func detectQueryType(query string) string {
 	}
 
 	return "UNKNOWN"
+}
+
+// ============================================================================
+// API Keys Handler
+// ============================================================================
+
+func (h *Handler) handleGetAPIKeys(w http.ResponseWriter, r *http.Request) {
+	if h.jwtSecret == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "JWT secret not configured"})
+		return
+	}
+
+	anonKey, err := h.generateAPIKey("anon")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to generate anon key"})
+		return
+	}
+
+	serviceKey, err := h.generateAPIKey("service_role")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to generate service_role key"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"anon_key":         anonKey,
+		"service_role_key": serviceKey,
+	})
+}
+
+func (h *Handler) generateAPIKey(role string) (string, error) {
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"role": role,
+		"iss":  "sblite",
+		"iat":  now.Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(h.jwtSecret))
 }

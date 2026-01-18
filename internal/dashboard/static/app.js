@@ -71,6 +71,9 @@ const App = {
             history: [],
             activeTab: 'body',
             showHistory: false,
+            apiKeys: null,          // { anon_key, service_role_key }
+            selectedKeyType: 'anon', // 'anon' or 'service_role'
+            autoInjectKey: true,    // Auto-inject apikey header
         },
         sqlBrowser: {
             query: 'SELECT * FROM ',
@@ -3021,7 +3024,7 @@ const App = {
         }
     },
 
-    initApiConsole() {
+    async initApiConsole() {
         // Load history from localStorage
         const saved = localStorage.getItem('sblite_api_console_history');
         if (saved) {
@@ -3036,6 +3039,10 @@ const App = {
             this.state.apiConsole.headers = [
                 { key: 'Content-Type', value: 'application/json' }
             ];
+        }
+        // Load API keys if not already loaded
+        if (!this.state.apiConsole.apiKeys) {
+            await this.loadApiKeys();
         }
         this.render();
     },
@@ -3071,6 +3078,27 @@ const App = {
         // Don't re-render on every keystroke
     },
 
+    async loadApiKeys() {
+        try {
+            const res = await fetch('/_/api/apikeys');
+            if (res.ok) {
+                this.state.apiConsole.apiKeys = await res.json();
+            }
+        } catch (e) {
+            console.error('Failed to load API keys:', e);
+        }
+    },
+
+    setApiKeyType(type) {
+        this.state.apiConsole.selectedKeyType = type;
+        this.render();
+    },
+
+    toggleAutoInjectKey() {
+        this.state.apiConsole.autoInjectKey = !this.state.apiConsole.autoInjectKey;
+        this.render();
+    },
+
     addApiConsoleHeader() {
         this.state.apiConsole.headers.push({ key: '', value: '' });
         this.render();
@@ -3087,7 +3115,7 @@ const App = {
     },
 
     async sendApiConsoleRequest() {
-        const { method, url, headers, body } = this.state.apiConsole;
+        const { method, url, headers, body, apiKeys, selectedKeyType, autoInjectKey } = this.state.apiConsole;
 
         // Get current URL value from input (in case it wasn't saved to state)
         const urlInput = document.getElementById('api-console-url');
@@ -3110,6 +3138,14 @@ const App = {
                     fetchHeaders[h.key] = h.value;
                 }
             });
+
+            // Auto-inject apikey header for REST and Auth API requests
+            if (autoInjectKey && apiKeys && (currentUrl.includes('/rest/v1/') || currentUrl.includes('/auth/v1/'))) {
+                const apiKey = selectedKeyType === 'service_role' ? apiKeys.service_role_key : apiKeys.anon_key;
+                if (apiKey && !fetchHeaders['apikey']) {
+                    fetchHeaders['apikey'] = apiKey;
+                }
+            }
 
             const fetchOptions = {
                 method: method,
@@ -3294,6 +3330,8 @@ const App = {
                             </select>
                         </div>
 
+                        ${this.renderApiKeySettings()}
+
                         <div class="api-console-headers">
                             <div class="api-console-section-header">
                                 <label class="form-label">Headers</label>
@@ -3372,6 +3410,38 @@ const App = {
                         `).join('')}
                     </div>
                 `}
+            </div>
+        `;
+    },
+
+    renderApiKeySettings() {
+        const { apiKeys, selectedKeyType, autoInjectKey } = this.state.apiConsole;
+
+        if (!apiKeys) {
+            return `
+                <div class="api-console-auth-settings">
+                    <label class="form-label">Authentication</label>
+                    <div class="api-key-loading">Loading API keys...</div>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="api-console-auth-settings">
+                <label class="form-label">Authentication</label>
+                <div class="api-key-controls">
+                    <label class="checkbox-label">
+                        <input type="checkbox" ${autoInjectKey ? 'checked' : ''} onchange="App.toggleAutoInjectKey()">
+                        Auto-inject apikey header
+                    </label>
+                    ${autoInjectKey ? `
+                        <select class="form-input api-key-select" onchange="App.setApiKeyType(this.value)">
+                            <option value="anon" ${selectedKeyType === 'anon' ? 'selected' : ''}>anon key</option>
+                            <option value="service_role" ${selectedKeyType === 'service_role' ? 'selected' : ''}>service_role key</option>
+                        </select>
+                        <span class="api-key-hint">Will be added to /rest/v1/ and /auth/v1/ requests</span>
+                    ` : ''}
+                </div>
             </div>
         `;
     },

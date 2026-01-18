@@ -401,3 +401,101 @@ test.describe('History', () => {
     await expect(page.locator('.history-empty')).toBeVisible();
   });
 });
+
+test.describe('API Key Auto-Injection', () => {
+  test.beforeAll(async ({ request }) => {
+    await ensureSetup(request);
+  });
+
+  test('shows API key settings section', async ({ page, request, context }) => {
+    await ensureSetup(request);
+    await login(page, context);
+
+    await page.locator('.nav-item').filter({ hasText: 'API Console' }).click();
+    await page.waitForSelector('.api-console-view');
+
+    // Should show auth settings section
+    await expect(page.locator('.api-console-auth-settings')).toBeVisible();
+    await expect(page.locator('.api-console-auth-settings').getByText('Authentication')).toBeVisible();
+  });
+
+  test('auto-inject checkbox is enabled by default', async ({ page, request, context }) => {
+    await ensureSetup(request);
+    await login(page, context);
+
+    await page.locator('.nav-item').filter({ hasText: 'API Console' }).click();
+    await page.waitForSelector('.api-console-view');
+
+    // Auto-inject checkbox should be checked
+    const checkbox = page.locator('.api-console-auth-settings input[type="checkbox"]');
+    await expect(checkbox).toBeChecked();
+  });
+
+  test('shows key type selector when auto-inject enabled', async ({ page, request, context }) => {
+    await ensureSetup(request);
+    await login(page, context);
+
+    await page.locator('.nav-item').filter({ hasText: 'API Console' }).click();
+    await page.waitForSelector('.api-console-view');
+
+    // Should show key type dropdown
+    await expect(page.locator('.api-key-select')).toBeVisible();
+    await expect(page.locator('.api-key-hint')).toBeVisible();
+  });
+
+  test('REST API request succeeds with auto-injected key', async ({ page, request, context }) => {
+    await ensureSetup(request);
+    await login(page, context);
+
+    await page.locator('.nav-item').filter({ hasText: 'API Console' }).click();
+    await page.waitForSelector('.api-console-view');
+
+    // Make request to REST API - should work because key is auto-injected
+    await page.locator('#api-console-url').fill('/rest/v1/characters');
+    await page.getByRole('button', { name: 'Send Request' }).click();
+
+    // Wait for response and check it succeeded
+    await expect(page.locator('.api-console-response-status')).toBeVisible({ timeout: 10000 });
+    const statusText = await page.locator('.api-console-response-status .status-code').textContent();
+    expect(statusText).toContain('200');
+  });
+
+  test('REST API request fails when auto-inject disabled', async ({ page, request, context }) => {
+    await ensureSetup(request);
+    await login(page, context);
+
+    await page.locator('.nav-item').filter({ hasText: 'API Console' }).click();
+    await page.waitForSelector('.api-console-view');
+
+    // Disable auto-inject
+    await page.locator('.api-console-auth-settings input[type="checkbox"]').uncheck();
+
+    // Make request to REST API without key
+    await page.locator('#api-console-url').fill('/rest/v1/characters');
+    await page.getByRole('button', { name: 'Send Request' }).click();
+
+    // Should get error about missing API key
+    await expect(page.locator('.api-console-response-status')).toBeVisible({ timeout: 10000 });
+    const body = await page.locator('.api-console-json').textContent();
+    expect(body).toContain('no_api_key');
+  });
+
+  test('can switch between anon and service_role key', async ({ page, request, context }) => {
+    await ensureSetup(request);
+    await login(page, context);
+
+    await page.locator('.nav-item').filter({ hasText: 'API Console' }).click();
+    await page.waitForSelector('.api-console-view');
+
+    // Switch to service_role key
+    await page.locator('.api-key-select').selectOption('service_role');
+
+    // Make request - should still work
+    await page.locator('#api-console-url').fill('/rest/v1/characters');
+    await page.getByRole('button', { name: 'Send Request' }).click();
+
+    await expect(page.locator('.api-console-response-status')).toBeVisible({ timeout: 10000 });
+    const statusText = await page.locator('.api-console-response-status .status-code').textContent();
+    expect(statusText).toContain('200');
+  });
+});

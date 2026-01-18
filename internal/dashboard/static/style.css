@@ -1352,6 +1352,48 @@ small.text-muted {
     width: 100%;
 }
 
+.api-console-auth-settings {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+}
+
+.api-console-auth-settings .form-label {
+    margin-bottom: 0.5rem;
+    display: block;
+}
+
+.api-key-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.api-key-controls .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+.api-key-select {
+    width: auto;
+    min-width: 150px;
+}
+
+.api-key-hint {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.api-key-loading {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
 .api-console-section-header {
     display: flex;
     justify-content: space-between;
