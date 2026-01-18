@@ -125,6 +125,8 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 		s.storageHandler = storage.NewHandler(storageService)
 		// Pass RLS service and enforcer to storage handler for RLS policy enforcement
 		s.storageHandler.SetRLSEnforcer(rlsService, rlsEnforcer)
+		// Pass JWT secret for signed URL generation
+		s.storageHandler.SetJWTSecret(cfg.JWTSecret)
 	} else {
 		log.Warn("failed to initialize storage service", "error", err.Error())
 	}
@@ -243,8 +245,10 @@ func (s *Server) setupRoutes() {
 	// Storage routes
 	if s.storageHandler != nil {
 		s.router.Route("/storage/v1", func(r chi.Router) {
-			// Public object route - no API key required
+			// Public routes - no API key required
 			r.Get("/object/public/{bucketName}/*", s.storageHandler.GetPublicObject)
+			r.Get("/object/sign/{bucketName}/*", s.storageHandler.GetSignedObject)           // Download via signed URL
+			r.Put("/object/upload/sign/{bucketName}/*", s.storageHandler.UploadToSignedURL) // Upload via signed URL
 
 			// All other routes require API key
 			r.Group(func(r chi.Router) {

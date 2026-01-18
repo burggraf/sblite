@@ -7,6 +7,7 @@ sblite provides a Supabase-compatible Storage API for file uploads, downloads, a
 - **100% Supabase API compatible** - Works with the official Supabase JavaScript client
 - **Multiple storage backends** - Local filesystem or S3-compatible storage (AWS S3, MinIO, R2, etc.)
 - **Public and private buckets** - Support for public URLs and authenticated access
+- **Signed URLs** - Time-limited access URLs for downloads and uploads without authentication
 - **Row Level Security (RLS)** - Supabase-compatible RLS policies for fine-grained access control
 - **File size limits** - Per-bucket configurable size limits
 - **MIME type restrictions** - Per-bucket allowed MIME types
@@ -112,6 +113,16 @@ All endpoints are mounted at `/storage/v1`.
 | `/storage/v1/object/public/{bucket}/*` | GET | Download from public bucket (no auth) |
 | `/storage/v1/object/copy` | POST | Copy a file |
 | `/storage/v1/object/move` | POST | Move/rename a file |
+
+### Signed URL Operations
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/storage/v1/object/sign/{bucket}/*` | POST | Create signed download URL |
+| `/storage/v1/object/sign/{bucket}` | POST | Batch create signed download URLs |
+| `/storage/v1/object/sign/{bucket}/*` | GET | Download via signed URL (no auth) |
+| `/storage/v1/object/upload/sign/{bucket}/*` | POST | Create signed upload URL |
+| `/storage/v1/object/upload/sign/{bucket}/*` | PUT | Upload via signed URL (no auth) |
 
 ## Usage with @supabase/supabase-js
 
@@ -220,6 +231,62 @@ const { data } = supabase.storage
   .from('public-bucket')
   .getPublicUrl('image.png', { download: 'custom-filename.png' })
 ```
+
+### Signed URLs
+
+Signed URLs provide time-limited access to private files without requiring authentication. RLS policies are checked at URL creation time, not access time.
+
+#### Creating a Signed Download URL
+
+```typescript
+// Create a signed URL that expires in 60 seconds
+const { data, error } = await supabase.storage
+  .from('private-bucket')
+  .createSignedUrl('folder/document.pdf', 60)
+
+console.log(data.signedUrl)
+// http://localhost:8080/storage/v1/object/sign/private-bucket/folder/document.pdf?token=eyJ...
+
+// With download option (sets Content-Disposition header)
+const { data, error } = await supabase.storage
+  .from('private-bucket')
+  .createSignedUrl('document.pdf', 60, { download: 'custom-name.pdf' })
+```
+
+#### Batch Creating Signed URLs
+
+```typescript
+// Create multiple signed URLs at once
+const { data, error } = await supabase.storage
+  .from('private-bucket')
+  .createSignedUrls(['file1.txt', 'file2.txt', 'folder/file3.txt'], 60)
+
+// Returns array of results
+data.forEach(item => {
+  console.log(item.path, item.signedUrl, item.error)
+})
+```
+
+#### Creating a Signed Upload URL
+
+```typescript
+// Create a signed URL for uploading (default 2 hour expiry)
+const { data, error } = await supabase.storage
+  .from('uploads')
+  .createSignedUploadUrl('user-uploads/new-file.txt')
+
+// Upload using the signed URL
+const { data: uploadData, error: uploadError } = await supabase.storage
+  .from('uploads')
+  .uploadToSignedUrl('user-uploads/new-file.txt', data.token, file)
+```
+
+#### Security Considerations
+
+- **RLS at creation**: Access control is enforced when the signed URL is created, not when it's used
+- **Token expiry**: Download URLs use the specified expiry (seconds). Upload URLs default to 2 hours.
+- **Path binding**: Tokens are bound to specific bucket/path combinations and cannot be reused for other files
+- **Token validation**: Invalid or expired tokens return 401 Unauthorized; wrong path returns 403 Forbidden
 
 ### Bucket Management
 
@@ -389,8 +456,7 @@ curl -X POST http://localhost:8080/_/api/policies \
 
 Current implementation limitations compared to Supabase:
 
-1. **No signed URLs** - Signed URL generation not yet implemented
-2. **No image transformations** - Image resizing/transformations not supported
+1. **No image transformations** - Image resizing/transformations not supported
 
 ## Error Responses
 

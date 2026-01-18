@@ -15,14 +15,20 @@ import (
 
 // Handler provides HTTP handlers for storage operations.
 type Handler struct {
-	service    *Service
-	rlsService *rls.Service
+	service     *Service
+	rlsService  *rls.Service
 	rlsEnforcer *rls.Enforcer
+	jwtSecret   string
 }
 
 // NewHandler creates a new storage handler.
 func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
+}
+
+// SetJWTSecret sets the JWT secret for signed URL generation.
+func (h *Handler) SetJWTSecret(secret string) {
+	h.jwtSecret = secret
 }
 
 // SetRLSEnforcer sets the RLS service and enforcer for storage operations.
@@ -53,8 +59,14 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Post("/copy", h.CopyObject)
 		r.Post("/move", h.MoveObject)
 
-		// Signed URLs
-		r.Post("/sign/{bucketName}/*", h.CreateSignedURL)
+		// Signed download URLs
+		r.Post("/sign/{bucketName}", h.CreateSignedURLs)  // Batch (no wildcard)
+		r.Post("/sign/{bucketName}/*", h.CreateSignedURL) // Single file
+		r.Get("/sign/{bucketName}/*", h.GetSignedObject)  // Download via signed URL
+
+		// Signed upload URLs
+		r.Post("/upload/sign/{bucketName}/*", h.CreateSignedUploadURL) // Create upload URL
+		r.Put("/upload/sign/{bucketName}/*", h.UploadToSignedURL)      // Upload via signed URL
 
 		// Public objects (no auth required for public buckets)
 		r.Get("/public/{bucketName}/*", h.GetPublicObject)
@@ -687,11 +699,11 @@ func (h *Handler) MoveObject(w http.ResponseWriter, r *http.Request) {
 	h.jsonResponse(w, http.StatusOK, map[string]string{"message": "Successfully moved"})
 }
 
-// CreateSignedURL creates a signed URL for downloading.
+// CreateSignedURL creates a signed URL for downloading a single file.
 // POST /storage/v1/object/sign/{bucketName}/*
 func (h *Handler) CreateSignedURL(w http.ResponseWriter, r *http.Request) {
-	// bucketName := chi.URLParam(r, "bucketName")
-	// objectPath := chi.URLParam(r, "*")
+	bucketName := chi.URLParam(r, "bucketName")
+	objectPath := chi.URLParam(r, "*")
 
 	var req SignedURLRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -699,6 +711,268 @@ func (h *Handler) CreateSignedURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement signed URL generation in Phase 2
-	h.jsonError(w, &StorageError{StatusCode: 501, ErrorCode: "not_implemented", Message: "Signed URLs not yet implemented"})
+	if req.ExpiresIn <= 0 {
+		h.jsonError(w, &StorageError{StatusCode: 400, ErrorCode: "invalid_request", Message: "expiresIn must be positive"})
+		return
+	}
+
+	// Check RLS policies for SELECT (RLS is checked at creation time)
+	if err := h.checkStorageRLS(r, bucketName, objectPath, "SELECT"); err != nil {
+		h.jsonError(w, err)
+		return
+	}
+
+	// Generate the signed token
+	token, err := GenerateDownloadToken(bucketName, objectPath, req.ExpiresIn, h.jwtSecret)
+	if err != nil {
+		h.jsonError(w, &StorageError{StatusCode: 500, ErrorCode: "internal", Message: "Failed to generate signed URL"})
+		return
+	}
+
+	// Return relative URL matching Supabase format (without /storage/v1 prefix - SDK adds it)
+	signedURL := "/object/sign/" + bucketName + "/" + objectPath + "?token=" + token
+	h.jsonResponse(w, http.StatusOK, &SignedURLResponse{SignedURL: signedURL})
+}
+
+// CreateSignedURLs creates signed URLs for multiple files.
+// POST /storage/v1/object/sign/{bucketName}
+func (h *Handler) CreateSignedURLs(w http.ResponseWriter, r *http.Request) {
+	bucketName := chi.URLParam(r, "bucketName")
+
+	var req SignedURLsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.jsonError(w, &StorageError{StatusCode: 400, ErrorCode: "invalid_request", Message: "Invalid JSON body"})
+		return
+	}
+
+	if req.ExpiresIn <= 0 {
+		h.jsonError(w, &StorageError{StatusCode: 400, ErrorCode: "invalid_request", Message: "expiresIn must be positive"})
+		return
+	}
+
+	if len(req.Paths) == 0 {
+		h.jsonError(w, &StorageError{StatusCode: 400, ErrorCode: "invalid_request", Message: "paths array is required"})
+		return
+	}
+
+	var results []SignedURLsResponseItem
+	for _, path := range req.Paths {
+		item := SignedURLsResponseItem{Path: path}
+
+		// Check RLS for each file
+		if err := h.checkStorageRLS(r, bucketName, path, "SELECT"); err != nil {
+			errMsg := "Access denied"
+			if se, ok := err.(*StorageError); ok {
+				errMsg = se.Message
+			}
+			item.Error = &errMsg
+			results = append(results, item)
+			continue
+		}
+
+		// Generate token for this file
+		token, err := GenerateDownloadToken(bucketName, path, req.ExpiresIn, h.jwtSecret)
+		if err != nil {
+			errMsg := "Failed to generate signed URL"
+			item.Error = &errMsg
+			results = append(results, item)
+			continue
+		}
+
+		item.SignedURL = "/object/sign/" + bucketName + "/" + path + "?token=" + token
+		results = append(results, item)
+	}
+
+	h.jsonResponse(w, http.StatusOK, results)
+}
+
+// GetSignedObject downloads a file using a signed URL token.
+// GET /storage/v1/object/sign/{bucketName}/*?token=...
+func (h *Handler) GetSignedObject(w http.ResponseWriter, r *http.Request) {
+	bucketName := chi.URLParam(r, "bucketName")
+	objectPath := chi.URLParam(r, "*")
+	token := r.URL.Query().Get("token")
+
+	if token == "" {
+		h.jsonError(w, &StorageError{StatusCode: 400, ErrorCode: "invalid_request", Message: "token query parameter is required"})
+		return
+	}
+
+	// Validate the token
+	claims, err := ValidateDownloadToken(token, h.jwtSecret)
+	if err != nil {
+		h.jsonError(w, &StorageError{StatusCode: 401, ErrorCode: "invalid_token", Message: "Invalid or expired token"})
+		return
+	}
+
+	// Verify token URL matches request path
+	expectedURL := bucketName + "/" + objectPath
+	if claims.URL != expectedURL {
+		h.jsonError(w, &StorageError{StatusCode: 403, ErrorCode: "access_denied", Message: "Token does not match requested path"})
+		return
+	}
+
+	// Token is valid - bypass RLS and serve the file directly
+	reader, contentType, size, err := h.service.GetObject(bucketName, objectPath)
+	if err != nil {
+		h.jsonError(w, err)
+		return
+	}
+	defer reader.Close()
+
+	// Set headers
+	w.Header().Set("Content-Type", contentType)
+	if size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+
+	// Check for download query param
+	if download := r.URL.Query().Get("download"); download != "" {
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+download+"\"")
+	}
+
+	io.Copy(w, reader)
+}
+
+// CreateSignedUploadURL creates a signed URL for uploading a file.
+// POST /storage/v1/object/upload/sign/{bucketName}/*
+func (h *Handler) CreateSignedUploadURL(w http.ResponseWriter, r *http.Request) {
+	bucketName := chi.URLParam(r, "bucketName")
+	objectPath := chi.URLParam(r, "*")
+	upsert := r.Header.Get("x-upsert") == "true"
+
+	// Get user ID for ownership
+	ownerID := getUserID(r)
+
+	// Check RLS policies for INSERT (RLS is checked at creation time)
+	if err := h.checkStorageInsertRLS(r, bucketName, objectPath, ownerID); err != nil {
+		h.jsonError(w, err)
+		return
+	}
+
+	// Generate the upload token (fixed 2-hour expiry)
+	token, err := GenerateUploadToken(bucketName, objectPath, ownerID, upsert, h.jwtSecret)
+	if err != nil {
+		h.jsonError(w, &StorageError{StatusCode: 500, ErrorCode: "internal", Message: "Failed to generate signed upload URL"})
+		return
+	}
+
+	// Return response matching Supabase format
+	// SDK expects "url" field and extracts token from query params
+	signedURL := "/object/upload/sign/" + bucketName + "/" + objectPath + "?token=" + token
+	h.jsonResponse(w, http.StatusOK, &SignedUploadURLResponse{
+		URL: signedURL,
+	})
+}
+
+// UploadToSignedURL handles file upload using a signed URL token.
+// PUT /storage/v1/object/upload/sign/{bucketName}/*?token=...
+func (h *Handler) UploadToSignedURL(w http.ResponseWriter, r *http.Request) {
+	bucketName := chi.URLParam(r, "bucketName")
+	objectPath := chi.URLParam(r, "*")
+	token := r.URL.Query().Get("token")
+
+	if token == "" {
+		h.jsonError(w, &StorageError{StatusCode: 400, ErrorCode: "invalid_request", Message: "token query parameter is required"})
+		return
+	}
+
+	// Validate the token
+	claims, err := ValidateUploadToken(token, h.jwtSecret)
+	if err != nil {
+		h.jsonError(w, &StorageError{StatusCode: 401, ErrorCode: "invalid_token", Message: "Invalid or expired token"})
+		return
+	}
+
+	// Verify token URL matches request path
+	expectedURL := bucketName + "/" + objectPath
+	if claims.URL != expectedURL {
+		h.jsonError(w, &StorageError{StatusCode: 403, ErrorCode: "access_denied", Message: "Token does not match requested path"})
+		return
+	}
+
+	// Check for upsert header override (token upsert takes precedence if set)
+	upsert := claims.Upsert
+	if r.Header.Get("x-upsert") == "true" {
+		upsert = true
+	}
+
+	// Get content type
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	// Handle multipart form data
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		reader, err := r.MultipartReader()
+		if err != nil {
+			h.jsonError(w, &StorageError{StatusCode: 400, ErrorCode: "invalid_request", Message: "Failed to parse multipart: " + err.Error()})
+			return
+		}
+
+		var fileData []byte
+		var fileContentType string
+		var fileName string
+
+		for {
+			part, err := reader.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				h.jsonError(w, &StorageError{StatusCode: 400, ErrorCode: "invalid_request", Message: "Failed to read multipart part: " + err.Error()})
+				return
+			}
+
+			formName := part.FormName()
+			if formName == "" || formName == "file" {
+				fileData, err = io.ReadAll(part)
+				if err != nil {
+					h.jsonError(w, &StorageError{StatusCode: 400, ErrorCode: "invalid_request", Message: "Failed to read file data: " + err.Error()})
+					return
+				}
+				fileContentType = part.Header.Get("Content-Type")
+				fileName = part.FileName()
+			}
+			part.Close()
+		}
+
+		if len(fileData) == 0 {
+			h.jsonError(w, &StorageError{StatusCode: 400, ErrorCode: "invalid_request", Message: "No file provided in multipart form"})
+			return
+		}
+
+		if fileContentType == "" {
+			fileContentType = DetectContentType(fileName, fileData)
+		}
+
+		// Token is valid - bypass RLS and upload directly using owner from token
+		resp, err := h.service.UploadObject(bucketName, objectPath, io.NopCloser(bytes.NewReader(fileData)), int64(len(fileData)), fileContentType, claims.OwnerID, upsert)
+		if err != nil {
+			h.jsonError(w, err)
+			return
+		}
+
+		h.jsonResponse(w, http.StatusOK, &UploadToSignedURLResponse{
+			Key:  bucketName + "/" + objectPath,
+			Path: resp.Key,
+		})
+		return
+	}
+
+	// Handle raw body upload
+	size := r.ContentLength
+
+	// Token is valid - bypass RLS and upload directly using owner from token
+	resp, err := h.service.UploadObject(bucketName, objectPath, r.Body, size, contentType, claims.OwnerID, upsert)
+	if err != nil {
+		h.jsonError(w, err)
+		return
+	}
+
+	h.jsonResponse(w, http.StatusOK, &UploadToSignedURLResponse{
+		Key:  bucketName + "/" + objectPath,
+		Path: resp.Key,
+	})
 }

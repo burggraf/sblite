@@ -74,13 +74,38 @@ type SortByOptions struct {
 
 // SignedURLRequest is the request body for creating a signed URL.
 type SignedURLRequest struct {
-	ExpiresIn int                `json:"expiresIn"` // seconds
-	Transform *TransformOptions  `json:"transform,omitempty"`
+	ExpiresIn int               `json:"expiresIn"` // seconds
+	Transform *TransformOptions `json:"transform,omitempty"`
 }
 
 // SignedURLResponse is the response for creating a signed URL.
 type SignedURLResponse struct {
 	SignedURL string `json:"signedURL"`
+}
+
+// SignedURLsRequest is the request body for creating multiple signed URLs.
+type SignedURLsRequest struct {
+	ExpiresIn int      `json:"expiresIn"` // seconds
+	Paths     []string `json:"paths"`
+}
+
+// SignedURLsResponseItem is a single item in the batch signed URLs response.
+type SignedURLsResponseItem struct {
+	Path      string  `json:"path"`
+	SignedURL string  `json:"signedURL"`
+	Error     *string `json:"error"`
+}
+
+// SignedUploadURLResponse is the response for creating a signed upload URL.
+// Note: SDK expects "url" field (not "signedUrl") and extracts token from query params.
+type SignedUploadURLResponse struct {
+	URL string `json:"url"`
+}
+
+// UploadToSignedURLResponse is the response for uploading to a signed URL.
+type UploadToSignedURLResponse struct {
+	Key  string `json:"Key"`
+	Path string `json:"path"`
 }
 
 // TransformOptions specifies image transformation parameters.
