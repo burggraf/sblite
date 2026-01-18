@@ -48,13 +48,13 @@ type Handler struct {
 
 // ServerConfig holds server configuration for display in settings.
 type ServerConfig struct {
-	Version  string
-	Host     string
-	Port     int
-	DBPath   string
-	LogMode  string
-	LogFile  string
-	LogDB    string
+	Version string
+	Host    string
+	Port    int
+	DBPath  string
+	LogMode string
+	LogFile string
+	LogDB   string
 }
 
 // NewHandler creates a new Handler.
@@ -1223,7 +1223,7 @@ func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		whereClause = "WHERE is_anonymous = 0"
 	case "anonymous":
 		whereClause = "WHERE is_anonymous = 1"
-	// "all" or empty = no filter
+		// "all" or empty = no filter
 	}
 
 	// Get total count
@@ -2181,11 +2181,11 @@ func (h *Handler) handleGetAuthSettings(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"jwt_secret_masked":     maskedSecret,
-		"jwt_secret_source":     secretSource,
-		"access_token_expiry":   "1 hour",
-		"refresh_token_expiry":  "1 week",
-		"can_regenerate":        secretSource != "environment",
+		"jwt_secret_masked":    maskedSecret,
+		"jwt_secret_source":    secretSource,
+		"access_token_expiry":  "1 hour",
+		"refresh_token_expiry": "1 week",
+		"can_regenerate":       secretSource != "environment",
 	})
 }
 
@@ -2872,10 +2872,10 @@ func (h *Handler) handleTailLogs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"lines":      lines[start:],
-		"total":      len(lines),
-		"showing":    len(lines) - start,
-		"file_path":  cfg.LogFile,
+		"lines":     lines[start:],
+		"total":     len(lines),
+		"showing":   len(lines) - start,
+		"file_path": cfg.LogFile,
 	})
 }
 
@@ -3336,12 +3336,12 @@ func (h *Handler) handleTestFTSSearch(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":     true,
-		"results":     results,
-		"count":       len(results),
-		"index":       index,
-		"fts_query":   ftsQuery,
-		"query_type":  req.QueryType,
+		"success":    true,
+		"results":    results,
+		"count":      len(results),
+		"index":      index,
+		"fts_query":  ftsQuery,
+		"query_type": req.QueryType,
 	})
 }
 
@@ -3713,6 +3713,342 @@ func buildFileTree(dir, name string) (*FileNode, error) {
 	}
 
 	return node, nil
+}
+
+// handleReadFunctionFile returns the content of a specific file in a function directory.
+func (h *Handler) handleReadFunctionFile(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	filePath := chi.URLParam(r, "*")
+
+	if h.functionsService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Edge functions not enabled. Start the server with --functions flag.",
+		})
+		return
+	}
+
+	// Build base path and sanitize the file path
+	basePath := filepath.Join(h.functionsService.FunctionsDir(), name)
+	fullPath, err := SanitizePath(basePath, filePath)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Invalid file path: %v", err),
+		})
+		return
+	}
+
+	// Check if file exists and get info
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("File %q not found", filePath),
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Failed to access file: %v", err),
+		})
+		return
+	}
+
+	// Check if it's a directory
+	if info.IsDir() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Cannot read directory as file",
+		})
+		return
+	}
+
+	// Check file size
+	if info.Size() > MaxFileSize {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("File too large (%d bytes). Maximum allowed size is %d bytes", info.Size(), MaxFileSize),
+		})
+		return
+	}
+
+	// Read file content
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Failed to read file: %v", err),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"path":    filePath,
+		"content": string(content),
+		"size":    info.Size(),
+	})
+}
+
+// handleWriteFunctionFile creates or updates a file in a function directory.
+func (h *Handler) handleWriteFunctionFile(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	filePath := chi.URLParam(r, "*")
+
+	if h.functionsService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Edge functions not enabled. Start the server with --functions flag.",
+		})
+		return
+	}
+
+	// Build base path and sanitize the file path
+	basePath := filepath.Join(h.functionsService.FunctionsDir(), name)
+	fullPath, err := SanitizePath(basePath, filePath)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Invalid file path: %v", err),
+		})
+		return
+	}
+
+	// Parse request body
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Invalid JSON: %v", err),
+		})
+		return
+	}
+
+	// Create parent directories if needed
+	dir := filepath.Dir(fullPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Failed to create directory: %v", err),
+		})
+		return
+	}
+
+	// Write file content
+	if err := os.WriteFile(fullPath, []byte(req.Content), 0644); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Failed to write file: %v", err),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+		"path":   filePath,
+	})
+}
+
+// handleDeleteFunctionFile deletes a file or directory in a function directory.
+func (h *Handler) handleDeleteFunctionFile(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	filePath := chi.URLParam(r, "*")
+
+	if h.functionsService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Edge functions not enabled. Start the server with --functions flag.",
+		})
+		return
+	}
+
+	// Build base path and sanitize the file path
+	basePath := filepath.Join(h.functionsService.FunctionsDir(), name)
+	fullPath, err := SanitizePath(basePath, filePath)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Invalid file path: %v", err),
+		})
+		return
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("File %q not found", filePath),
+		})
+		return
+	}
+
+	// Delete the file or directory
+	if err := os.RemoveAll(fullPath); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Failed to delete: %v", err),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+	})
+}
+
+// handleRenameFunctionFile renames/moves a file within a function directory.
+func (h *Handler) handleRenameFunctionFile(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if h.functionsService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Edge functions not enabled. Start the server with --functions flag.",
+		})
+		return
+	}
+
+	// Parse request body
+	var req struct {
+		OldPath string `json:"oldPath"`
+		NewPath string `json:"newPath"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Invalid JSON: %v", err),
+		})
+		return
+	}
+
+	if req.OldPath == "" || req.NewPath == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Both oldPath and newPath are required",
+		})
+		return
+	}
+
+	// Build base path and sanitize both paths
+	basePath := filepath.Join(h.functionsService.FunctionsDir(), name)
+	oldFullPath, err := SanitizePath(basePath, req.OldPath)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Invalid old path: %v", err),
+		})
+		return
+	}
+
+	newFullPath, err := SanitizePath(basePath, req.NewPath)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Invalid new path: %v", err),
+		})
+		return
+	}
+
+	// Check if source exists
+	if _, err := os.Stat(oldFullPath); os.IsNotExist(err) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("File %q not found", req.OldPath),
+		})
+		return
+	}
+
+	// Create parent directories for new path if needed
+	newDir := filepath.Dir(newFullPath)
+	if err := os.MkdirAll(newDir, 0755); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Failed to create directory: %v", err),
+		})
+		return
+	}
+
+	// Rename the file
+	if err := os.Rename(oldFullPath, newFullPath); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Failed to rename: %v", err),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+	})
+}
+
+// handleRestartFunctions restarts the edge runtime.
+func (h *Handler) handleRestartFunctions(w http.ResponseWriter, r *http.Request) {
+	if h.functionsService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Edge functions not enabled. Start the server with --functions flag.",
+		})
+		return
+	}
+
+	// Stop the runtime
+	if err := h.functionsService.Stop(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Failed to stop runtime: %v", err),
+		})
+		return
+	}
+
+	// Start the runtime
+	if err := h.functionsService.Start(r.Context()); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Failed to start runtime: %v", err),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"message": "Runtime restarted",
+	})
 }
 
 // ============================================================
