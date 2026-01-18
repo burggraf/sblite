@@ -24,6 +24,7 @@ type User struct {
 	AppMetadata       map[string]any `json:"app_metadata"`
 	UserMetadata      map[string]any `json:"user_metadata"`
 	Role              string         `json:"role"`
+	IsAnonymous       bool           `json:"is_anonymous"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
 }
@@ -93,13 +94,14 @@ func (s *Service) GetUserByID(id string) (*User, error) {
 	var createdAt, updatedAt string
 	var emailConfirmedAt, lastSignInAt sql.NullString
 	var rawAppMetaData, rawUserMetaData string
+	var isAnonymous int
 
 	err := s.db.QueryRow(`
 		SELECT id, email, encrypted_password, email_confirmed_at, last_sign_in_at,
-		       role, created_at, updated_at, raw_app_meta_data, raw_user_meta_data
+		       role, created_at, updated_at, raw_app_meta_data, raw_user_meta_data, is_anonymous
 		FROM auth_users WHERE id = ? AND deleted_at IS NULL
 	`, id).Scan(&user.ID, &user.Email, &user.EncryptedPassword, &emailConfirmedAt,
-		&lastSignInAt, &user.Role, &createdAt, &updatedAt, &rawAppMetaData, &rawUserMetaData)
+		&lastSignInAt, &user.Role, &createdAt, &updatedAt, &rawAppMetaData, &rawUserMetaData, &isAnonymous)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("user not found")
@@ -108,6 +110,7 @@ func (s *Service) GetUserByID(id string) (*User, error) {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
+	user.IsAnonymous = isAnonymous == 1
 	user.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	user.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 	if emailConfirmedAt.Valid {
