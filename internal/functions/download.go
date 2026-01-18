@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,8 +20,10 @@ import (
 const (
 	// EdgeRuntimeVersion is the pinned version of edge-runtime to use.
 	EdgeRuntimeVersion = "v1.67.4"
-	// EdgeRuntimeBaseURL is the GitHub releases URL for edge-runtime.
-	EdgeRuntimeBaseURL = "https://github.com/supabase/edge-runtime/releases/download"
+	// GHCR registry URL
+	ghcrRegistry = "ghcr.io"
+	// Edge runtime image name
+	edgeRuntimeImage = "supabase/edge-runtime"
 )
 
 // SHA256 checksums for each platform binary.
@@ -94,49 +97,34 @@ func (d *Downloader) EnsureBinary() (string, error) {
 	return binaryPath, nil
 }
 
-// Download downloads and extracts the edge-runtime binary.
+// Download downloads and extracts the edge-runtime binary from GHCR.
 func (d *Downloader) Download() error {
 	// Ensure download directory exists
 	if err := os.MkdirAll(d.downloadDir, 0755); err != nil {
 		return fmt.Errorf("failed to create download directory: %w", err)
 	}
 
-	url := d.getBinaryURL()
-	log.Info("downloading edge runtime",
+	platform := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+	log.Info("downloading edge runtime from GHCR",
 		"version", d.version,
-		"url", url,
-		"platform", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+		"platform", platform,
 	)
 
-	// Download the tarball
-	resp, err := http.Get(url)
+	// Step 1: Get auth token from GHCR
+	token, err := d.getGHCRToken()
 	if err != nil {
-		return fmt.Errorf("failed to download edge runtime: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download edge runtime: HTTP %d", resp.StatusCode)
+		return fmt.Errorf("failed to get GHCR token: %w", err)
 	}
 
-	// Create temp file for download
-	tmpFile, err := os.CreateTemp(d.downloadDir, "edge-runtime-*.tar.gz")
+	// Step 2: Get image manifest
+	manifest, err := d.getImageManifest(token)
 	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-
-	// Copy download to temp file
-	_, err = io.Copy(tmpFile, resp.Body)
-	tmpFile.Close()
-	if err != nil {
-		return fmt.Errorf("failed to save download: %w", err)
+		return fmt.Errorf("failed to get image manifest: %w", err)
 	}
 
-	// Extract the binary
+	// Step 3: Download and extract layers to find the binary
 	binaryPath := d.BinaryPath()
-	if err := extractBinary(tmpPath, binaryPath); err != nil {
+	if err := d.extractBinaryFromLayers(token, manifest, binaryPath); err != nil {
 		return fmt.Errorf("failed to extract binary: %w", err)
 	}
 
@@ -158,41 +146,202 @@ func (d *Downloader) Download() error {
 	return nil
 }
 
-// getBinaryURL returns the download URL for the current platform.
-func (d *Downloader) getBinaryURL() string {
-	// Map Go arch to edge-runtime naming
-	arch := runtime.GOARCH
-	switch arch {
-	case "amd64":
-		arch = "x86_64"
-	case "arm64":
-		arch = "aarch64"
+// getGHCRToken gets an anonymous auth token from GHCR for pulling public images.
+func (d *Downloader) getGHCRToken() (string, error) {
+	url := fmt.Sprintf("https://%s/token?scope=repository:%s:pull", ghcrRegistry, edgeRuntimeImage)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("token request failed: HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Map Go OS to edge-runtime naming
-	osName := runtime.GOOS
-	switch osName {
-	case "darwin":
-		osName = "apple-darwin"
-	case "linux":
-		osName = "unknown-linux-gnu"
+	var tokenResp struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", fmt.Errorf("failed to parse token response: %w", err)
 	}
 
-	filename := fmt.Sprintf("edge-runtime_%s_%s-%s.tar.gz", d.version, arch, osName)
-	return fmt.Sprintf("%s/%s/%s", EdgeRuntimeBaseURL, d.version, filename)
+	return tokenResp.Token, nil
 }
 
-// extractBinary extracts the edge-runtime binary from a tarball.
-func extractBinary(tarPath, destPath string) error {
-	f, err := os.Open(tarPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+// manifestList represents a Docker manifest list (fat manifest).
+type manifestList struct {
+	SchemaVersion int `json:"schemaVersion"`
+	MediaType     string `json:"mediaType"`
+	Manifests     []struct {
+		MediaType string `json:"mediaType"`
+		Digest    string `json:"digest"`
+		Size      int    `json:"size"`
+		Platform  struct {
+			Architecture string `json:"architecture"`
+			OS           string `json:"os"`
+		} `json:"platform"`
+	} `json:"manifests"`
+}
 
-	gzr, err := gzip.NewReader(f)
+// imageManifest represents a Docker image manifest.
+type imageManifest struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	MediaType     string `json:"mediaType"`
+	Config        struct {
+		MediaType string `json:"mediaType"`
+		Digest    string `json:"digest"`
+		Size      int    `json:"size"`
+	} `json:"config"`
+	Layers []struct {
+		MediaType string `json:"mediaType"`
+		Digest    string `json:"digest"`
+		Size      int    `json:"size"`
+	} `json:"layers"`
+}
+
+// getImageManifest gets the image manifest for the current platform.
+func (d *Downloader) getImageManifest(token string) (*imageManifest, error) {
+	// First, try to get the manifest list (multi-arch image)
+	url := fmt.Sprintf("https://%s/v2/%s/manifests/%s", ghcrRegistry, edgeRuntimeImage, d.version)
+
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create gzip reader: %w", err)
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	// Accept both manifest list and single manifest
+	req.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("manifest request failed: HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read manifest: %w", err)
+	}
+
+	// Check if it's a manifest list
+	if strings.Contains(contentType, "manifest.list") || strings.Contains(contentType, "image.index") {
+		var list manifestList
+		if err := json.Unmarshal(body, &list); err != nil {
+			return nil, fmt.Errorf("failed to parse manifest list: %w", err)
+		}
+
+		// Find the manifest for our platform
+		targetArch := runtime.GOARCH
+		targetOS := runtime.GOOS
+
+		var digest string
+		for _, m := range list.Manifests {
+			if m.Platform.OS == targetOS && m.Platform.Architecture == targetArch {
+				digest = m.Digest
+				break
+			}
+		}
+
+		if digest == "" {
+			return nil, fmt.Errorf("no manifest found for platform %s/%s", targetOS, targetArch)
+		}
+
+		// Fetch the platform-specific manifest
+		return d.fetchManifestByDigest(token, digest)
+	}
+
+	// It's a single manifest
+	var manifest imageManifest
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest: %w", err)
+	}
+
+	return &manifest, nil
+}
+
+// fetchManifestByDigest fetches a manifest by its digest.
+func (d *Downloader) fetchManifestByDigest(token, digest string) (*imageManifest, error) {
+	url := fmt.Sprintf("https://%s/v2/%s/manifests/%s", ghcrRegistry, edgeRuntimeImage, digest)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("manifest request failed: HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var manifest imageManifest
+	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest: %w", err)
+	}
+
+	return &manifest, nil
+}
+
+// extractBinaryFromLayers downloads layers and extracts the edge-runtime binary.
+func (d *Downloader) extractBinaryFromLayers(token string, manifest *imageManifest, destPath string) error {
+	// Process layers in reverse order (top layer first, more likely to have the binary)
+	for i := len(manifest.Layers) - 1; i >= 0; i-- {
+		layer := manifest.Layers[i]
+		log.Debug("checking layer for edge-runtime binary", "layer", i, "digest", layer.Digest[:20]+"...")
+
+		found, err := d.searchLayerForBinary(token, layer.Digest, destPath)
+		if err != nil {
+			log.Debug("error searching layer", "error", err)
+			continue
+		}
+		if found {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("edge-runtime binary not found in any layer")
+}
+
+// searchLayerForBinary downloads a layer and searches for the edge-runtime binary.
+func (d *Downloader) searchLayerForBinary(token, digest, destPath string) (bool, error) {
+	url := fmt.Sprintf("https://%s/v2/%s/blobs/%s", ghcrRegistry, edgeRuntimeImage, digest)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("blob request failed: HTTP %d", resp.StatusCode)
+	}
+
+	// Layers are gzipped tarballs
+	gzr, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return false, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 	defer gzr.Close()
 
@@ -204,27 +353,36 @@ func extractBinary(tarPath, destPath string) error {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("failed to read tar header: %w", err)
+			return false, fmt.Errorf("failed to read tar header: %w", err)
 		}
 
 		// Look for the edge-runtime binary
+		// Common paths: /usr/local/bin/edge-runtime, /edge-runtime, etc.
 		name := header.Name
-		if strings.HasSuffix(name, "/edge-runtime") || name == "edge-runtime" {
+		if strings.HasSuffix(name, "/edge-runtime") || name == "edge-runtime" ||
+			strings.HasSuffix(name, "/edge-runtime-server") || name == "edge-runtime-server" ||
+			name == "usr/local/bin/edge-runtime" {
+
+			log.Info("found edge-runtime binary in layer", "path", name)
+
 			// Extract to destination
 			out, err := os.Create(destPath)
 			if err != nil {
-				return fmt.Errorf("failed to create output file: %w", err)
+				return false, fmt.Errorf("failed to create output file: %w", err)
 			}
-			defer out.Close()
 
-			if _, err := io.Copy(out, tr); err != nil {
-				return fmt.Errorf("failed to extract binary: %w", err)
+			_, err = io.Copy(out, tr)
+			out.Close()
+			if err != nil {
+				os.Remove(destPath)
+				return false, fmt.Errorf("failed to extract binary: %w", err)
 			}
-			return nil
+
+			return true, nil
 		}
 	}
 
-	return fmt.Errorf("edge-runtime binary not found in archive")
+	return false, nil
 }
 
 // verifyChecksum verifies the SHA256 checksum of a file.
