@@ -273,9 +273,7 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 
 These Supabase features are not applicable to sblite:
 
-- Edge Functions (serverless functions)
 - Realtime subscriptions (WebSocket)
-- Storage API (file storage)
 - Postgres extensions
 - Database triggers
 - pg_net / pg_cron
@@ -288,6 +286,11 @@ These Supabase features are not applicable to sblite:
 | API Key authentication | ✅ | `anon` and `service_role` keys |
 | Email verification flows | ✅ | Magic link, password reset, invite |
 | Mail catch mode | ✅ | Development email capture |
+| Storage API | ✅ | Buckets, objects, signed URLs, RLS, local/S3 backends |
+| Edge Functions | ✅ | Supabase Edge Runtime, secrets, per-function config |
+| Full-text search | ✅ | SQLite FTS5 with auto-sync triggers |
+| OAuth providers | ✅ | Google, GitHub with PKCE support |
+| Anonymous sign-in | ✅ | With credential linking for conversion |
 
 ---
 
@@ -304,20 +307,29 @@ These Supabase features are not applicable to sblite:
 
 ## Future Compatibility Roadmap
 
-### Phase 4 (Planned)
+### Phase 4 (Completed)
 
-- [ ] Full-text search with SQLite FTS5
+- [x] Full-text search with SQLite FTS5
 - [x] JSON path extraction (`->`, `->>`) - Implemented via `json_extract()`
 - [x] HEAD method support for count-only queries
-- [ ] Many-to-many relationship queries
-- [ ] Aliased joins for self-referential queries
+- [x] Many-to-many relationship queries
+- [x] Aliased joins for self-referential queries
+
+### Phase 5 (Completed)
+
+- [x] Storage API (buckets, objects, signed URLs, RLS, local/S3 backends)
+- [x] Edge Functions (Supabase Edge Runtime integration)
+- [x] OAuth providers (Google, GitHub with PKCE)
+- [x] Anonymous sign-in with credential linking
 
 ### Future Consideration
 
-- [ ] Realtime simulation
-- [x] OAuth providers (Google, GitHub implemented)
-- [ ] Storage API
+- [ ] Realtime simulation (WebSocket-based)
 - [ ] Additional OAuth providers (Apple, Azure, Discord, etc.)
+- [ ] Image transformations for storage (resize, crop, format conversion)
+- [ ] Resumable uploads via TUS protocol
+- [ ] Phone authentication (SMS OTP)
+- [ ] Multi-factor authentication (TOTP)
 
 ---
 

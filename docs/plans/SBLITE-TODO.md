@@ -53,7 +53,7 @@ See `docs/STORAGE.md` for documentation.
 
 ---
 
-### Edge Functions
+### ~~Edge Functions~~ ✅ COMPLETE
 Serverless TypeScript/JavaScript functions using Deno runtime. Enables custom backend logic.
 
 ```javascript
@@ -61,19 +61,16 @@ Serverless TypeScript/JavaScript functions using Deno runtime. Enables custom ba
 supabase.functions.invoke('hello-world', { body: { name: 'World' } })
 ```
 
-**Implementation approach:**
-- Use Supabase's open-source Edge Runtime (separate binary, auto-downloaded)
-- sblite proxies `/functions/v1/*` to edge-runtime process
-- Process management (start/stop/health checks) handled by sblite
-- Secrets stored encrypted in SQLite, injected as env vars
-- Dashboard UI for function management and testing
+**Implemented:**
+- Supabase Edge Runtime integration (auto-downloaded binary)
+- HTTP proxy for `/functions/v1/*` endpoints
+- Process management with health checks
+- Encrypted secrets storage with env var injection
+- Per-function JWT verification toggle
+- Dashboard UI for function management
+- CLI commands for function scaffolding
 
-**Key benefit:** Functions migrate to Supabase without modification (same runtime).
-
-**Complexity:** Large
-**Priority:** Medium
-
-See `docs/plans/2026-01-18-edge-functions-design.md` for full design.
+See `docs/edge-functions.md` for documentation.
 
 ---
 
@@ -127,20 +124,20 @@ SMS/WhatsApp OTP authentication.
 
 ---
 
-### Anonymous Sign-In
+### ~~Anonymous Sign-In~~ ✅ COMPLETE
 Allow users to start without credentials, convert later.
 
 ```javascript
 supabase.auth.signInAnonymously()
 ```
 
-**Implementation:**
-- Create user with `is_anonymous` flag
-- No email/password required
-- Allow linking credentials later
+**Implemented:**
+- Create anonymous user with `is_anonymous` flag
+- OAuth-based conversion (link Google/GitHub account)
+- Password-based conversion (set email/password)
+- Automatic identity merging on conversion
 
-**Complexity:** Small
-**Priority:** Low
+See `docs/anonymous-signin.md` for documentation.
 
 ---
 
