@@ -114,6 +114,17 @@ const App = {
                 response: null,
                 loading: false,
             },
+            editor: {
+                currentFile: null,      // Currently open file path
+                content: '',            // File content in editor
+                originalContent: '',    // For dirty detection
+                isDirty: false,         // Has unsaved changes
+                tree: null,             // File tree structure
+                expandedFolders: {},    // Which folders are expanded
+                isExpanded: false,      // Full-width mode
+                monacoEditor: null,     // Monaco editor instance
+                loading: false          // Loading state
+            }
         },
     },
 
