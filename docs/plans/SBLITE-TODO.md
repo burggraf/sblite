@@ -4,6 +4,35 @@ This document tracks main app features that haven't been implemented yet. Refere
 
 ## Major Features
 
+### Vector Search (pgvector-compatible)
+AI/ML similarity search for embeddings, RAG applications, and recommendations.
+
+```javascript
+// Client usage
+const { data } = await supabase.rpc('vector_search', {
+  table_name: 'documents',
+  embedding_column: 'embedding',
+  query_embedding: [0.1, 0.2, ...],
+  match_count: 10,
+  match_threshold: 0.7
+});
+```
+
+**Implementation approach:**
+- Store vectors as JSON arrays in TEXT columns
+- New `vector(n)` type in type system for validation/export
+- Built-in RPC functions (`vector_search`, `vector_match`)
+- Distance metrics: cosine, L2, dot product
+- Brute force search initially, optional HNSW index for performance
+- Export generates pgvector DDL and data conversion
+
+**Complexity:** Medium-Large
+**Priority:** Medium (enables AI/ML use cases)
+
+See `docs/plans/2026-01-18-vector-search-design.md` for full design.
+
+---
+
 ### Realtime Subscriptions
 WebSocket-based real-time updates when data changes. Core Supabase feature for reactive apps.
 
@@ -158,6 +187,7 @@ TOTP-based second factor.
 
 | Feature | Priority | Effort | Status |
 |---------|----------|--------|--------|
+| Vector search | Medium | Medium-Large | Pending |
 | Realtime subscriptions | Medium | Large | Pending |
 | File storage | Medium | Large | ✅ Complete |
 | Edge functions | Medium | Large | Pending |
