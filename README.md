@@ -15,6 +15,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | Category | Status |
 |----------|--------|
 | Email/password authentication | :white_check_mark: |
+| OAuth authentication (Google, GitHub) | :white_check_mark: |
 | JWT sessions with refresh tokens | :white_check_mark: |
 | REST API (CRUD operations) | :white_check_mark: |
 | Query filters (eq, neq, gt, lt, like, in, etc.) | :white_check_mark: |
@@ -81,6 +82,12 @@ const supabase = createClient('http://localhost:8080', 'your-anon-key', {
 const { data, error } = await supabase.auth.signUp({
   email: 'user@example.com',
   password: 'password123'
+})
+
+// Or sign in with OAuth
+await supabase.auth.signInWithOAuth({
+  provider: 'google',
+  options: { redirectTo: 'http://localhost:3000/callback' }
 })
 
 // Query data
@@ -169,6 +176,11 @@ See [Email System Documentation](docs/EMAIL.md) for detailed configuration and u
 | `/auth/v1/magiclink` | POST | Request magic link login email |
 | `/auth/v1/resend` | POST | Resend confirmation or recovery email |
 | `/auth/v1/invite` | POST | Invite new user (admin only) |
+| `/auth/v1/authorize` | GET | Initiate OAuth flow |
+| `/auth/v1/callback` | GET | OAuth provider callback |
+| `/auth/v1/user/identities` | GET | List linked OAuth identities |
+| `/auth/v1/user/identities/{provider}` | DELETE | Unlink OAuth provider |
+| `/auth/v1/settings` | GET | Get auth settings (includes OAuth) |
 
 ### REST API (`/rest/v1`)
 
@@ -206,6 +218,7 @@ See [Email System Documentation](docs/EMAIL.md) for detailed configuration and u
 ## Documentation
 
 ### Guides
+- [OAuth Authentication](docs/OAUTH.md) - Google and GitHub OAuth setup, API reference, and troubleshooting
 - [Email System](docs/EMAIL.md) - Complete guide to email modes, configuration, and authentication flows
 - [Logging System](docs/LOGGING.md) - Logging modes, rotation, database queries, and configuration
 

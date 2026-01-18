@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/markb/sblite/internal/admin"
 	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/dashboard"
@@ -111,6 +112,16 @@ func (s *Server) initMail() {
 }
 
 func (s *Server) setupRoutes() {
+	// CORS middleware for browser-based apps
+	s.router.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Requested-With", "apikey", "Prefer", "Range"},
+		ExposedHeaders:   []string{"Content-Range", "Range", "X-Total-Count"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
+
 	s.router.Use(log.RequestLogger)
 	s.router.Use(middleware.Recoverer)
 	s.router.Use(middleware.SetHeader("Content-Type", "application/json"))

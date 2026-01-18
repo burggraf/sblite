@@ -7,3 +7,4 @@ e2e/package-lock.json
 .DS_Store
 migrations/
 node_modules/
+shoplite.db
