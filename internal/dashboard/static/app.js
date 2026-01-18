@@ -114,6 +114,17 @@ const App = {
                 response: null,
                 loading: false,
             },
+            editor: {
+                currentFile: null,      // Currently open file path
+                content: '',            // File content in editor
+                originalContent: '',    // For dirty detection
+                isDirty: false,         // Has unsaved changes
+                tree: null,             // File tree structure
+                expandedFolders: {},    // Which folders are expanded
+                isExpanded: false,      // Full-width mode
+                monacoEditor: null,     // Monaco editor instance
+                loading: false          // Loading state
+            }
         },
         storage: {
             buckets: [],
@@ -4947,6 +4958,19 @@ const App = {
     async selectFunction(name) {
         this.state.functions.selected = name;
         this.state.functions.config = null;
+        this.state.functions.editor = {
+            currentFile: null,
+            content: '',
+            originalContent: '',
+            isDirty: false,
+            tree: null,
+            expandedFolders: {},
+            isExpanded: false,
+            monacoEditor: null,
+            loading: true
+        };
+
+        this.render();
 
         // Load function config
         try {
@@ -4954,16 +4978,32 @@ const App = {
             if (res.ok) {
                 this.state.functions.config = await res.json();
             }
-        } catch (e) {
-            // Ignore
+        } catch (err) {
+            console.error('Failed to load function config:', err);
         }
 
-        this.render();
+        // Load file tree
+        await this.loadFunctionFiles(name);
+
+        // Initialize Monaco after render
+        setTimeout(() => this.initMonacoEditor(), 100);
     },
 
     deselectFunction() {
+        this.destroyMonacoEditor();
         this.state.functions.selected = null;
         this.state.functions.config = null;
+        this.state.functions.editor = {
+            currentFile: null,
+            content: '',
+            originalContent: '',
+            isDirty: false,
+            tree: null,
+            expandedFolders: {},
+            isExpanded: false,
+            monacoEditor: null,
+            loading: false
+        };
         this.render();
     },
 
@@ -5205,6 +5245,246 @@ const App = {
         this.render();
     },
 
+    // =====================
+    // Editor State Methods
+    // =====================
+
+    async loadFunctionFiles(name) {
+        this.state.functions.editor.loading = true;
+        this.render();
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files`);
+            if (res.ok) {
+                const tree = await res.json();
+                this.state.functions.editor.tree = tree;
+
+                // Auto-open index.ts if exists
+                const indexFile = this.findFileInTree(tree, 'index.ts');
+                if (indexFile) {
+                    await this.openFunctionFile('index.ts');
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load function files:', err);
+        }
+
+        this.state.functions.editor.loading = false;
+        this.render();
+    },
+
+    findFileInTree(node, filename) {
+        if (node.type === 'file' && node.name === filename) return node;
+        if (node.children) {
+            for (const child of node.children) {
+                const found = this.findFileInTree(child, filename);
+                if (found) return found;
+            }
+        }
+        return null;
+    },
+
+    async openFunctionFile(path) {
+        const name = this.state.functions.selected;
+        if (!name) return;
+
+        // Check for unsaved changes
+        if (this.state.functions.editor.isDirty) {
+            if (!confirm('You have unsaved changes. Discard them?')) return;
+        }
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files/${path}`);
+            if (res.ok) {
+                const data = await res.json();
+                this.state.functions.editor.currentFile = path;
+                this.state.functions.editor.content = data.content;
+                this.state.functions.editor.originalContent = data.content;
+                this.state.functions.editor.isDirty = false;
+
+                // Update Monaco editor if it exists
+                if (this.state.functions.editor.monacoEditor) {
+                    this.state.functions.editor.monacoEditor.setValue(data.content);
+                    this.setMonacoLanguage(path);
+                }
+
+                this.render();
+            }
+        } catch (err) {
+            console.error('Failed to open file:', err);
+        }
+    },
+
+    async saveFunctionFile() {
+        const { selected } = this.state.functions;
+        const { currentFile, monacoEditor } = this.state.functions.editor;
+        if (!selected || !currentFile) return;
+
+        const content = monacoEditor ? monacoEditor.getValue() : this.state.functions.editor.content;
+
+        try {
+            const res = await fetch(`/_/api/functions/${selected}/files/${currentFile}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content })
+            });
+
+            if (res.ok) {
+                this.state.functions.editor.originalContent = content;
+                this.state.functions.editor.content = content;
+                this.state.functions.editor.isDirty = false;
+                this.render();
+
+                // Ask about restart
+                if (confirm('File saved. Restart edge runtime to apply changes?')) {
+                    await this.restartFunctionsRuntime();
+                }
+            }
+        } catch (err) {
+            console.error('Failed to save file:', err);
+            alert('Failed to save file');
+        }
+    },
+
+    async restartFunctionsRuntime() {
+        const { selected } = this.state.functions;
+        try {
+            const res = await fetch(`/_/api/functions/${selected}/restart`, { method: 'POST' });
+            if (res.ok) {
+                await this.loadFunctionsStatus();
+                this.render();
+            } else {
+                alert('Failed to restart runtime');
+            }
+        } catch (err) {
+            console.error('Failed to restart runtime:', err);
+        }
+    },
+
+    async loadFunctionsStatus() {
+        try {
+            const res = await fetch('/_/api/functions/status');
+            if (res.ok) {
+                const statusData = await res.json();
+                this.state.functions.status = { ...this.state.functions.status, ...statusData };
+            }
+        } catch (err) {
+            console.error('Failed to load functions status:', err);
+        }
+    },
+
+    setMonacoLanguage(path) {
+        const editor = this.state.functions.editor.monacoEditor;
+        if (!editor) return;
+
+        const ext = path.split('.').pop();
+        const languageMap = {
+            'ts': 'typescript',
+            'tsx': 'typescript',
+            'js': 'javascript',
+            'jsx': 'javascript',
+            'mjs': 'javascript',
+            'json': 'json',
+            'html': 'html',
+            'css': 'css',
+            'md': 'markdown',
+            'txt': 'plaintext'
+        };
+
+        const language = languageMap[ext] || 'plaintext';
+        monaco.editor.setModelLanguage(editor.getModel(), language);
+    },
+
+    initMonacoEditor() {
+        const container = document.getElementById('monaco-editor-container');
+        if (!container || this.state.functions.editor.monacoEditor) return;
+
+        // Wait for Monaco to load
+        if (typeof monaco === 'undefined') {
+            require(['vs/editor/editor.main'], () => this.initMonacoEditor());
+            return;
+        }
+
+        const isDark = document.body.classList.contains('dark-theme');
+
+        const editor = monaco.editor.create(container, {
+            value: this.state.functions.editor.content || '// Select a file to edit',
+            language: 'typescript',
+            theme: isDark ? 'vs-dark' : 'vs',
+            automaticLayout: true,
+            minimap: { enabled: true },
+            fontSize: 14,
+            tabSize: 2,
+            scrollBeyondLastLine: false,
+            wordWrap: 'on'
+        });
+
+        this.state.functions.editor.monacoEditor = editor;
+
+        // Track changes for dirty state
+        editor.onDidChangeModelContent(() => {
+            const current = editor.getValue();
+            const original = this.state.functions.editor.originalContent;
+            const wasDirty = this.state.functions.editor.isDirty;
+            const isDirty = current !== original;
+
+            if (wasDirty !== isDirty) {
+                this.state.functions.editor.isDirty = isDirty;
+                this.state.functions.editor.content = current;
+                // Update just the header, not full render
+                this.updateEditorHeader();
+            }
+        });
+
+        // Keyboard shortcut for save
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+            this.saveFunctionFile();
+        });
+    },
+
+    updateEditorHeader() {
+        const { currentFile, isDirty } = this.state.functions.editor;
+        const fileSpan = document.querySelector('.editor-header .current-file');
+        const saveBtn = document.querySelector('.editor-header .btn-primary');
+
+        if (fileSpan) {
+            fileSpan.textContent = currentFile ? `${currentFile}${isDirty ? ' \u25cf' : ''}` : 'No file selected';
+        }
+        if (saveBtn) {
+            saveBtn.disabled = !currentFile || !isDirty;
+        }
+
+        // Update file tree item
+        const activeItem = document.querySelector('.file-tree-item.file.active .file-name');
+        if (activeItem && currentFile) {
+            const filename = currentFile.split('/').pop();
+            activeItem.textContent = `${filename}${isDirty ? ' \u25cf' : ''}`;
+        }
+    },
+
+    destroyMonacoEditor() {
+        if (this.state.functions.editor.monacoEditor) {
+            this.state.functions.editor.monacoEditor.dispose();
+            this.state.functions.editor.monacoEditor = null;
+        }
+    },
+
+    toggleEditorExpand() {
+        this.state.functions.editor.isExpanded = !this.state.functions.editor.isExpanded;
+        this.render();
+
+        // Resize Monaco editor
+        if (this.state.functions.editor.monacoEditor) {
+            setTimeout(() => this.state.functions.editor.monacoEditor.layout(), 100);
+        }
+    },
+
+    toggleFolder(path) {
+        const expanded = this.state.functions.editor.expandedFolders;
+        expanded[path] = !expanded[path];
+        this.render();
+    },
+
     // Functions view rendering
     renderFunctionsView() {
         const { loading, status, list, selected, config, secrets, secretsLoading } = this.state.functions;
@@ -5329,43 +5609,90 @@ const App = {
 
     renderFunctionDetail() {
         const { selected, config } = this.state.functions;
+        const { tree, currentFile, isDirty, isExpanded, loading } = this.state.functions.editor;
         const fn = this.state.functions.list.find(f => f.name === selected);
 
         if (!fn) return '';
 
+        if (loading) {
+            return `<div class="function-detail loading">Loading files...</div>`;
+        }
+
         return `
-            <div class="function-detail">
+            <div class="function-detail ${isExpanded ? 'expanded' : ''}">
                 <div class="function-detail-header">
-                    <h2>${this.escapeHtml(selected)}</h2>
-                    <div class="function-actions">
+                    <div class="header-left">
+                        <button class="btn btn-link" onclick="App.deselectFunction()">← Back</button>
+                        <h2>${this.escapeHtml(selected)}</h2>
+                    </div>
+                    <div class="header-right">
+                        <div class="dropdown">
+                            <button class="btn btn-secondary btn-sm dropdown-toggle" onclick="this.nextElementSibling.classList.toggle('show')">
+                                Config ▼
+                            </button>
+                            <div class="dropdown-menu">
+                                <label class="dropdown-item">
+                                    <input type="checkbox" ${fn.verify_jwt !== false ? 'checked' : ''}
+                                        onchange="App.toggleFunctionJWT('${selected}', this.checked)">
+                                    Require JWT
+                                </label>
+                            </div>
+                        </div>
+                        <div class="dropdown">
+                            <button class="btn btn-secondary btn-sm dropdown-toggle" onclick="this.nextElementSibling.classList.toggle('show')">
+                                Test ▼
+                            </button>
+                            <div class="dropdown-menu test-dropdown">
+                                ${this.renderFunctionTestConsole ? this.renderFunctionTestConsole() : '<div class="p-2">Test console</div>'}
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="App.toggleEditorExpand()" title="Toggle expand">
+                            ${isExpanded ? '⛶' : '⛶'}
+                        </button>
                         <button class="btn btn-danger btn-sm" onclick="App.deleteFunction('${selected}')">Delete</button>
                     </div>
                 </div>
 
-                <div class="function-section">
-                    <h3>Endpoint</h3>
-                    <div class="endpoint-info">
-                        <code>/functions/v1/${this.escapeHtml(selected)}</code>
-                        <button class="btn btn-secondary btn-xs" onclick="App.copyToClipboard('/functions/v1/${this.escapeHtml(selected)}')" title="Copy">Copy</button>
+                <div class="editor-container">
+                    ${!isExpanded ? `
+                        <div class="file-tree-panel">
+                            <div class="file-tree-header">
+                                <span>Files</span>
+                                <div class="file-tree-actions">
+                                    <button class="btn btn-xs" onclick="App.createNewFile()" title="New File">+ File</button>
+                                    <button class="btn btn-xs" onclick="App.createNewFolder()" title="New Folder">+ Folder</button>
+                                </div>
+                            </div>
+                            <div class="file-tree">
+                                ${tree ? this.renderFileTree(tree) : '<div class="empty">No files</div>'}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <div class="editor-panel">
+                        <div class="editor-header">
+                            <span class="current-file">
+                                ${currentFile ? this.escapeHtml(currentFile) : 'No file selected'}
+                                ${isDirty ? ' ●' : ''}
+                            </span>
+                            <div class="editor-actions">
+                                <button class="btn btn-primary btn-sm" onclick="App.saveFunctionFile()"
+                                    ${!currentFile || !isDirty ? 'disabled' : ''}>Save</button>
+                                <button class="btn btn-secondary btn-sm" onclick="App.restartFunctionsRuntime()"
+                                    title="Restart Runtime">⟳</button>
+                            </div>
+                        </div>
+                        <div id="monaco-editor-container" class="editor-content"></div>
                     </div>
                 </div>
+            </div>
 
-                <div class="function-section">
-                    <h3>Configuration</h3>
-                    <div class="config-item">
-                        <label>
-                            <input type="checkbox" ${fn.verify_jwt !== false ? 'checked' : ''}
-                                onchange="App.toggleFunctionJWT('${selected}', this.checked)">
-                            Require JWT Verification
-                        </label>
-                        <p class="config-help">When enabled, requests must include a valid Authorization header.</p>
-                    </div>
-                </div>
-
-                <div class="function-section">
-                    <h3>Test Function</h3>
-                    ${this.renderFunctionTestConsole()}
-                </div>
+            <!-- Context Menu -->
+            <div id="file-context-menu" class="context-menu" style="display: none;">
+                <div class="ctx-item ctx-new-file" onclick="App.createNewFile()">New File</div>
+                <div class="ctx-item ctx-new-folder" onclick="App.createNewFolder()">New Folder</div>
+                <div class="ctx-item" onclick="App.renameFile()">Rename</div>
+                <div class="ctx-item ctx-delete" onclick="App.deleteFile()">Delete</div>
             </div>
         `;
     },
@@ -5514,6 +5841,21 @@ const App = {
         `;
     },
 
+    // File tree rendering
+    renderFileTree(node, path = '') {
+        const currentPath = path ? `${path}/${node.name}` : node.name;
+        const isRoot = path === '';
+        const isExpanded = isRoot || this.state.functions.editor.expandedFolders[currentPath];
+
+        if (node.type === 'file') {
+            const isActive = this.state.functions.editor.currentFile === currentPath;
+            const isDirty = isActive && this.state.functions.editor.isDirty;
+            return `
+                <div class="file-tree-item file ${isActive ? 'active' : ''}"
+                     onclick="App.openFunctionFile('${currentPath}')"
+                     oncontextmenu="App.showFileContextMenu(event, '${currentPath}', 'file')">
+                    <span class="file-icon">${this.getFileIcon(node.name)}</span>
+                    <span class="file-name">${this.escapeHtml(node.name)}${isDirty ? ' ●' : ''}</span>
     // Storage methods
 
     async loadBuckets() {
@@ -6123,6 +6465,20 @@ const App = {
             `;
         }
 
+        // Directory
+        const children = node.children || [];
+        return `
+            <div class="file-tree-item dir ${isRoot ? 'root' : ''}">
+                <div class="dir-header" onclick="App.toggleFolder('${currentPath}')"
+                     oncontextmenu="App.showFileContextMenu(event, '${currentPath}', 'dir')">
+                    <span class="expand-icon">${isExpanded ? '▼' : '▶'}</span>
+                    <span class="dir-name">${this.escapeHtml(node.name)}</span>
+                </div>
+                ${isExpanded ? `
+                    <div class="dir-children">
+                        ${children.map(child => this.renderFileTree(child, isRoot ? '' : currentPath)).join('')}
+                    </div>
+                ` : ''}
         return `
             <div class="modal-header">
                 <h3 title="${this.escapeHtml(fullPath)}">${this.escapeHtml(filename)}</h3>
@@ -6146,6 +6502,177 @@ const App = {
     },
 
     getFileIcon(filename) {
+        const ext = filename.split('.').pop();
+        const icons = {
+            'ts': '📘', 'tsx': '📘',
+            'js': '📙', 'jsx': '📙', 'mjs': '📙',
+            'json': '📋',
+            'html': '🌐',
+            'css': '🎨',
+            'md': '📝',
+            'txt': '📄'
+        };
+        return icons[ext] || '📄';
+    },
+
+    showFileContextMenu(event, path, type) {
+        event.preventDefault();
+        // Store for context menu actions
+        this._contextMenuPath = path;
+        this._contextMenuType = type;
+
+        const menu = document.getElementById('file-context-menu');
+        if (menu) {
+            menu.style.display = 'block';
+            menu.style.left = event.pageX + 'px';
+            menu.style.top = event.pageY + 'px';
+
+            // Show/hide options based on type
+            menu.querySelector('.ctx-new-file').style.display = type === 'dir' ? 'block' : 'none';
+            menu.querySelector('.ctx-new-folder').style.display = type === 'dir' ? 'block' : 'none';
+        }
+    },
+
+    hideContextMenu() {
+        const menu = document.getElementById('file-context-menu');
+        if (menu) menu.style.display = 'none';
+    },
+
+    async createNewFile() {
+        const name = this.state.functions.selected;
+        if (!name) return;
+
+        const path = this._contextMenuPath || '';
+        const filename = prompt('Enter file name (e.g., utils.ts):');
+        if (!filename) return;
+
+        // Validate extension
+        const ext = filename.split('.').pop();
+        const allowed = ['ts', 'js', 'json', 'mjs', 'tsx', 'jsx', 'html', 'css', 'md', 'txt'];
+        if (!allowed.includes(ext)) {
+            alert(`File type .${ext} not allowed. Use: ${allowed.join(', ')}`);
+            return;
+        }
+
+        const fullPath = path && this._contextMenuType === 'dir' ? `${path}/${filename}` : filename;
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files/${fullPath}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: '' })
+            });
+
+            if (res.ok) {
+                await this.loadFunctionFiles(name);
+                await this.openFunctionFile(fullPath);
+            } else {
+                const err = await res.json();
+                alert(err.error || 'Failed to create file');
+            }
+        } catch (err) {
+            console.error('Failed to create file:', err);
+        }
+
+        this.hideContextMenu();
+    },
+
+    async createNewFolder() {
+        const name = this.state.functions.selected;
+        if (!name) return;
+
+        const path = this._contextMenuPath || '';
+        const dirname = prompt('Enter folder name:');
+        if (!dirname) return;
+
+        const fullPath = path && this._contextMenuType === 'dir' ? `${path}/${dirname}` : dirname;
+
+        // Create folder by creating a placeholder file
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files/${fullPath}/.gitkeep`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: '' })
+            });
+
+            if (res.ok) {
+                await this.loadFunctionFiles(name);
+            } else {
+                alert('Failed to create folder');
+            }
+        } catch (err) {
+            console.error('Failed to create folder:', err);
+        }
+
+        this.hideContextMenu();
+    },
+
+    async renameFile() {
+        const name = this.state.functions.selected;
+        const oldPath = this._contextMenuPath;
+        if (!name || !oldPath) return;
+
+        const oldName = oldPath.split('/').pop();
+        const newName = prompt('Enter new name:', oldName);
+        if (!newName || newName === oldName) return;
+
+        const newPath = oldPath.replace(/[^/]+$/, newName);
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files/rename`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ oldPath, newPath })
+            });
+
+            if (res.ok) {
+                // Update current file if it was renamed
+                if (this.state.functions.editor.currentFile === oldPath) {
+                    this.state.functions.editor.currentFile = newPath;
+                }
+                await this.loadFunctionFiles(name);
+            } else {
+                alert('Failed to rename');
+            }
+        } catch (err) {
+            console.error('Failed to rename:', err);
+        }
+
+        this.hideContextMenu();
+    },
+
+    async deleteFile() {
+        const name = this.state.functions.selected;
+        const path = this._contextMenuPath;
+        if (!name || !path) return;
+
+        if (!confirm(`Delete ${path}?`)) return;
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}/files/${path}`, {
+                method: 'DELETE'
+            });
+
+            if (res.ok) {
+                // Clear editor if deleted file was open
+                if (this.state.functions.editor.currentFile === path) {
+                    this.state.functions.editor.currentFile = null;
+                    this.state.functions.editor.content = '';
+                    this.state.functions.editor.originalContent = '';
+                    this.state.functions.editor.isDirty = false;
+                    if (this.state.functions.editor.monacoEditor) {
+                        this.state.functions.editor.monacoEditor.setValue('// Select a file to edit');
+                    }
+                }
+                await this.loadFunctionFiles(name);
+            } else {
+                alert('Failed to delete');
+            }
+        } catch (err) {
+            console.error('Failed to delete:', err);
+        }
+
+        this.hideContextMenu();
         const ext = filename.split('.').pop().toLowerCase();
         const iconMap = {
             // Documents

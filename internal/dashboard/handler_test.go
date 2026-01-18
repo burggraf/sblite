@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -607,4 +608,108 @@ func TestHandlerDropColumn(t *testing.T) {
 	var id string
 	h.db.QueryRow(`SELECT id FROM items`).Scan(&id)
 	require.Equal(t, "1", id)
+}
+
+// TestBuildFileTree tests the recursive file tree building function
+func TestBuildFileTree(t *testing.T) {
+	// Create a temporary directory structure for testing
+	tmpDir := t.TempDir()
+	fnDir := tmpDir + "/test-function"
+
+	// Create directory structure
+	require.NoError(t, os.MkdirAll(fnDir+"/src/utils", 0755))
+
+	// Create allowed files
+	require.NoError(t, os.WriteFile(fnDir+"/index.ts", []byte("export default {}"), 0644))
+	require.NoError(t, os.WriteFile(fnDir+"/config.json", []byte("{}"), 0644))
+	require.NoError(t, os.WriteFile(fnDir+"/src/helper.ts", []byte("export {}"), 0644))
+	require.NoError(t, os.WriteFile(fnDir+"/src/utils/format.ts", []byte("export {}"), 0644))
+
+	// Create files that should be skipped (hidden files, disallowed extensions)
+	require.NoError(t, os.WriteFile(fnDir+"/.env", []byte("SECRET=x"), 0644))
+	require.NoError(t, os.WriteFile(fnDir+"/script.sh", []byte("#!/bin/bash"), 0644))
+	require.NoError(t, os.MkdirAll(fnDir+"/.git", 0755))
+	require.NoError(t, os.WriteFile(fnDir+"/.git/config", []byte(""), 0644))
+
+	// Build the file tree
+	tree, err := buildFileTree(fnDir, "test-function")
+	require.NoError(t, err)
+
+	// Verify root node
+	require.Equal(t, "test-function", tree.Name)
+	require.Equal(t, "dir", tree.Type)
+	require.NotNil(t, tree.Children)
+
+	// Build a map of children for easier lookup
+	childMap := make(map[string]*FileNode)
+	for _, child := range tree.Children {
+		childMap[child.Name] = child
+	}
+
+	// Check allowed files are present
+	indexNode, ok := childMap["index.ts"]
+	require.True(t, ok, "index.ts should be present")
+	require.Equal(t, "file", indexNode.Type)
+	require.Greater(t, indexNode.Size, int64(0))
+
+	configNode, ok := childMap["config.json"]
+	require.True(t, ok, "config.json should be present")
+	require.Equal(t, "file", configNode.Type)
+
+	// Check src directory
+	srcNode, ok := childMap["src"]
+	require.True(t, ok, "src directory should be present")
+	require.Equal(t, "dir", srcNode.Type)
+	require.NotEmpty(t, srcNode.Children)
+
+	// Verify nested files
+	srcChildMap := make(map[string]*FileNode)
+	for _, child := range srcNode.Children {
+		srcChildMap[child.Name] = child
+	}
+
+	helperNode, ok := srcChildMap["helper.ts"]
+	require.True(t, ok, "src/helper.ts should be present")
+	require.Equal(t, "file", helperNode.Type)
+
+	utilsNode, ok := srcChildMap["utils"]
+	require.True(t, ok, "src/utils should be present")
+	require.Equal(t, "dir", utilsNode.Type)
+
+	// Check hidden files are NOT present
+	_, ok = childMap[".env"]
+	require.False(t, ok, ".env should not be present")
+
+	_, ok = childMap[".git"]
+	require.False(t, ok, ".git should not be present")
+
+	// Check disallowed extension files are NOT present
+	_, ok = childMap["script.sh"]
+	require.False(t, ok, "script.sh should not be present")
+}
+
+// TestHandleListFunctionFilesServiceNotEnabled tests 503 when functions service is nil
+func TestHandleListFunctionFilesServiceNotEnabled(t *testing.T) {
+	h, dbPath := setupTestHandler(t)
+	defer os.Remove(dbPath)
+
+	// Note: h.functionsService is nil by default
+
+	// Create a chi context with URL param (simulating what chi router would do)
+	req := httptest.NewRequest("GET", "/api/functions/test-fn/files", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("name", "test-fn")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+
+	// Call the handler directly since route registration is in a separate task
+	h.handleListFunctionFiles(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+
+	var resp map[string]string
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	require.Contains(t, resp["error"], "not enabled")
 }
