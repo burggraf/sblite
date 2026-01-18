@@ -28,7 +28,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | Row Level Security | :white_check_mark: |
 | Web Dashboard | :white_check_mark: |
 | Realtime subscriptions | :construction: Planned |
-| File storage | :construction: Planned |
+| File storage | :white_check_mark: |
 
 ## Quick Start
 
@@ -191,6 +191,23 @@ See [Email System Documentation](docs/EMAIL.md) for detailed configuration and u
 | `/rest/v1/{table}` | PATCH | Update rows matching filters |
 | `/rest/v1/{table}` | DELETE | Delete rows matching filters |
 
+### Storage API (`/storage/v1`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/storage/v1/bucket` | GET | List all buckets |
+| `/storage/v1/bucket` | POST | Create a new bucket |
+| `/storage/v1/bucket/{id}` | GET | Get bucket details |
+| `/storage/v1/bucket/{id}` | PUT | Update bucket settings |
+| `/storage/v1/bucket/{id}` | DELETE | Delete an empty bucket |
+| `/storage/v1/object/list/{bucket}` | POST | List objects in bucket |
+| `/storage/v1/object/{bucket}/*` | POST | Upload a file |
+| `/storage/v1/object/{bucket}/*` | GET | Download a file |
+| `/storage/v1/object/{bucket}/*` | DELETE | Delete a file |
+| `/storage/v1/object/public/{bucket}/*` | GET | Download from public bucket (no auth) |
+| `/storage/v1/object/copy` | POST | Copy a file |
+| `/storage/v1/object/move` | POST | Move/rename a file |
+
 ### Dashboard (`/_`)
 
 | Endpoint | Method | Description |
@@ -222,6 +239,7 @@ See [Email System Documentation](docs/EMAIL.md) for detailed configuration and u
 - [OAuth Authentication](docs/OAUTH.md) - Google and GitHub OAuth setup, API reference, and troubleshooting
 - [Email System](docs/EMAIL.md) - Complete guide to email modes, configuration, and authentication flows
 - [Logging System](docs/LOGGING.md) - Logging modes, rotation, database queries, and configuration
+- [Storage API](docs/STORAGE.md) - File uploads, downloads, buckets, and public access
 
 ### Design & Implementation
 - [Design Document](docs/plans/2026-01-16-supabase-lite-design.md) - Architecture, schema design, and roadmap
@@ -262,14 +280,15 @@ npm test         # Run all tests
 ┌─────────────────────────────────────┐
 │      Supabase Lite (Go binary)      │
 ├─────────────────────────────────────┤
-│  /auth/v1/*  →  Auth Service        │
-│  /rest/v1/*  →  REST Handler        │
-│  /_/*        →  Web Dashboard       │
-│  /mail/*     →  Mail Viewer (dev)   │
+│  /auth/v1/*     →  Auth Service     │
+│  /rest/v1/*     →  REST Handler     │
+│  /storage/v1/*  →  Storage Service  │
+│  /_/*           →  Web Dashboard    │
+│  /mail/*        →  Mail Viewer      │
 ├─────────────────────────────────────┤
 │  Email Service (log/catch/smtp)     │
 ├─────────────────────────────────────┤
-│         SQLite (WAL mode)           │
+│  SQLite (WAL mode)  │  Local Storage│
 └─────────────────────────────────────┘
 ```
 

@@ -180,6 +180,50 @@ CREATE TABLE IF NOT EXISTS auth_flow_state (
 );
 `
 
+// Storage schema for Supabase-compatible file storage
+// Based on https://supabase.com/docs/guides/storage/schema/design
+const storageSchema = `
+-- Buckets table: containers for organizing files
+CREATE TABLE IF NOT EXISTS storage_buckets (
+    id            TEXT PRIMARY KEY,
+    name          TEXT UNIQUE NOT NULL,
+    owner         TEXT,
+    owner_id      TEXT,
+    public        INTEGER DEFAULT 0,
+    file_size_limit   INTEGER,
+    allowed_mime_types TEXT,
+    created_at    TEXT DEFAULT (datetime('now')),
+    updated_at    TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_storage_buckets_name ON storage_buckets(name);
+
+-- Objects table: file metadata (actual files stored on filesystem or S3)
+CREATE TABLE IF NOT EXISTS storage_objects (
+    id            TEXT PRIMARY KEY,
+    bucket_id     TEXT NOT NULL REFERENCES storage_buckets(id) ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    owner         TEXT,
+    owner_id      TEXT,
+    metadata      TEXT DEFAULT '{}' CHECK (json_valid(metadata)),
+    path_tokens   TEXT DEFAULT '[]' CHECK (json_valid(path_tokens)),
+    user_metadata TEXT DEFAULT '{}' CHECK (json_valid(user_metadata)),
+    version       TEXT,
+    size          INTEGER,
+    mime_type     TEXT,
+    etag          TEXT,
+    last_accessed_at TEXT,
+    created_at    TEXT DEFAULT (datetime('now')),
+    updated_at    TEXT DEFAULT (datetime('now')),
+    UNIQUE(bucket_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_storage_objects_bucket ON storage_objects(bucket_id);
+CREATE INDEX IF NOT EXISTS idx_storage_objects_name ON storage_objects(name);
+CREATE INDEX IF NOT EXISTS idx_storage_objects_owner ON storage_objects(owner_id);
+CREATE INDEX IF NOT EXISTS idx_storage_objects_bucket_name ON storage_objects(bucket_id, name);
+`
+
 const defaultTemplates = `
 INSERT OR IGNORE INTO auth_email_templates (id, type, subject, body_html, body_text, updated_at) VALUES
 ('tpl-confirmation', 'confirmation', 'Confirm your email',
@@ -277,6 +321,11 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(oauthFlowStateSchema)
 	if err != nil {
 		return fmt.Errorf("failed to run OAuth flow state schema migration: %w", err)
+	}
+
+	_, err = db.Exec(storageSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run storage schema migration: %w", err)
 	}
 
 	return nil

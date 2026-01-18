@@ -67,6 +67,16 @@ sblite/
 │   │   ├── handler.go        # HTTP handlers for CRUD
 │   │   ├── query.go          # Query parsing (filters, modifiers)
 │   │   └── builder.go        # SQL query building
+│   ├── storage/              # Storage API (Supabase-compatible)
+│   │   ├── storage.go        # Service initialization
+│   │   ├── bucket.go         # Bucket operations
+│   │   ├── object.go         # Object operations
+│   │   ├── handler.go        # HTTP handlers
+│   │   ├── types.go          # Request/response types
+│   │   └── backend/          # Storage backends
+│   │       ├── backend.go    # Backend interface
+│   │       ├── local.go      # Local filesystem backend
+│   │       └── s3.go         # S3-compatible backend (AWS, MinIO, R2)
 │   ├── log/                  # Logging system
 │   │   ├── logger.go         # Config, initialization
 │   │   ├── console.go        # Console handler
@@ -185,6 +195,26 @@ npm test         # Run all tests (server must be running)
 | `/rest/v1/{table}` | PATCH | Update rows (validates against type schema) |
 | `/rest/v1/{table}` | DELETE | Delete rows matching filters |
 
+### Storage API (`/storage/v1`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/storage/v1/bucket` | GET | List all buckets |
+| `/storage/v1/bucket` | POST | Create a new bucket |
+| `/storage/v1/bucket/{id}` | GET | Get bucket details |
+| `/storage/v1/bucket/{id}` | PUT | Update bucket settings |
+| `/storage/v1/bucket/{id}` | DELETE | Delete an empty bucket |
+| `/storage/v1/bucket/{id}/empty` | POST | Remove all objects from bucket |
+| `/storage/v1/object/list/{bucket}` | POST | List objects in bucket |
+| `/storage/v1/object/{bucket}/*` | POST | Upload a file |
+| `/storage/v1/object/{bucket}/*` | PUT | Upload/update a file |
+| `/storage/v1/object/{bucket}/*` | GET | Download a file |
+| `/storage/v1/object/{bucket}/*` | DELETE | Delete a file |
+| `/storage/v1/object/{bucket}` | DELETE | Batch delete files (JSON body) |
+| `/storage/v1/object/public/{bucket}/*` | GET | Download from public bucket (no auth) |
+| `/storage/v1/object/copy` | POST | Copy a file |
+| `/storage/v1/object/move` | POST | Move/rename a file |
+
 ### Admin API (`/admin/v1`)
 
 | Endpoint | Method | Description |
@@ -274,6 +304,10 @@ Auth tables mirror Supabase's structure for migration compatibility:
 - `auth_refresh_tokens` - Refresh token storage
 - `auth_identities` - Linked OAuth provider identities
 - `_oauth_state` - OAuth state parameters (CSRF protection)
+
+Storage tables for Supabase-compatible file storage:
+- `storage_buckets` - Bucket configuration (public, file_size_limit, allowed_mime_types)
+- `storage_objects` - Object metadata (bucket_id, name, size, mime_type, etag)
 
 ### JWT Structure
 
@@ -407,10 +441,10 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Web dashboard with full management UI
 - API Console for interactive API testing
 - SQL Browser for database queries
+- File storage API (Supabase-compatible, local and S3 backends)
 
 ### Planned
 - Realtime subscriptions (WebSocket)
-- File storage API
 - Full-text search (SQLite FTS5)
 
 See `docs/plans/SBLITE-TODO.md` for detailed tracking.
@@ -468,3 +502,10 @@ See `docs/plans/SBLITE-TODO.md` for detailed tracking.
 2. Register route in `RegisterRoutes()` function in same file
 3. Update frontend in `internal/dashboard/static/app.js` if needed
 4. Add E2E test in `e2e/tests/dashboard/`
+
+### Adding a new storage endpoint
+
+1. Add handler method in `internal/storage/handler.go`
+2. Register route in `RegisterRoutes()` function in same file
+3. Add E2E test in `e2e/tests/storage/`
+4. Update `docs/STORAGE.md` with new endpoint documentation

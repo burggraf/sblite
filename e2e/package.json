@@ -4,7 +4,7 @@
   "description": "End-to-end tests for sblite - Supabase compatibility testing",
   "type": "module",
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism --max-workers=1",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
@@ -12,6 +12,7 @@
     "test:auth": "vitest run --testPathPattern=auth/",
     "test:filters": "vitest run --testPathPattern=filters/",
     "test:modifiers": "vitest run --testPathPattern=modifiers/",
+    "test:storage": "vitest run tests/storage/ --no-file-parallelism --max-workers=1",
     "test:email": "vitest run tests/email/",
     "test:email:smtp": "SBLITE_TEST_SMTP=true vitest run tests/email/smtp",
     "test:dashboard": "playwright test",
