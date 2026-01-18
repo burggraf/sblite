@@ -115,6 +115,16 @@ const App = {
                 loading: false,
             },
         },
+        storage: {
+            buckets: [],
+            selectedBucket: null,
+            objects: [],
+            currentPath: '',
+            viewMode: 'grid',
+            selectedFiles: [],
+            uploading: [],
+            loading: false
+        },
     },
 
     async init() {
@@ -361,6 +371,8 @@ const App = {
             this.initSqlBrowser();
         } else if (view === 'functions') {
             this.loadFunctions();
+        } else if (view === 'storage') {
+            this.loadBuckets();
         } else {
             this.render();
         }
@@ -460,6 +472,12 @@ const App = {
                         </div>
 
                         <div class="nav-section">
+                            <div class="nav-section-title">Storage</div>
+                            <a class="nav-item ${this.state.currentView === 'storage' ? 'active' : ''}"
+                               onclick="App.navigate('storage')">Buckets</a>
+                        </div>
+
+                        <div class="nav-section">
                             <div class="nav-section-title">Security</div>
                             <a class="nav-item ${this.state.currentView === 'policies' ? 'active' : ''}"
                                onclick="App.navigate('policies')">Policies</a>
@@ -515,6 +533,8 @@ const App = {
                 return this.renderSqlBrowserView();
             case 'functions':
                 return this.renderFunctionsView();
+            case 'storage':
+                return this.renderStorageView();
             default:
                 return '<div class="card">Select a section from the sidebar</div>';
         }
@@ -951,6 +971,12 @@ const App = {
                 break;
             case 'addSecret':
                 content = this.renderAddSecretModal();
+                break;
+            case 'createBucket':
+                content = this.renderCreateBucketModal();
+                break;
+            case 'bucketSettings':
+                content = this.renderBucketSettingsModal();
                 break;
         }
 
@@ -5479,6 +5505,787 @@ const App = {
                 <button class="btn btn-primary" onclick="App.addSecret()">Add Secret</button>
             </div>
         `;
+    },
+
+    // Storage methods
+
+    async loadBuckets() {
+        this.state.storage.loading = true;
+        this.render();
+        try {
+            const res = await fetch('/_/api/storage/buckets');
+            if (!res.ok) throw new Error('Failed to load buckets');
+            this.state.storage.buckets = await res.json();
+        } catch (err) {
+            this.state.error = err.message;
+            this.state.storage.buckets = [];
+        } finally {
+            this.state.storage.loading = false;
+            this.render();
+        }
+    },
+
+    renderStorageView() {
+        const { buckets, selectedBucket, loading } = this.state.storage;
+
+        if (loading && buckets.length === 0) {
+            return '<div class="loading">Loading buckets...</div>';
+        }
+
+        return `
+            <div class="storage-layout">
+                <div class="storage-sidebar">
+                    <div class="storage-sidebar-header">
+                        <h3>Buckets</h3>
+                        <button class="btn btn-primary btn-sm" onclick="App.showCreateBucketModal()">
+                            + New
+                        </button>
+                    </div>
+                    <div class="bucket-list">
+                        ${buckets.length === 0 ? `
+                            <p class="text-muted" style="padding: 1rem;">No buckets yet</p>
+                        ` : buckets.map(bucket => `
+                            <div class="bucket-item ${selectedBucket?.id === bucket.id ? 'selected' : ''}"
+                                 onclick="App.selectBucket('${bucket.id}')">
+                                <span class="bucket-name">${this.escapeHtml(bucket.name)}</span>
+                                <div class="bucket-actions">
+                                    <span class="bucket-badge ${bucket.public ? 'public' : 'private'}">
+                                        ${bucket.public ? 'Public' : 'Private'}
+                                    </span>
+                                    <button class="btn-icon" onclick="event.stopPropagation(); App.showBucketSettingsModal('${bucket.id}')" title="Settings">&#9881;</button>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="storage-main">
+                    ${selectedBucket ? this.renderFileBrowser() : `
+                        <div class="storage-empty">
+                            <p>Select a bucket to browse files</p>
+                        </div>
+                    `}
+                </div>
+            </div>
+        `;
+    },
+
+    async selectBucket(bucketId) {
+        const bucket = this.state.storage.buckets.find(b => b.id === bucketId);
+        this.state.storage.selectedBucket = bucket;
+        this.state.storage.currentPath = '';
+        this.state.storage.selectedFiles = [];
+        await this.loadObjects();
+    },
+
+    showCreateBucketModal() {
+        this.state.modal = {
+            type: 'createBucket',
+            data: { name: '', isPublic: false, sizeLimit: '', mimeTypes: '', error: null }
+        };
+        this.render();
+    },
+
+    async createBucket(event) {
+        if (event) event.preventDefault();
+        const { name, isPublic, sizeLimit, mimeTypes } = this.state.modal.data;
+
+        try {
+            const body = { name, public: isPublic };
+            if (sizeLimit) body.file_size_limit = parseInt(sizeLimit) * 1024 * 1024;
+            if (mimeTypes) body.allowed_mime_types = mimeTypes.split(',').map(t => t.trim());
+
+            const res = await fetch('/_/api/storage/buckets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.message || err.error || 'Failed to create bucket');
+            }
+            this.closeModal();
+            await this.loadBuckets();
+        } catch (err) {
+            this.state.modal.data.error = err.message;
+            this.render();
+        }
+    },
+
+    renderCreateBucketModal() {
+        const { name, isPublic, sizeLimit, mimeTypes, error } = this.state.modal.data;
+
+        return `
+            <div class="modal-header">
+                <h3>Create Bucket</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                ${error ? `<div class="message message-error">${this.escapeHtml(error)}</div>` : ''}
+                <form onsubmit="App.createBucket(event)">
+                    <div class="form-group">
+                        <label class="form-label">Bucket Name</label>
+                        <input type="text" class="form-input" id="bucket-name" required
+                               pattern="[a-z0-9-]+" title="Lowercase letters, numbers, and hyphens only"
+                               value="${this.escapeHtml(name)}"
+                               oninput="App.state.modal.data.name = this.value">
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="bucket-public" ${isPublic ? 'checked' : ''}
+                                   onchange="App.state.modal.data.isPublic = this.checked">
+                            Public bucket (files accessible without authentication)
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">File Size Limit (MB, optional)</label>
+                        <input type="number" class="form-input" id="bucket-size-limit" min="1"
+                               value="${sizeLimit}"
+                               oninput="App.state.modal.data.sizeLimit = this.value">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Allowed MIME Types (optional)</label>
+                        <input type="text" class="form-input" id="bucket-mime-types"
+                               placeholder="image/*, application/pdf"
+                               value="${this.escapeHtml(mimeTypes)}"
+                               oninput="App.state.modal.data.mimeTypes = this.value">
+                        <small class="text-muted">Comma-separated list</small>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn" onclick="App.closeModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Create Bucket</button>
+                    </div>
+                </form>
+            </div>
+        `;
+    },
+
+    showBucketSettingsModal(bucketId) {
+        const bucket = this.state.storage.buckets.find(b => b.id === bucketId);
+        if (!bucket) return;
+
+        this.state.modal = {
+            type: 'bucketSettings',
+            bucket: bucket
+        };
+        this.render();
+    },
+
+    renderBucketSettingsModal() {
+        const bucket = this.state.modal.bucket;
+        const mimeTypes = bucket.allowed_mime_types ? bucket.allowed_mime_types.join(', ') : '';
+        const sizeLimit = bucket.file_size_limit ? Math.round(bucket.file_size_limit / 1024 / 1024) : '';
+
+        return `
+            <div class="modal-header">
+                <h3>Bucket Settings: ${this.escapeHtml(bucket.name)}</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form onsubmit="App.updateBucket(event, '${bucket.id}')">
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="bucket-public" ${bucket.public ? 'checked' : ''}>
+                            Public bucket
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">File Size Limit (MB)</label>
+                        <input type="number" class="form-input" id="bucket-size-limit" value="${sizeLimit}" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Allowed MIME Types</label>
+                        <input type="text" class="form-input" id="bucket-mime-types" value="${this.escapeHtml(mimeTypes)}" placeholder="image/*, application/pdf">
+                    </div>
+                    <hr style="margin: 1rem 0">
+                    <div class="danger-zone">
+                        <p class="text-muted">Danger Zone</p>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="App.emptyBucket('${bucket.id}')">Empty Bucket</button>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="App.deleteBucket('${bucket.id}')">Delete Bucket</button>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn" onclick="App.closeModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        `;
+    },
+
+    async updateBucket(event, bucketId) {
+        event.preventDefault();
+        const isPublic = document.getElementById('bucket-public').checked;
+        const sizeLimit = document.getElementById('bucket-size-limit').value;
+        const mimeTypes = document.getElementById('bucket-mime-types').value;
+
+        try {
+            const body = { public: isPublic };
+            if (sizeLimit) body.file_size_limit = parseInt(sizeLimit) * 1024 * 1024;
+            if (mimeTypes) body.allowed_mime_types = mimeTypes.split(',').map(t => t.trim());
+
+            const res = await fetch(`/_/api/storage/buckets/${bucketId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) throw new Error('Failed to update bucket');
+
+            this.closeModal();
+            this.showToast('Bucket updated', 'success');
+            await this.loadBuckets();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
+    },
+
+    async emptyBucket(bucketId) {
+        const confirmed = confirm('Remove all files from this bucket? This cannot be undone.');
+        if (!confirmed) return;
+
+        try {
+            const res = await fetch(`/_/api/storage/buckets/${bucketId}/empty`, { method: 'POST' });
+            if (!res.ok) throw new Error('Failed to empty bucket');
+            this.showToast('Bucket emptied', 'success');
+            await this.loadObjects();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
+    },
+
+    async deleteBucket(bucketId) {
+        const bucket = this.state.storage.buckets.find(b => b.id === bucketId);
+        const confirmed = confirm(`Delete bucket "${bucket?.name}"? The bucket must be empty.`);
+        if (!confirmed) return;
+
+        try {
+            const res = await fetch(`/_/api/storage/buckets/${bucketId}`, { method: 'DELETE' });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.message || 'Failed to delete bucket');
+            }
+            this.closeModal();
+            this.state.storage.selectedBucket = null;
+            this.showToast('Bucket deleted', 'success');
+            await this.loadBuckets();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
+    },
+
+    renderFileBrowser() {
+        const { selectedBucket, objects, currentPath, viewMode, selectedFiles, loading } = this.state.storage;
+
+        // Separate folders and files
+        const folders = [];
+        const files = [];
+        const seenFolders = new Set();
+
+        for (const obj of objects) {
+            const relativePath = obj.name.slice(currentPath.length);
+            const slashIndex = relativePath.indexOf('/');
+            if (slashIndex > 0) {
+                const folderName = relativePath.slice(0, slashIndex);
+                if (!seenFolders.has(folderName)) {
+                    seenFolders.add(folderName);
+                    folders.push({ name: folderName, isFolder: true });
+                }
+            } else if (relativePath && !relativePath.endsWith('/')) {
+                files.push({ ...obj, displayName: relativePath, isFolder: false });
+            }
+        }
+
+        const allItems = [...folders, ...files];
+
+        return `
+            <div class="file-browser">
+                ${this.renderFileBrowserToolbar()}
+                <div class="file-browser-content ${viewMode}"
+                     ondragover="App.handleDragOver(event)"
+                     ondragleave="App.handleDragLeave(event)"
+                     ondrop="App.handleDrop(event)">
+                    ${loading ? '<div class="loading">Loading...</div>' : ''}
+                    ${!loading && allItems.length === 0 ? `
+                        <div class="file-browser-empty">
+                            <p>No files in this ${currentPath ? 'folder' : 'bucket'}</p>
+                            <p class="text-muted">Drag and drop files here or click Upload</p>
+                        </div>
+                    ` : ''}
+                    ${viewMode === 'grid' ? this.renderFileGrid(allItems) : this.renderFileList(allItems)}
+                </div>
+                ${this.renderUploadProgress()}
+            </div>
+        `;
+    },
+
+    renderFileBrowserToolbar() {
+        const { selectedBucket, currentPath, viewMode, selectedFiles } = this.state.storage;
+        const pathParts = currentPath.split('/').filter(Boolean);
+
+        return `
+            <div class="file-browser-toolbar">
+                <div class="toolbar-left">
+                    ${currentPath ? `<button class="btn btn-sm" onclick="App.navigateToFolder('..')">&#8592; Back</button>` : ''}
+                    <div class="breadcrumb">
+                        <span class="breadcrumb-item clickable" onclick="App.navigateToFolder('')">
+                            ${this.escapeHtml(selectedBucket.name)}
+                        </span>
+                        ${pathParts.map((part, i) => `
+                            <span class="breadcrumb-sep">/</span>
+                            <span class="breadcrumb-item clickable" onclick="App.navigateToFolder('${pathParts.slice(0, i + 1).join('/')}/')">
+                                ${this.escapeHtml(part)}
+                            </span>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="toolbar-right">
+                    <button class="btn btn-primary btn-sm" onclick="App.triggerFileUpload()">Upload</button>
+                    <input type="file" id="file-upload-input" multiple style="display:none" onchange="App.handleFileSelect(event)">
+                    <div class="view-toggle">
+                        <button class="btn btn-sm ${viewMode === 'grid' ? 'active' : ''}" onclick="App.setStorageViewMode('grid')" title="Grid view">&#8862;</button>
+                        <button class="btn btn-sm ${viewMode === 'list' ? 'active' : ''}" onclick="App.setStorageViewMode('list')" title="List view">&#9776;</button>
+                    </div>
+                    ${selectedFiles.length > 0 ? `
+                        <button class="btn btn-sm" onclick="App.downloadSelectedFiles()">Download (${selectedFiles.length})</button>
+                        <button class="btn btn-sm btn-danger" onclick="App.deleteSelectedFiles()">Delete (${selectedFiles.length})</button>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    },
+
+    renderFileGrid(items) {
+        if (items.length === 0) return '';
+        const { selectedBucket, currentPath, selectedFiles } = this.state.storage;
+
+        return `
+            <div class="file-grid">
+                ${items.map(item => {
+                    if (item.isFolder) {
+                        return `
+                            <div class="file-card folder" ondblclick="App.navigateToFolder('${currentPath}${item.name}/')">
+                                <div class="file-icon folder-icon">&#128193;</div>
+                                <div class="file-name">${this.escapeHtml(item.name)}</div>
+                            </div>
+                        `;
+                    } else {
+                        const isSelected = selectedFiles.includes(item.name);
+                        const isImage = this.isImageFile(item.displayName);
+                        const thumbUrl = isImage && selectedBucket.public
+                            ? `/storage/v1/object/public/${selectedBucket.name}/${item.name}`
+                            : null;
+
+                        return `
+                            <div class="file-card ${isSelected ? 'selected' : ''}"
+                                 onclick="App.toggleFileSelection('${item.name}')"
+                                 ondblclick="App.downloadFile('${item.name}')">
+                                <div class="file-select">
+                                    <input type="checkbox" ${isSelected ? 'checked' : ''}
+                                           onclick="event.stopPropagation(); App.toggleFileSelection('${item.name}')">
+                                </div>
+                                ${thumbUrl ? `
+                                    <div class="file-thumbnail" style="background-image: url('${thumbUrl}')"></div>
+                                ` : `
+                                    <div class="file-icon">${this.getFileIcon(item.displayName)}</div>
+                                `}
+                                <div class="file-name" title="${this.escapeHtml(item.displayName)}">${this.escapeHtml(item.displayName)}</div>
+                                <div class="file-size">${this.formatFileSize(item.metadata?.size || 0)}</div>
+                            </div>
+                        `;
+                    }
+                }).join('')}
+            </div>
+        `;
+    },
+
+    renderFileList(items) {
+        if (items.length === 0) return '';
+        const { currentPath, selectedFiles } = this.state.storage;
+
+        return `
+            <div class="file-list">
+                <table class="file-list-table">
+                    <thead>
+                        <tr>
+                            <th class="col-checkbox"></th>
+                            <th class="col-name">Name</th>
+                            <th class="col-size">Size</th>
+                            <th class="col-type">Type</th>
+                            <th class="col-modified">Modified</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${items.map(item => {
+                            if (item.isFolder) {
+                                return `
+                                    <tr class="file-row folder" ondblclick="App.navigateToFolder('${currentPath}${item.name}/')">
+                                        <td class="col-checkbox"></td>
+                                        <td class="col-name">
+                                            <span class="file-icon">&#128193;</span>
+                                            ${this.escapeHtml(item.name)}
+                                        </td>
+                                        <td class="col-size">-</td>
+                                        <td class="col-type">Folder</td>
+                                        <td class="col-modified">-</td>
+                                    </tr>
+                                `;
+                            } else {
+                                const isSelected = selectedFiles.includes(item.name);
+                                return `
+                                    <tr class="file-row ${isSelected ? 'selected' : ''}"
+                                        onclick="App.toggleFileSelection('${item.name}')"
+                                        ondblclick="App.downloadFile('${item.name}')">
+                                        <td class="col-checkbox">
+                                            <input type="checkbox" ${isSelected ? 'checked' : ''}
+                                                   onclick="event.stopPropagation(); App.toggleFileSelection('${item.name}')">
+                                        </td>
+                                        <td class="col-name">
+                                            <span class="file-icon">${this.getFileIcon(item.displayName)}</span>
+                                            ${this.escapeHtml(item.displayName)}
+                                        </td>
+                                        <td class="col-size">${this.formatFileSize(item.metadata?.size || 0)}</td>
+                                        <td class="col-type">${this.escapeHtml(item.metadata?.mimetype || '-')}</td>
+                                        <td class="col-modified">${item.updated_at ? new Date(item.updated_at).toLocaleDateString() : '-'}</td>
+                                    </tr>
+                                `;
+                            }
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    },
+
+    async loadObjects() {
+        const { selectedBucket, currentPath } = this.state.storage;
+        if (!selectedBucket) return;
+
+        this.state.storage.loading = true;
+        this.render();
+
+        try {
+            const res = await fetch('/_/api/storage/objects/list', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    bucket: selectedBucket.name,
+                    prefix: currentPath,
+                    limit: 100
+                })
+            });
+            if (!res.ok) throw new Error('Failed to load objects');
+            this.state.storage.objects = await res.json() || [];
+        } catch (err) {
+            this.showToast(err.message, 'error');
+            this.state.storage.objects = [];
+        } finally {
+            this.state.storage.loading = false;
+            this.render();
+        }
+    },
+
+    // File browser helper methods
+    isImageFile(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext);
+    },
+
+    getFileIcon(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        const iconMap = {
+            // Documents
+            'pdf': '&#128196;',
+            'doc': '&#128196;',
+            'docx': '&#128196;',
+            'txt': '&#128196;',
+            'rtf': '&#128196;',
+            // Spreadsheets
+            'xls': '&#128200;',
+            'xlsx': '&#128200;',
+            'csv': '&#128200;',
+            // Images
+            'jpg': '&#128247;',
+            'jpeg': '&#128247;',
+            'png': '&#128247;',
+            'gif': '&#128247;',
+            'webp': '&#128247;',
+            'svg': '&#128247;',
+            'bmp': '&#128247;',
+            'ico': '&#128247;',
+            // Videos
+            'mp4': '&#127909;',
+            'mov': '&#127909;',
+            'avi': '&#127909;',
+            'mkv': '&#127909;',
+            'webm': '&#127909;',
+            // Audio
+            'mp3': '&#127925;',
+            'wav': '&#127925;',
+            'ogg': '&#127925;',
+            'flac': '&#127925;',
+            // Code
+            'js': '&#128187;',
+            'ts': '&#128187;',
+            'json': '&#128187;',
+            'html': '&#128187;',
+            'css': '&#128187;',
+            'py': '&#128187;',
+            'go': '&#128187;',
+            // Archives
+            'zip': '&#128230;',
+            'tar': '&#128230;',
+            'gz': '&#128230;',
+            'rar': '&#128230;',
+            '7z': '&#128230;',
+        };
+        return iconMap[ext] || '&#128196;';
+    },
+
+    formatFileSize(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+    },
+
+    setStorageViewMode(mode) {
+        this.state.storage.viewMode = mode;
+        this.render();
+    },
+
+    async navigateToFolder(path) {
+        if (path === '..') {
+            // Go up one level
+            const parts = this.state.storage.currentPath.split('/').filter(Boolean);
+            parts.pop();
+            this.state.storage.currentPath = parts.length > 0 ? parts.join('/') + '/' : '';
+        } else {
+            this.state.storage.currentPath = path;
+        }
+        this.state.storage.selectedFiles = [];
+        await this.loadObjects();
+    },
+
+    toggleFileSelection(filename) {
+        const idx = this.state.storage.selectedFiles.indexOf(filename);
+        if (idx >= 0) {
+            this.state.storage.selectedFiles.splice(idx, 1);
+        } else {
+            this.state.storage.selectedFiles.push(filename);
+        }
+        this.render();
+    },
+
+    triggerFileUpload() {
+        document.getElementById('file-upload-input').click();
+    },
+
+    handleFileSelect(event) {
+        const files = Array.from(event.target.files);
+        if (files.length > 0) {
+            this.uploadFiles(files);
+        }
+        event.target.value = '';
+    },
+
+    async uploadFiles(files) {
+        const { selectedBucket, currentPath } = this.state.storage;
+        if (!selectedBucket) return;
+
+        for (const file of files) {
+            const uploadItem = {
+                name: file.name,
+                size: file.size,
+                progress: 0,
+                status: 'uploading'
+            };
+            this.state.storage.uploading.push(uploadItem);
+            this.render();
+
+            try {
+                const formData = new FormData();
+                formData.append('bucket', selectedBucket.name);
+                formData.append('path', currentPath);
+                formData.append('file', file);
+
+                await this.uploadWithProgress(formData, uploadItem);
+                uploadItem.status = 'complete';
+                uploadItem.progress = 100;
+            } catch (err) {
+                uploadItem.status = 'error';
+                uploadItem.error = err.message;
+            }
+            this.render();
+        }
+
+        await this.loadObjects();
+        setTimeout(() => {
+            this.state.storage.uploading = this.state.storage.uploading.filter(u => u.status === 'uploading');
+            this.render();
+        }, 3000);
+    },
+
+    uploadWithProgress(formData, uploadItem) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    uploadItem.progress = Math.round((e.loaded / e.total) * 100);
+                    this.render();
+                }
+            });
+            xhr.addEventListener('load', () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try {
+                        resolve(JSON.parse(xhr.responseText));
+                    } catch {
+                        resolve({});
+                    }
+                } else {
+                    reject(new Error('Upload failed'));
+                }
+            });
+            xhr.addEventListener('error', () => reject(new Error('Upload failed')));
+            xhr.open('POST', '/_/api/storage/objects/upload');
+            xhr.send(formData);
+        });
+    },
+
+    renderUploadProgress() {
+        const { uploading } = this.state.storage;
+        if (uploading.length === 0) return '';
+
+        return `
+            <div class="upload-progress-panel">
+                <div class="upload-progress-header">
+                    <span>Uploading ${uploading.length} file${uploading.length > 1 ? 's' : ''}</span>
+                    <button class="btn-icon" onclick="App.clearCompletedUploads()">&#10005;</button>
+                </div>
+                <div class="upload-progress-list">
+                    ${uploading.map(item => `
+                        <div class="upload-item ${item.status}">
+                            <span class="upload-name">${this.escapeHtml(item.name)}</span>
+                            <div class="upload-bar">
+                                <div class="upload-bar-fill" style="width: ${item.progress}%"></div>
+                            </div>
+                            <span class="upload-status">
+                                ${item.status === 'uploading' ? item.progress + '%' : ''}
+                                ${item.status === 'complete' ? '&#10003;' : ''}
+                                ${item.status === 'error' ? '&#10007;' : ''}
+                            </span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    },
+
+    clearCompletedUploads() {
+        this.state.storage.uploading = this.state.storage.uploading.filter(u => u.status === 'uploading');
+        this.render();
+    },
+
+    handleDragOver(event) {
+        event.preventDefault();
+        event.currentTarget.classList.add('drag-over');
+    },
+
+    handleDragLeave(event) {
+        event.currentTarget.classList.remove('drag-over');
+    },
+
+    handleDrop(event) {
+        event.preventDefault();
+        event.currentTarget.classList.remove('drag-over');
+        const files = Array.from(event.dataTransfer.files);
+        if (files.length > 0) {
+            this.uploadFiles(files);
+        }
+    },
+
+    downloadFile(filename) {
+        const { selectedBucket, currentPath } = this.state.storage;
+        const path = currentPath + filename;
+        const url = `/_/api/storage/objects/download?bucket=${encodeURIComponent(selectedBucket.name)}&path=${encodeURIComponent(path)}`;
+
+        // Create temporary link and click
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    },
+
+    async downloadSelectedFiles() {
+        const { selectedFiles } = this.state.storage;
+        if (selectedFiles.length === 0) return;
+
+        // Download files sequentially with small delay
+        for (const filename of selectedFiles) {
+            this.downloadFile(filename);
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+    },
+
+    async deleteSelectedFiles() {
+        const { selectedBucket, currentPath, selectedFiles } = this.state.storage;
+        if (selectedFiles.length === 0) return;
+
+        const confirmed = confirm(`Delete ${selectedFiles.length} file(s)? This cannot be undone.`);
+        if (!confirmed) return;
+
+        try {
+            const paths = selectedFiles.map(f => currentPath + f);
+            const res = await fetch('/_/api/storage/objects', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    bucket: selectedBucket.name,
+                    paths: paths
+                })
+            });
+
+            if (!res.ok && res.status !== 207) {
+                throw new Error('Failed to delete files');
+            }
+
+            this.state.storage.selectedFiles = [];
+            this.showToast('Files deleted', 'success');
+            await this.loadObjects();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
+    },
+
+    selectAllFiles() {
+        const { objects, currentPath } = this.state.storage;
+        const files = [];
+        for (const obj of objects) {
+            const relativePath = obj.name.slice(currentPath.length);
+            if (relativePath && !relativePath.includes('/') && !relativePath.endsWith('/')) {
+                files.push(relativePath);
+            }
+        }
+        this.state.storage.selectedFiles = files;
+        this.render();
+    },
+
+    clearSelection() {
+        this.state.storage.selectedFiles = [];
+        this.render();
+    },
+
+    showToast(message, type = 'info') {
+        // Simple toast implementation - could be enhanced later
+        console.log(`[${type}] ${message}`);
+        // For now, show as an alert for error messages
+        if (type === 'error') {
+            this.state.error = message;
+            this.render();
+            setTimeout(() => {
+                this.state.error = null;
+                this.render();
+            }, 3000);
+        }
     },
 
     copyToClipboard(text) {
