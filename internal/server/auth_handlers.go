@@ -237,18 +237,27 @@ func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request) {
 	// Update last sign in
 	s.authService.UpdateLastSignIn(user.ID)
 
+	// Build user response
+	userResponse := map[string]any{
+		"id":            user.ID,
+		"email":         user.Email,
+		"role":          user.Role,
+		"is_anonymous":  user.IsAnonymous,
+		"app_metadata":  user.AppMetadata,
+		"user_metadata": user.UserMetadata,
+	}
+
+	// Set email to null for anonymous users
+	if user.IsAnonymous {
+		userResponse["email"] = nil
+	}
+
 	response := TokenResponse{
 		AccessToken:  accessToken,
 		TokenType:    "bearer",
 		ExpiresIn:    3600,
 		RefreshToken: refreshToken,
-		User: map[string]any{
-			"id":            user.ID,
-			"email":         user.Email,
-			"role":          user.Role,
-			"app_metadata":  user.AppMetadata,
-			"user_metadata": user.UserMetadata,
-		},
+		User:         userResponse,
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -273,18 +282,27 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build user response
+	userResponse := map[string]any{
+		"id":            user.ID,
+		"email":         user.Email,
+		"role":          user.Role,
+		"is_anonymous":  user.IsAnonymous,
+		"app_metadata":  user.AppMetadata,
+		"user_metadata": user.UserMetadata,
+	}
+
+	// Set email to null for anonymous users
+	if user.IsAnonymous {
+		userResponse["email"] = nil
+	}
+
 	response := TokenResponse{
 		AccessToken:  accessToken,
 		TokenType:    "bearer",
 		ExpiresIn:    3600,
 		RefreshToken: refreshToken,
-		User: map[string]any{
-			"id":            user.ID,
-			"email":         user.Email,
-			"role":          user.Role,
-			"app_metadata":  user.AppMetadata,
-			"user_metadata": user.UserMetadata,
-		},
+		User:         userResponse,
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -301,10 +319,16 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 		"id":            user.ID,
 		"email":         user.Email,
 		"role":          user.Role,
+		"is_anonymous":  user.IsAnonymous,
 		"created_at":    user.CreatedAt,
 		"updated_at":    user.UpdatedAt,
 		"app_metadata":  user.AppMetadata,
 		"user_metadata": user.UserMetadata,
+	}
+
+	// Set email to null for anonymous users
+	if user.IsAnonymous {
+		response["email"] = nil
 	}
 
 	if user.EmailConfirmedAt != nil {
@@ -361,10 +385,16 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		"id":            user.ID,
 		"email":         user.Email,
 		"role":          user.Role,
+		"is_anonymous":  user.IsAnonymous,
 		"created_at":    user.CreatedAt,
 		"updated_at":    user.UpdatedAt,
 		"app_metadata":  user.AppMetadata,
 		"user_metadata": user.UserMetadata,
+	}
+
+	// Set email to null for anonymous users
+	if user.IsAnonymous {
+		response["email"] = nil
 	}
 
 	json.NewEncoder(w).Encode(response)
