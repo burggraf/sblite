@@ -5333,12 +5333,11 @@ const App = {
                 this.state.functions.editor.originalContent = content;
                 this.state.functions.editor.content = content;
                 this.state.functions.editor.isDirty = false;
-                this.render();
+                // Update UI without full render to preserve Monaco
+                this.updateEditorHeader();
 
-                // Ask about restart
-                if (confirm('File saved. Restart edge runtime to apply changes?')) {
-                    await this.restartFunctionsRuntime();
-                }
+                // Auto-restart runtime to apply changes
+                await this.restartFunctionsRuntime();
             }
         } catch (err) {
             console.error('Failed to save file:', err);
@@ -5352,12 +5351,25 @@ const App = {
             const res = await fetch(`/_/api/functions/${selected}/restart`, { method: 'POST' });
             if (res.ok) {
                 await this.loadFunctionsStatus();
-                this.render();
+                // Update status indicator without full render
+                this.updateRuntimeStatus();
             } else {
                 alert('Failed to restart runtime');
             }
         } catch (err) {
             console.error('Failed to restart runtime:', err);
+        }
+    },
+
+    updateRuntimeStatus() {
+        const indicator = document.querySelector('.runtime-status');
+        if (indicator && this.state.functions.status) {
+            const isRunning = this.state.functions.status.status === 'running';
+            indicator.className = `runtime-status ${isRunning ? 'status-running' : 'status-stopped'}`;
+            indicator.innerHTML = `
+                <span class="status-indicator"></span>
+                <span>Runtime: ${isRunning ? 'Running' : 'Stopped'}</span>
+            `;
         }
     },
 
@@ -5405,7 +5417,7 @@ const App = {
             return;
         }
 
-        const isDark = document.body.classList.contains('dark-theme');
+        const isDark = this.state.theme === 'dark';
 
         const editor = monaco.editor.create(container, {
             value: this.state.functions.editor.content || '// Select a file to edit',
@@ -5445,13 +5457,15 @@ const App = {
     updateEditorHeader() {
         const { currentFile, isDirty } = this.state.functions.editor;
         const fileSpan = document.querySelector('.editor-header .current-file');
-        const saveBtn = document.querySelector('.editor-header .btn-primary');
+        const actionsDiv = document.querySelector('.editor-header .editor-actions');
 
         if (fileSpan) {
             fileSpan.textContent = currentFile ? `${currentFile}${isDirty ? ' \u25cf' : ''}` : 'No file selected';
         }
-        if (saveBtn) {
-            saveBtn.disabled = !currentFile || !isDirty;
+        if (actionsDiv) {
+            actionsDiv.innerHTML = isDirty && currentFile
+                ? `<button class="btn btn-primary btn-sm" onclick="App.saveFunctionFile()">Save</button>`
+                : '';
         }
 
         // Update file tree item
@@ -5471,12 +5485,11 @@ const App = {
 
     toggleEditorExpand() {
         this.state.functions.editor.isExpanded = !this.state.functions.editor.isExpanded;
+        // Destroy Monaco before render (render will destroy the container)
+        this.destroyMonacoEditor();
         this.render();
-
-        // Resize Monaco editor
-        if (this.state.functions.editor.monacoEditor) {
-            setTimeout(() => this.state.functions.editor.monacoEditor.layout(), 100);
-        }
+        // Reinitialize Monaco after render
+        setTimeout(() => this.initMonacoEditor(), 100);
     },
 
     toggleFolder(path) {
@@ -5676,10 +5689,9 @@ const App = {
                                 ${isDirty ? ' ●' : ''}
                             </span>
                             <div class="editor-actions">
-                                <button class="btn btn-primary btn-sm" onclick="App.saveFunctionFile()"
-                                    ${!currentFile || !isDirty ? 'disabled' : ''}>Save</button>
-                                <button class="btn btn-secondary btn-sm" onclick="App.restartFunctionsRuntime()"
-                                    title="Restart Runtime">⟳</button>
+                                ${isDirty && currentFile ? `
+                                    <button class="btn btn-primary btn-sm" onclick="App.saveFunctionFile()">Save</button>
+                                ` : ''}
                             </div>
                         </div>
                         <div id="monaco-editor-container" class="editor-content"></div>
