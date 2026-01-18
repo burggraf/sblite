@@ -971,6 +971,9 @@ const App = {
             case 'addSecret':
                 content = this.renderAddSecretModal();
                 break;
+            case 'createBucket':
+                content = this.renderCreateBucketModal();
+                break;
         }
 
         // Use larger modal for policy editing and FTS search
@@ -5428,23 +5431,157 @@ const App = {
     async loadBuckets() {
         this.state.storage.loading = true;
         this.render();
-        // Will be implemented in Task 4
-        this.state.storage.loading = false;
-        this.render();
+        try {
+            const res = await fetch('/_/api/storage/buckets');
+            if (!res.ok) throw new Error('Failed to load buckets');
+            this.state.storage.buckets = await res.json();
+        } catch (err) {
+            this.state.error = err.message;
+            this.state.storage.buckets = [];
+        } finally {
+            this.state.storage.loading = false;
+            this.render();
+        }
     },
 
     renderStorageView() {
+        const { buckets, selectedBucket, loading } = this.state.storage;
+
+        if (loading && buckets.length === 0) {
+            return '<div class="loading">Loading buckets...</div>';
+        }
+
         return `
             <div class="storage-layout">
                 <div class="storage-sidebar">
-                    <h3>Buckets</h3>
-                    <p class="text-muted">Storage UI loading...</p>
+                    <div class="storage-sidebar-header">
+                        <h3>Buckets</h3>
+                        <button class="btn btn-primary btn-sm" onclick="App.showCreateBucketModal()">
+                            + New
+                        </button>
+                    </div>
+                    <div class="bucket-list">
+                        ${buckets.length === 0 ? `
+                            <p class="text-muted" style="padding: 1rem;">No buckets yet</p>
+                        ` : buckets.map(bucket => `
+                            <div class="bucket-item ${selectedBucket?.id === bucket.id ? 'selected' : ''}"
+                                 onclick="App.selectBucket('${bucket.id}')">
+                                <span class="bucket-name">${this.escapeHtml(bucket.name)}</span>
+                                <span class="bucket-badge ${bucket.public ? 'public' : 'private'}">
+                                    ${bucket.public ? 'Public' : 'Private'}
+                                </span>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
                 <div class="storage-main">
-                    <p>Select a bucket to browse files</p>
+                    ${selectedBucket ? this.renderFileBrowser() : `
+                        <div class="storage-empty">
+                            <p>Select a bucket to browse files</p>
+                        </div>
+                    `}
                 </div>
             </div>
         `;
+    },
+
+    async selectBucket(bucketId) {
+        const bucket = this.state.storage.buckets.find(b => b.id === bucketId);
+        this.state.storage.selectedBucket = bucket;
+        this.state.storage.currentPath = '';
+        this.state.storage.selectedFiles = [];
+        await this.loadObjects();
+    },
+
+    showCreateBucketModal() {
+        this.state.modal = {
+            type: 'createBucket',
+            data: { name: '', isPublic: false, sizeLimit: '', mimeTypes: '', error: null }
+        };
+        this.render();
+    },
+
+    async createBucket(event) {
+        if (event) event.preventDefault();
+        const { name, isPublic, sizeLimit, mimeTypes } = this.state.modal.data;
+
+        try {
+            const body = { name, public: isPublic };
+            if (sizeLimit) body.file_size_limit = parseInt(sizeLimit) * 1024 * 1024;
+            if (mimeTypes) body.allowed_mime_types = mimeTypes.split(',').map(t => t.trim());
+
+            const res = await fetch('/_/api/storage/buckets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.message || err.error || 'Failed to create bucket');
+            }
+            this.closeModal();
+            await this.loadBuckets();
+        } catch (err) {
+            this.state.modal.data.error = err.message;
+            this.render();
+        }
+    },
+
+    renderCreateBucketModal() {
+        const { name, isPublic, sizeLimit, mimeTypes, error } = this.state.modal.data;
+
+        return `
+            <div class="modal-header">
+                <h3>Create Bucket</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                ${error ? `<div class="message message-error">${this.escapeHtml(error)}</div>` : ''}
+                <form onsubmit="App.createBucket(event)">
+                    <div class="form-group">
+                        <label class="form-label">Bucket Name</label>
+                        <input type="text" class="form-input" id="bucket-name" required
+                               pattern="[a-z0-9-]+" title="Lowercase letters, numbers, and hyphens only"
+                               value="${this.escapeHtml(name)}"
+                               oninput="App.state.modal.data.name = this.value">
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="bucket-public" ${isPublic ? 'checked' : ''}
+                                   onchange="App.state.modal.data.isPublic = this.checked">
+                            Public bucket (files accessible without authentication)
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">File Size Limit (MB, optional)</label>
+                        <input type="number" class="form-input" id="bucket-size-limit" min="1"
+                               value="${sizeLimit}"
+                               oninput="App.state.modal.data.sizeLimit = this.value">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Allowed MIME Types (optional)</label>
+                        <input type="text" class="form-input" id="bucket-mime-types"
+                               placeholder="image/*, application/pdf"
+                               value="${this.escapeHtml(mimeTypes)}"
+                               oninput="App.state.modal.data.mimeTypes = this.value">
+                        <small class="text-muted">Comma-separated list</small>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn" onclick="App.closeModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Create Bucket</button>
+                    </div>
+                </form>
+            </div>
+        `;
+    },
+
+    renderFileBrowser() {
+        return '<div class="file-browser"><p>File browser coming next...</p></div>';
+    },
+
+    async loadObjects() {
+        // Will be implemented in Task 5
+        this.render();
     },
 
     copyToClipboard(text) {

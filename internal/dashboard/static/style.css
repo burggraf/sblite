@@ -2589,3 +2589,109 @@ small.text-muted {
     padding: 0.125rem 0.375rem;
     font-size: 0.75rem;
 }
+
+/* =====================
+   Storage Layout Styles
+   ===================== */
+
+.storage-layout {
+    display: flex;
+    height: calc(100vh - 120px);
+    gap: 1rem;
+}
+
+.storage-sidebar {
+    width: 280px;
+    flex-shrink: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+}
+
+.storage-sidebar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.storage-sidebar-header h3 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.bucket-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.bucket-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+}
+
+.bucket-item:hover {
+    background: var(--bg-tertiary);
+}
+
+.bucket-item.selected {
+    background: var(--accent-muted);
+}
+
+.bucket-name {
+    font-weight: 500;
+}
+
+.bucket-badge {
+    font-size: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+}
+
+.bucket-badge.public {
+    background: rgba(62, 207, 142, 0.2);
+    color: var(--success);
+}
+
+.bucket-badge.private {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+}
+
+.storage-main {
+    flex: 1;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.storage-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
