@@ -26,23 +26,30 @@ supabase
 
 ---
 
-### File Storage
+### ~~File Storage~~ ✅ COMPLETE
 Storage API for file uploads, downloads, and management. Used for user avatars, attachments, etc.
 
 ```javascript
 // Client usage
 supabase.storage.from('avatars').upload('path/file.png', file)
 supabase.storage.from('avatars').getPublicUrl('path/file.png')
+supabase.storage.from('avatars').createSignedUrl('path/file.png', 60)
 ```
 
-**Implementation approach:**
-- Add `/storage/v1/` endpoints
-- Store files on disk (configurable path)
-- Store metadata in `_storage_objects` table
-- Support buckets, policies, signed URLs
+**Implemented:**
+- Bucket operations (create, get, list, update, delete, empty)
+- Object operations (upload, download, delete, list, copy, move)
+- Public bucket access
+- Row Level Security (RLS) with storage helper functions
+- Signed URLs (download and upload)
+- Multiple backends (local filesystem, S3-compatible)
+- File size limits and MIME type restrictions
 
-**Complexity:** Large
-**Priority:** Medium
+See `docs/STORAGE.md` for documentation.
+
+**Remaining (optional enhancements):**
+- Image transformations (resize, format conversion, quality) - Complexity: High
+- Resumable uploads via TUS protocol - Complexity: Medium
 
 ---
 
@@ -155,17 +162,19 @@ TOTP-based second factor.
 | Feature | Priority | Effort | Status |
 |---------|----------|--------|--------|
 | Realtime subscriptions | Medium | Large | Pending |
-| File storage | Medium | Large | Pending |
+| File storage | Medium | Large | ✅ Complete |
 | Edge functions | Medium | Large | Pending |
 | Full-text search | Low | Medium | ✅ Complete |
 | OAuth providers | Low | Large | ✅ Complete (Google, GitHub) |
 | Anonymous sign-in | Low | Small | Pending |
 | Phone auth | Low | Medium | Pending |
 | MFA | Low | Medium | Pending |
+| Image transformations | Low | High | Pending (storage enhancement) |
+| Resumable uploads (TUS) | Low | Medium | Pending (storage enhancement) |
 
 ## Notes
 
-- sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth)
-- Realtime, Storage, and Edge Functions are the biggest gaps vs full Supabase
+- sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth + Storage)
+- Realtime and Edge Functions are the biggest gaps vs full Supabase
 - Edge Functions achievable via embedding Supabase's open-source Edge Runtime
 - Remaining auth gaps are for enterprise/advanced use cases
