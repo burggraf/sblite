@@ -35,6 +35,13 @@ sblite/
 │   ├── auth/                 # Authentication service
 │   │   ├── jwt.go            # JWT generation/validation, sessions
 │   │   └── user.go           # User management, password hashing
+│   ├── oauth/                # OAuth authentication
+│   │   ├── oauth.go          # Core OAuth types and interfaces
+│   │   ├── registry.go       # Provider registry
+│   │   ├── pkce.go           # PKCE code verifier/challenge
+│   │   ├── state.go          # State parameter management
+│   │   ├── google.go         # Google OAuth provider
+│   │   └── github.go         # GitHub OAuth provider
 │   ├── db/                   # Database layer
 │   │   ├── db.go             # SQLite connection, WAL mode
 │   │   └── migrations.go     # Auth schema tables, _columns metadata
@@ -163,6 +170,11 @@ npm test         # Run all tests (server must be running)
 | `/auth/v1/logout` | POST | Sign out (requires auth) |
 | `/auth/v1/user` | GET | Get current user (requires auth) |
 | `/auth/v1/user` | PUT | Update current user (requires auth) |
+| `/auth/v1/authorize` | GET | Initiate OAuth flow (redirect to provider) |
+| `/auth/v1/callback` | GET | OAuth provider callback handler |
+| `/auth/v1/user/identities` | GET | List linked OAuth identities (requires auth) |
+| `/auth/v1/user/identities/{provider}` | DELETE | Unlink OAuth provider (requires auth) |
+| `/auth/v1/settings` | GET | Get auth settings (includes OAuth providers) |
 
 ### REST API (`/rest/v1`)
 
@@ -232,6 +244,11 @@ Web dashboard accessible at `http://localhost:8080/_`
 | `/_/api/logs/tail` | GET | Tail file logs |
 | `/_/api/apikeys` | GET | Get API keys (anon, service_role) |
 | `/_/api/sql` | POST | Execute SQL query |
+| `/_/api/settings/oauth` | GET | Get OAuth provider configuration |
+| `/_/api/settings/oauth` | PATCH | Update OAuth provider configuration |
+| `/_/api/settings/oauth/redirect-urls` | GET | List allowed redirect URLs |
+| `/_/api/settings/oauth/redirect-urls` | POST | Add allowed redirect URL |
+| `/_/api/settings/oauth/redirect-urls` | DELETE | Remove allowed redirect URL |
 
 ### Query Operators
 
@@ -255,6 +272,8 @@ Auth tables mirror Supabase's structure for migration compatibility:
 - `auth_users` - User accounts (bcrypt passwords, metadata)
 - `auth_sessions` - Active sessions
 - `auth_refresh_tokens` - Refresh token storage
+- `auth_identities` - Linked OAuth provider identities
+- `_oauth_state` - OAuth state parameters (CSRF protection)
 
 ### JWT Structure
 
@@ -373,6 +392,7 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 
 ### Implemented
 - Email/password authentication
+- OAuth authentication (Google, GitHub)
 - JWT sessions with refresh tokens
 - REST API CRUD operations
 - Query filters (eq, neq, gt, gte, lt, lte, like, ilike, is, in)
@@ -392,7 +412,6 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Realtime subscriptions (WebSocket)
 - File storage API
 - Full-text search (SQLite FTS5)
-- OAuth providers
 
 See `docs/plans/SBLITE-TODO.md` for detailed tracking.
 
