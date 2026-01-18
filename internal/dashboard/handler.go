@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"bufio"
+	"bytes"
 	"database/sql"
 	"embed"
 	"encoding/csv"
@@ -246,6 +247,11 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Put("/buckets/{id}", h.handleUpdateBucket)
 			r.Delete("/buckets/{id}", h.handleDeleteBucket)
 			r.Post("/buckets/{id}/empty", h.handleEmptyBucket)
+			// Object routes
+			r.Post("/objects/list", h.handleListObjects)
+			r.Post("/objects/upload", h.handleUploadObject)
+			r.Get("/objects/download", h.handleDownloadObject)
+			r.Delete("/objects", h.handleDeleteObjects)
 		})
 	})
 
@@ -3902,4 +3908,253 @@ func (h *Handler) handleStorageError(w http.ResponseWriter, err error) {
 
 	w.WriteHeader(http.StatusInternalServerError)
 	json.NewEncoder(w).Encode(map[string]string{"error": "internal_error", "message": err.Error()})
+}
+
+// Storage object handlers
+
+// handleListObjects lists objects in a bucket with optional prefix filtering.
+func (h *Handler) handleListObjects(w http.ResponseWriter, r *http.Request) {
+	if h.storageService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "service_unavailable",
+			"message": "Storage service not configured",
+		})
+		return
+	}
+
+	var req struct {
+		Bucket string `json:"bucket"`
+		Prefix string `json:"prefix"`
+		Limit  int    `json:"limit"`
+		Offset int    `json:"offset"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid_request", "message": "Invalid request body"})
+		return
+	}
+
+	if req.Bucket == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing_bucket", "message": "Bucket name is required"})
+		return
+	}
+
+	// Default limit to 100
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	listReq := storage.ListObjectsRequest{
+		Prefix: req.Prefix,
+		Limit:  limit,
+		Offset: req.Offset,
+	}
+
+	objects, err := h.storageService.ListObjects(req.Bucket, listReq)
+	if err != nil {
+		h.handleStorageError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(objects)
+}
+
+// handleUploadObject uploads a file to a bucket via multipart form.
+func (h *Handler) handleUploadObject(w http.ResponseWriter, r *http.Request) {
+	if h.storageService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "service_unavailable",
+			"message": "Storage service not configured",
+		})
+		return
+	}
+
+	// Parse multipart form with 32MB max memory
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid_request", "message": "Failed to parse multipart form: " + err.Error()})
+		return
+	}
+
+	bucket := r.FormValue("bucket")
+	path := r.FormValue("path")
+
+	if bucket == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing_bucket", "message": "Bucket name is required"})
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing_file", "message": "File is required"})
+		return
+	}
+	defer file.Close()
+
+	// Read file content
+	content, err := io.ReadAll(file)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "read_error", "message": "Failed to read file content"})
+		return
+	}
+
+	// Construct full path: path + filename
+	fullPath := header.Filename
+	if path != "" {
+		path = strings.TrimSuffix(path, "/")
+		fullPath = path + "/" + header.Filename
+	}
+
+	// Detect content type
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = http.DetectContentType(content)
+	}
+
+	// Upload the file (upsert = true to allow overwriting)
+	resp, err := h.storageService.UploadObject(bucket, fullPath, io.NopCloser(bytes.NewReader(content)), int64(len(content)), contentType, "", true)
+	if err != nil {
+		h.handleStorageError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(resp)
+}
+
+// handleDownloadObject downloads a file from a bucket.
+func (h *Handler) handleDownloadObject(w http.ResponseWriter, r *http.Request) {
+	if h.storageService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "service_unavailable",
+			"message": "Storage service not configured",
+		})
+		return
+	}
+
+	bucket := r.URL.Query().Get("bucket")
+	path := r.URL.Query().Get("path")
+
+	if bucket == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing_bucket", "message": "Bucket name is required"})
+		return
+	}
+	if path == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing_path", "message": "Object path is required"})
+		return
+	}
+
+	reader, contentType, size, err := h.storageService.GetObject(bucket, path)
+	if err != nil {
+		h.handleStorageError(w, err)
+		return
+	}
+	defer reader.Close()
+
+	// Extract filename from path for Content-Disposition
+	filename := path
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		filename = path[idx+1:]
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+
+	io.Copy(w, reader)
+}
+
+// handleDeleteObjects deletes multiple files from a bucket.
+func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request) {
+	if h.storageService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "service_unavailable",
+			"message": "Storage service not configured",
+		})
+		return
+	}
+
+	var req struct {
+		Bucket string   `json:"bucket"`
+		Paths  []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid_request", "message": "Invalid request body"})
+		return
+	}
+
+	if req.Bucket == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing_bucket", "message": "Bucket name is required"})
+		return
+	}
+
+	if len(req.Paths) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing_paths", "message": "At least one path is required"})
+		return
+	}
+
+	// Delete each path and collect errors
+	errors := h.storageService.DeleteObjects(req.Bucket, req.Paths)
+
+	// Check if any errors occurred
+	hasErrors := false
+	for _, err := range errors {
+		if err != nil {
+			hasErrors = true
+			break
+		}
+	}
+
+	if hasErrors {
+		// Return 207 Multi-Status with details
+		type deleteResult struct {
+			Path  string `json:"path"`
+			Error string `json:"error,omitempty"`
+		}
+		results := make([]deleteResult, len(req.Paths))
+		for i, path := range req.Paths {
+			result := deleteResult{Path: path}
+			if errors[i] != nil {
+				result.Error = errors[i].Error()
+			}
+			results[i] = result
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMultiStatus)
+		json.NewEncoder(w).Encode(results)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
