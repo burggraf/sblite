@@ -603,15 +603,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	settings := map[string]any{
 		"external": map[string]bool{
-			"email":    true, // Always enabled
-			"phone":    false,
-			"google":   s.oauthRegistry != nil && s.oauthRegistry.IsEnabled("google"),
-			"github":   s.oauthRegistry != nil && s.oauthRegistry.IsEnabled("github"),
-			"facebook": false,
-			"twitter":  false,
-			"apple":    false,
-			"discord":  false,
-			"twitch":   false,
+			"anonymous": true, // Always enabled
+			"email":     true, // Always enabled
+			"phone":     false,
+			"google":    s.oauthRegistry != nil && s.oauthRegistry.IsEnabled("google"),
+			"github":    s.oauthRegistry != nil && s.oauthRegistry.IsEnabled("github"),
+			"facebook":  false,
+			"twitter":   false,
+			"apple":     false,
+			"discord":   false,
+			"twitch":    false,
 		},
 		"disable_signup":     false,
 		"mailer_autoconfirm": !requireConfirmation,
