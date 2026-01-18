@@ -30,6 +30,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Auth - User | 12 | 7 | 0 | 5 |
 | Auth - State Change | 11 | 6 | 0 | 5 |
 | Auth - Password Reset | 6 | 3 | 0 | 3 |
+| Auth - Anonymous | 22 | 22 | 0 | 0 |
 | Email - Mail API | 13 | 13 | 0 | 0 |
 | Email - Flows | 11 | 8 | 0 | 3 |
 | Email - Verification | 11 | 9 | 0 | 2 |
@@ -37,9 +38,9 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Relations | 10 | 10 | 0 | 0 |
 | RLS | 9 | 9 | 0 | 0 |
 | API Key | 12 | 12 | 0 | 0 |
-| **TOTAL** | **300** | **238** | **0** | **61** |
+| **TOTAL** | **322** | **260** | **0** | **61** |
 
-*Last tested: 2026-01-17*
+*Last tested: 2026-01-18*
 
 **Note:** Server must be started in `catch` mode (`--mail-mode catch`) for email tests to pass.
 
@@ -535,6 +536,44 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ⏭️ should handle non-existent email gracefully
 - ⏭️ should handle invalid email format
 - ⏭️ should rate limit password reset requests
+
+---
+
+### `tests/auth/anonymous.test.ts`
+
+**signInAnonymously() - Basic anonymous sign-in**
+- ✅ should create an anonymous user session
+- ✅ should mark user as anonymous
+- ✅ should return null email
+- ✅ should have authenticated role
+- ✅ should return valid session with tokens
+- ✅ should have valid UUID user ID
+
+**signInAnonymously() - With user metadata**
+- ✅ should store custom user metadata
+- ✅ should handle complex nested metadata
+- ✅ should handle empty metadata
+
+**Anonymous to Permanent User Conversion**
+- ✅ should convert anonymous user with email and password
+- ✅ should allow login with new credentials after conversion
+- ✅ should preserve metadata after conversion
+- ✅ should allow adding metadata during conversion
+
+**Anonymous Session Management**
+- ✅ should get current anonymous user
+- ✅ should get current session
+- ✅ should refresh anonymous session
+- ✅ should refresh with explicit refresh token
+- ✅ should sign out anonymous user
+
+**Settings Endpoint**
+- ✅ should show anonymous as enabled
+
+**Edge Cases**
+- ✅ should create unique anonymous user each time
+- ✅ should handle multiple anonymous sessions
+- ✅ should reject conversion without password
 
 ---
 

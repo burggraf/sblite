@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS auth_users (
     raw_app_meta_data     TEXT DEFAULT '{}' CHECK (json_valid(raw_app_meta_data)),
     raw_user_meta_data    TEXT DEFAULT '{}' CHECK (json_valid(raw_user_meta_data)),
     is_super_admin        INTEGER DEFAULT 0,
+    is_anonymous          INTEGER DEFAULT 0,
     role                  TEXT DEFAULT 'authenticated',
     created_at            TEXT DEFAULT (datetime('now')),
     updated_at            TEXT DEFAULT (datetime('now')),
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS auth_users (
 CREATE INDEX IF NOT EXISTS idx_auth_users_email ON auth_users(email);
 CREATE INDEX IF NOT EXISTS idx_auth_users_confirmation_token ON auth_users(confirmation_token);
 CREATE INDEX IF NOT EXISTS idx_auth_users_recovery_token ON auth_users(recovery_token);
+CREATE INDEX IF NOT EXISTS idx_auth_users_is_anonymous ON auth_users(is_anonymous);
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
     id            TEXT PRIMARY KEY,
@@ -175,6 +177,7 @@ CREATE TABLE IF NOT EXISTS auth_flow_state (
 	provider TEXT NOT NULL,
 	code_verifier TEXT NOT NULL,
 	redirect_to TEXT,
+	linking_user_id TEXT,
 	created_at TEXT NOT NULL,
 	expires_at TEXT NOT NULL
 );

@@ -173,7 +173,7 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 | `signInWithOtp` | ❌ | |
 | `signInWithIdToken` | ❌ | |
 | `signInWithSSO` | ❌ | |
-| `signInAnonymously` | ❌ | |
+| `signInAnonymously` | ✅ | Full support with conversion to permanent user |
 
 ### Sign Out
 

@@ -24,6 +24,7 @@ type User struct {
 	AppMetadata       map[string]any `json:"app_metadata"`
 	UserMetadata      map[string]any `json:"user_metadata"`
 	Role              string         `json:"role"`
+	IsAnonymous       bool           `json:"is_anonymous"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
 }
@@ -91,15 +92,16 @@ func (s *Service) CreateUserWithOptions(email, password string, userMetadata map
 func (s *Service) GetUserByID(id string) (*User, error) {
 	var user User
 	var createdAt, updatedAt string
-	var emailConfirmedAt, lastSignInAt sql.NullString
+	var email, emailConfirmedAt, lastSignInAt sql.NullString
 	var rawAppMetaData, rawUserMetaData string
+	var isAnonymous int
 
 	err := s.db.QueryRow(`
 		SELECT id, email, encrypted_password, email_confirmed_at, last_sign_in_at,
-		       role, created_at, updated_at, raw_app_meta_data, raw_user_meta_data
+		       role, created_at, updated_at, raw_app_meta_data, raw_user_meta_data, is_anonymous
 		FROM auth_users WHERE id = ? AND deleted_at IS NULL
-	`, id).Scan(&user.ID, &user.Email, &user.EncryptedPassword, &emailConfirmedAt,
-		&lastSignInAt, &user.Role, &createdAt, &updatedAt, &rawAppMetaData, &rawUserMetaData)
+	`, id).Scan(&user.ID, &email, &user.EncryptedPassword, &emailConfirmedAt,
+		&lastSignInAt, &user.Role, &createdAt, &updatedAt, &rawAppMetaData, &rawUserMetaData, &isAnonymous)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("user not found")
@@ -108,6 +110,11 @@ func (s *Service) GetUserByID(id string) (*User, error) {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
+	// Handle nullable email (anonymous users have NULL email)
+	if email.Valid {
+		user.Email = email.String
+	}
+	user.IsAnonymous = isAnonymous == 1
 	user.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	user.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 	if emailConfirmedAt.Valid {
@@ -410,6 +417,121 @@ func (s *Service) AddProviderToUser(userID, provider string) error {
 		string(appMetaJSON), now, userID)
 	if err != nil {
 		return fmt.Errorf("failed to update app_metadata: %w", err)
+	}
+
+	return nil
+}
+
+// CreateAnonymousUser creates a new anonymous user (no email/password).
+func (s *Service) CreateAnonymousUser(userMetadata map[string]any) (*User, error) {
+	id := generateID()
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Marshal user metadata to JSON
+	userMetaJSON := "{}"
+	if userMetadata != nil {
+		metaBytes, err := json.Marshal(userMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal user metadata: %w", err)
+		}
+		userMetaJSON = string(metaBytes)
+	}
+
+	// Anonymous users have no email, no password, is_anonymous=1
+	_, err := s.db.Exec(`
+		INSERT INTO auth_users (id, email, encrypted_password, email_confirmed_at, is_anonymous, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+		VALUES (?, NULL, '', ?, 1, '{"provider":"anonymous","providers":["anonymous"]}', ?, ?, ?)
+	`, id, now, userMetaJSON, now, now)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create anonymous user: %w", err)
+	}
+
+	return s.GetUserByID(id)
+}
+
+// ConvertAnonymousUser converts an anonymous user to a regular user with email/password.
+func (s *Service) ConvertAnonymousUser(userID, email, password string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+
+	// Check if email already exists
+	var existingID string
+	err := s.db.QueryRow("SELECT id FROM auth_users WHERE email = ? AND deleted_at IS NULL", email).Scan(&existingID)
+	if err == nil {
+		return fmt.Errorf("email already in use")
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check email: %w", err)
+	}
+
+	// Hash password
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Update user: set email, encrypted_password, is_anonymous=0, email_confirmed_at, app_metadata
+	_, err = s.db.Exec(`
+		UPDATE auth_users
+		SET email = ?,
+		    encrypted_password = ?,
+		    is_anonymous = 0,
+		    email_confirmed_at = ?,
+		    raw_app_meta_data = '{"provider":"email","providers":["email"]}',
+		    updated_at = ?
+		WHERE id = ?
+	`, email, string(hash), now, now, userID)
+
+	if err != nil {
+		return fmt.Errorf("failed to convert anonymous user: %w", err)
+	}
+
+	return nil
+}
+
+// ConvertAnonymousUserViaOAuth converts an anonymous user to a regular user via OAuth.
+// Unlike email/password conversion, this doesn't set a password and uses the OAuth provider.
+func (s *Service) ConvertAnonymousUserViaOAuth(userID, email, provider string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+
+	// Check if email already exists
+	var existingID string
+	err := s.db.QueryRow("SELECT id FROM auth_users WHERE email = ? AND deleted_at IS NULL", email).Scan(&existingID)
+	if err == nil {
+		return fmt.Errorf("email already in use")
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check email: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Build app_metadata with the OAuth provider
+	appMetadata := map[string]interface{}{
+		"provider":  provider,
+		"providers": []string{provider},
+	}
+	appMetaJSON, err := json.Marshal(appMetadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal app_metadata: %w", err)
+	}
+
+	// Update user: set email, is_anonymous=0, email_confirmed_at, app_metadata
+	// Note: encrypted_password remains empty for OAuth-only users
+	_, err = s.db.Exec(`
+		UPDATE auth_users
+		SET email = ?,
+		    is_anonymous = 0,
+		    email_confirmed_at = ?,
+		    raw_app_meta_data = ?,
+		    updated_at = ?
+		WHERE id = ?
+	`, email, now, string(appMetaJSON), now, userID)
+
+	if err != nil {
+		return fmt.Errorf("failed to convert anonymous user via OAuth: %w", err)
 	}
 
 	return nil

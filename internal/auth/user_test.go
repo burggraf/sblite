@@ -211,3 +211,164 @@ func TestAddProviderToUserDuplicate(t *testing.T) {
 		t.Errorf("expected exactly 1 email provider, found %d", emailCount)
 	}
 }
+
+func TestCreateAnonymousUser(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	service := NewService(database, "test-secret-key-min-32-characters")
+
+	userMeta := map[string]any{"theme": "dark"}
+	user, err := service.CreateAnonymousUser(userMeta)
+	if err != nil {
+		t.Fatalf("failed to create anonymous user: %v", err)
+	}
+
+	// Verify user properties
+	if user.ID == "" {
+		t.Error("expected user ID to be set")
+	}
+	if user.Email != "" {
+		t.Errorf("expected email to be empty, got %s", user.Email)
+	}
+	if !user.IsAnonymous {
+		t.Error("expected IsAnonymous to be true")
+	}
+	if user.Role != "authenticated" {
+		t.Errorf("expected role to be 'authenticated', got %s", user.Role)
+	}
+
+	// Check app_metadata
+	provider, ok := user.AppMetadata["provider"]
+	if !ok || provider != "anonymous" {
+		t.Errorf("expected app_metadata.provider to be 'anonymous', got %v", provider)
+	}
+
+	// Check user_metadata
+	theme, ok := user.UserMetadata["theme"]
+	if !ok || theme != "dark" {
+		t.Errorf("expected user_metadata.theme to be 'dark', got %v", theme)
+	}
+}
+
+func TestConvertAnonymousUserViaOAuth(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	service := NewService(database, "test-secret-key-min-32-characters")
+
+	// Create anonymous user
+	anonUser, err := service.CreateAnonymousUser(map[string]any{"theme": "dark"})
+	if err != nil {
+		t.Fatalf("failed to create anonymous user: %v", err)
+	}
+
+	// Convert via OAuth
+	err = service.ConvertAnonymousUserViaOAuth(anonUser.ID, "oauth@example.com", "google")
+	if err != nil {
+		t.Fatalf("failed to convert anonymous user via OAuth: %v", err)
+	}
+
+	// Verify user is converted
+	user, err := service.GetUserByID(anonUser.ID)
+	if err != nil {
+		t.Fatalf("failed to get user: %v", err)
+	}
+
+	// Email should be set
+	if user.Email != "oauth@example.com" {
+		t.Errorf("expected email 'oauth@example.com', got '%s'", user.Email)
+	}
+
+	// Should no longer be anonymous
+	if user.IsAnonymous {
+		t.Error("expected IsAnonymous to be false after conversion")
+	}
+
+	// Email should be confirmed (OAuth users get auto-confirmed)
+	if user.EmailConfirmedAt == nil {
+		t.Error("expected email_confirmed_at to be set")
+	}
+
+	// Check app_metadata has OAuth provider
+	provider, ok := user.AppMetadata["provider"]
+	if !ok || provider != "google" {
+		t.Errorf("expected app_metadata.provider to be 'google', got %v", provider)
+	}
+
+	// Check providers array
+	providers, ok := user.AppMetadata["providers"]
+	if !ok {
+		t.Error("expected app_metadata.providers to exist")
+	}
+	providersArr, ok := providers.([]interface{})
+	if !ok || len(providersArr) != 1 || providersArr[0] != "google" {
+		t.Errorf("expected providers to be ['google'], got %v", providers)
+	}
+
+	// User metadata should be preserved
+	theme, ok := user.UserMetadata["theme"]
+	if !ok || theme != "dark" {
+		t.Errorf("expected user_metadata.theme to be preserved as 'dark', got %v", theme)
+	}
+}
+
+func TestConvertAnonymousUserViaOAuthEmailNormalization(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	service := NewService(database, "test-secret-key-min-32-characters")
+
+	// Create anonymous user
+	anonUser, err := service.CreateAnonymousUser(nil)
+	if err != nil {
+		t.Fatalf("failed to create anonymous user: %v", err)
+	}
+
+	// Convert with email that needs normalization
+	err = service.ConvertAnonymousUserViaOAuth(anonUser.ID, "  OAUTH@EXAMPLE.COM  ", "github")
+	if err != nil {
+		t.Fatalf("failed to convert: %v", err)
+	}
+
+	// Verify email is normalized
+	user, err := service.GetUserByID(anonUser.ID)
+	if err != nil {
+		t.Fatalf("failed to get user: %v", err)
+	}
+
+	if user.Email != "oauth@example.com" {
+		t.Errorf("expected normalized email 'oauth@example.com', got '%s'", user.Email)
+	}
+
+	// Check provider is github
+	provider, _ := user.AppMetadata["provider"]
+	if provider != "github" {
+		t.Errorf("expected provider 'github', got %v", provider)
+	}
+}
+
+func TestConvertAnonymousUserViaOAuthEmailAlreadyInUse(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	service := NewService(database, "test-secret-key-min-32-characters")
+
+	// Create a regular user with email
+	_, err := service.CreateUser("existing@example.com", "password123", nil)
+	if err != nil {
+		t.Fatalf("failed to create existing user: %v", err)
+	}
+
+	// Create anonymous user
+	anonUser, err := service.CreateAnonymousUser(nil)
+	if err != nil {
+		t.Fatalf("failed to create anonymous user: %v", err)
+	}
+
+	// Try to convert with existing email
+	err = service.ConvertAnonymousUserViaOAuth(anonUser.ID, "existing@example.com", "google")
+	if err == nil {
+		t.Error("expected error when converting with email already in use")
+	}
+}

@@ -27,6 +27,13 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if this is an anonymous signup (no email AND no password)
+	if req.Email == "" && req.Password == "" {
+		s.handleAnonymousSignup(w, r, req.Data)
+		return
+	}
+
+	// Regular signup - require both email and password
 	if req.Email == "" || req.Password == "" {
 		s.writeError(w, http.StatusBadRequest, "validation_failed", "Email and password are required")
 		return
@@ -103,6 +110,51 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleAnonymousSignup(w http.ResponseWriter, r *http.Request, userMetadata map[string]any) {
+	user, err := s.authService.CreateAnonymousUser(userMetadata)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to create anonymous user")
+		return
+	}
+
+	session, refreshToken, err := s.authService.CreateSession(user)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to create session")
+		return
+	}
+
+	accessToken, err := s.authService.GenerateAccessToken(user, session.ID)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to generate token")
+		return
+	}
+
+	s.authService.UpdateLastSignIn(user.ID)
+
+	// Build user response with null email
+	userResponse := map[string]any{
+		"id":            user.ID,
+		"email":         nil,
+		"role":          user.Role,
+		"is_anonymous":  true,
+		"created_at":    user.CreatedAt,
+		"updated_at":    user.UpdatedAt,
+		"app_metadata":  user.AppMetadata,
+		"user_metadata": user.UserMetadata,
+	}
+
+	response := TokenResponse{
+		AccessToken:  accessToken,
+		TokenType:    "bearer",
+		ExpiresIn:    3600,
+		RefreshToken: refreshToken,
+		User:         userResponse,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -185,18 +237,27 @@ func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request) {
 	// Update last sign in
 	s.authService.UpdateLastSignIn(user.ID)
 
+	// Build user response
+	userResponse := map[string]any{
+		"id":            user.ID,
+		"email":         user.Email,
+		"role":          user.Role,
+		"is_anonymous":  user.IsAnonymous,
+		"app_metadata":  user.AppMetadata,
+		"user_metadata": user.UserMetadata,
+	}
+
+	// Set email to null for anonymous users
+	if user.IsAnonymous {
+		userResponse["email"] = nil
+	}
+
 	response := TokenResponse{
 		AccessToken:  accessToken,
 		TokenType:    "bearer",
 		ExpiresIn:    3600,
 		RefreshToken: refreshToken,
-		User: map[string]any{
-			"id":            user.ID,
-			"email":         user.Email,
-			"role":          user.Role,
-			"app_metadata":  user.AppMetadata,
-			"user_metadata": user.UserMetadata,
-		},
+		User:         userResponse,
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -221,18 +282,27 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build user response
+	userResponse := map[string]any{
+		"id":            user.ID,
+		"email":         user.Email,
+		"role":          user.Role,
+		"is_anonymous":  user.IsAnonymous,
+		"app_metadata":  user.AppMetadata,
+		"user_metadata": user.UserMetadata,
+	}
+
+	// Set email to null for anonymous users
+	if user.IsAnonymous {
+		userResponse["email"] = nil
+	}
+
 	response := TokenResponse{
 		AccessToken:  accessToken,
 		TokenType:    "bearer",
 		ExpiresIn:    3600,
 		RefreshToken: refreshToken,
-		User: map[string]any{
-			"id":            user.ID,
-			"email":         user.Email,
-			"role":          user.Role,
-			"app_metadata":  user.AppMetadata,
-			"user_metadata": user.UserMetadata,
-		},
+		User:         userResponse,
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -249,10 +319,16 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 		"id":            user.ID,
 		"email":         user.Email,
 		"role":          user.Role,
+		"is_anonymous":  user.IsAnonymous,
 		"created_at":    user.CreatedAt,
 		"updated_at":    user.UpdatedAt,
 		"app_metadata":  user.AppMetadata,
 		"user_metadata": user.UserMetadata,
+	}
+
+	// Set email to null for anonymous users
+	if user.IsAnonymous {
+		response["email"] = nil
 	}
 
 	if user.EmailConfirmedAt != nil {
@@ -284,6 +360,48 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for anonymous user conversion (email + password provided for anonymous user)
+	if user.IsAnonymous && req.Email != "" && req.Password != "" {
+		// Validate password length
+		if len(req.Password) < 6 {
+			s.writeError(w, http.StatusBadRequest, "validation_failed", "Password must be at least 6 characters")
+			return
+		}
+
+		// Convert anonymous user to regular user
+		if err := s.authService.ConvertAnonymousUser(user.ID, req.Email, req.Password); err != nil {
+			if strings.Contains(err.Error(), "email already in use") {
+				s.writeError(w, http.StatusBadRequest, "email_exists", "Email address is already in use")
+				return
+			}
+			s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to convert anonymous user")
+			return
+		}
+
+		// Update metadata if provided
+		if req.Data != nil {
+			s.authService.UpdateUserMetadata(user.ID, req.Data)
+		}
+
+		// Refetch user to get updated data (user was just converted, so this should succeed)
+		user, _ = s.authService.GetUserByID(user.ID)
+
+		response := map[string]any{
+			"id":            user.ID,
+			"email":         user.Email,
+			"role":          user.Role,
+			"is_anonymous":  user.IsAnonymous,
+			"created_at":    user.CreatedAt,
+			"updated_at":    user.UpdatedAt,
+			"app_metadata":  user.AppMetadata,
+			"user_metadata": user.UserMetadata,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	if req.Data != nil {
 		if err := s.authService.UpdateUserMetadata(user.ID, req.Data); err != nil {
 			s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to update user")
@@ -309,10 +427,16 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		"id":            user.ID,
 		"email":         user.Email,
 		"role":          user.Role,
+		"is_anonymous":  user.IsAnonymous,
 		"created_at":    user.CreatedAt,
 		"updated_at":    user.UpdatedAt,
 		"app_metadata":  user.AppMetadata,
 		"user_metadata": user.UserMetadata,
+	}
+
+	// Set email to null for anonymous users
+	if user.IsAnonymous {
+		response["email"] = nil
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -479,15 +603,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	settings := map[string]any{
 		"external": map[string]bool{
-			"email":    true, // Always enabled
-			"phone":    false,
-			"google":   s.oauthRegistry != nil && s.oauthRegistry.IsEnabled("google"),
-			"github":   s.oauthRegistry != nil && s.oauthRegistry.IsEnabled("github"),
-			"facebook": false,
-			"twitter":  false,
-			"apple":    false,
-			"discord":  false,
-			"twitch":   false,
+			"anonymous": true, // Always enabled
+			"email":     true, // Always enabled
+			"phone":     false,
+			"google":    s.oauthRegistry != nil && s.oauthRegistry.IsEnabled("google"),
+			"github":    s.oauthRegistry != nil && s.oauthRegistry.IsEnabled("github"),
+			"facebook":  false,
+			"twitter":   false,
+			"apple":     false,
+			"discord":   false,
+			"twitch":    false,
 		},
 		"disable_signup":     false,
 		"mailer_autoconfirm": !requireConfirmation,

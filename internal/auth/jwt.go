@@ -32,20 +32,18 @@ const (
 func (s *Service) GenerateAccessToken(user *User, sessionID string) (string, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{
-		"aud":        "authenticated",
-		"exp":        now.Add(time.Duration(AccessTokenExpiry) * time.Second).Unix(),
-		"iat":        now.Unix(),
-		"iss":        "http://localhost:8080/auth/v1",
-		"sub":        user.ID,
-		"email":      user.Email,
-		"phone":      "",
-		"role":       user.Role,
-		"aal":        "aal1",
-		"session_id": sessionID,
-		"app_metadata": map[string]any{
-			"provider":  "email",
-			"providers": []string{"email"},
-		},
+		"aud":           "authenticated",
+		"exp":           now.Add(time.Duration(AccessTokenExpiry) * time.Second).Unix(),
+		"iat":           now.Unix(),
+		"iss":           "http://localhost:8080/auth/v1",
+		"sub":           user.ID,
+		"email":         user.Email,
+		"phone":         "",
+		"role":          user.Role,
+		"aal":           "aal1",
+		"session_id":    sessionID,
+		"is_anonymous":  user.IsAnonymous,
+		"app_metadata":  user.AppMetadata,
 		"user_metadata": user.UserMetadata,
 	}
 

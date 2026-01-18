@@ -12,12 +12,13 @@ var ErrStateNotFound = errors.New("oauth state not found or expired")
 
 // FlowState represents the OAuth flow state stored during PKCE flow.
 type FlowState struct {
-	ID           string
-	Provider     string
-	CodeVerifier string
-	RedirectTo   string
-	CreatedAt    time.Time
-	ExpiresAt    time.Time
+	ID            string
+	Provider      string
+	CodeVerifier  string
+	RedirectTo    string
+	LinkingUserID string // User ID if linking an anonymous user to OAuth
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
 }
 
 // StateStore manages OAuth flow state in the database.
@@ -35,10 +36,16 @@ func (s *StateStore) Save(state *FlowState) error {
 	now := time.Now().UTC()
 	expiresAt := now.Add(10 * time.Minute)
 
+	// Handle empty LinkingUserID as NULL
+	var linkingUserID interface{} = nil
+	if state.LinkingUserID != "" {
+		linkingUserID = state.LinkingUserID
+	}
+
 	_, err := s.db.Exec(`
-		INSERT INTO auth_flow_state (id, provider, code_verifier, redirect_to, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		state.ID, state.Provider, state.CodeVerifier, state.RedirectTo,
+		INSERT INTO auth_flow_state (id, provider, code_verifier, redirect_to, linking_user_id, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		state.ID, state.Provider, state.CodeVerifier, state.RedirectTo, linkingUserID,
 		now.Format(time.RFC3339), expiresAt.Format(time.RFC3339))
 	return err
 }
@@ -47,18 +54,23 @@ func (s *StateStore) Save(state *FlowState) error {
 func (s *StateStore) Get(id string) (*FlowState, error) {
 	var state FlowState
 	var createdAt, expiresAt string
+	var linkingUserID sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT id, provider, code_verifier, redirect_to, created_at, expires_at
+		SELECT id, provider, code_verifier, redirect_to, linking_user_id, created_at, expires_at
 		FROM auth_flow_state
 		WHERE id = ? AND expires_at > datetime('now')`,
-		id).Scan(&state.ID, &state.Provider, &state.CodeVerifier, &state.RedirectTo, &createdAt, &expiresAt)
+		id).Scan(&state.ID, &state.Provider, &state.CodeVerifier, &state.RedirectTo, &linkingUserID, &createdAt, &expiresAt)
 
 	if err == sql.ErrNoRows {
 		return nil, ErrStateNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	if linkingUserID.Valid {
+		state.LinkingUserID = linkingUserID.String
 	}
 
 	state.CreatedAt, err = time.Parse(time.RFC3339, createdAt)

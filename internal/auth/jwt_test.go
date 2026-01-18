@@ -172,3 +172,74 @@ func TestRevokeSession(t *testing.T) {
 		t.Error("expected error for revoked session")
 	}
 }
+
+func TestGenerateAccessTokenAnonymousClaim(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	service := NewService(database, "test-secret-key-min-32-characters")
+
+	// Create a regular user
+	user := &User{
+		ID:           "test-user-id",
+		Email:        "test@example.com",
+		Role:         "authenticated",
+		IsAnonymous:  false,
+		UserMetadata: map[string]any{},
+		AppMetadata:  map[string]any{"provider": "email", "providers": []string{"email"}},
+	}
+
+	token, err := service.GenerateAccessToken(user, "session-123")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	// Parse and verify claims
+	claims, err := service.ValidateAccessToken(token)
+	if err != nil {
+		t.Fatalf("failed to validate token: %v", err)
+	}
+
+	isAnonymous, ok := (*claims)["is_anonymous"].(bool)
+	if !ok {
+		t.Fatal("expected is_anonymous claim to be boolean")
+	}
+	if isAnonymous != false {
+		t.Errorf("expected is_anonymous to be false, got %v", isAnonymous)
+	}
+}
+
+func TestGenerateAccessTokenAnonymousClaimTrue(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	service := NewService(database, "test-secret-key-min-32-characters")
+
+	// Create an anonymous user
+	user := &User{
+		ID:           "anon-user-id",
+		Email:        "",
+		Role:         "authenticated",
+		IsAnonymous:  true,
+		UserMetadata: map[string]any{},
+		AppMetadata:  map[string]any{"provider": "anonymous", "providers": []string{"anonymous"}},
+	}
+
+	token, err := service.GenerateAccessToken(user, "session-456")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	claims, err := service.ValidateAccessToken(token)
+	if err != nil {
+		t.Fatalf("failed to validate token: %v", err)
+	}
+
+	isAnonymous, ok := (*claims)["is_anonymous"].(bool)
+	if !ok {
+		t.Fatal("expected is_anonymous claim to be boolean")
+	}
+	if isAnonymous != true {
+		t.Errorf("expected is_anonymous to be true, got %v", isAnonymous)
+	}
+}

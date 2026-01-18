@@ -63,6 +63,13 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		CodeVerifier: codeVerifier,
 		RedirectTo:   redirectTo,
 	}
+
+	// Check if current user is anonymous and should be linked to OAuth
+	linkingUserID := s.extractAnonymousUserID(r)
+	if linkingUserID != "" {
+		flowState.LinkingUserID = linkingUserID
+	}
+
 	if err := s.oauthStateStore.Save(flowState); err != nil {
 		s.oauthError(w, http.StatusInternalServerError, "failed to save flow state")
 		return
@@ -73,6 +80,38 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	authURL := provider.AuthURL(state, codeChallenge, callbackURL)
 
 	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+// extractAnonymousUserID extracts the user ID from the Authorization header
+// if the user is anonymous. Returns empty string if no auth or not anonymous.
+func (s *Server) extractAnonymousUserID(r *http.Request) string {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		return ""
+	}
+
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+	claims, err := s.authService.ValidateAccessToken(tokenString)
+	if err != nil {
+		return ""
+	}
+
+	userID, ok := (*claims)["sub"].(string)
+	if !ok || userID == "" {
+		return ""
+	}
+
+	// Get the user to check if anonymous
+	user, err := s.authService.GetUserByID(userID)
+	if err != nil {
+		return ""
+	}
+
+	if user.IsAnonymous {
+		return user.ID
+	}
+
+	return ""
 }
 
 // isRedirectURLAllowed checks if the redirect URL is in the allowed list.
@@ -188,8 +227,8 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find or create user
-	user, err := s.findOrCreateOAuthUser(flowState.Provider, userInfo)
+	// Find or create user (pass linkingUserID for anonymous conversion)
+	user, err := s.findOrCreateOAuthUser(flowState.Provider, userInfo, flowState.LinkingUserID)
 	if err != nil {
 		s.redirectWithError(w, r, flowState.RedirectTo, "user_error", "failed to create user")
 		return
@@ -217,12 +256,43 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 // findOrCreateOAuthUser finds an existing user or creates a new one.
-func (s *Server) findOrCreateOAuthUser(provider string, userInfo *oauth.UserInfo) (*auth.User, error) {
+// If linkingUserID is provided and that user is anonymous, the anonymous user
+// will be converted to a regular user via OAuth instead of creating a new user.
+func (s *Server) findOrCreateOAuthUser(provider string, userInfo *oauth.UserInfo, linkingUserID string) (*auth.User, error) {
 	// First, check if identity already exists
 	identity, err := s.authService.GetIdentityByProvider(provider, userInfo.ProviderID)
 	if err == nil {
 		// Identity exists, get the user
 		return s.authService.GetUserByID(identity.UserID)
+	}
+
+	// Check if we're converting an anonymous user
+	if linkingUserID != "" {
+		anonUser, err := s.authService.GetUserByID(linkingUserID)
+		if err == nil && anonUser.IsAnonymous {
+			// Convert anonymous user via OAuth
+			if err := s.authService.ConvertAnonymousUserViaOAuth(linkingUserID, userInfo.Email, provider); err != nil {
+				return nil, err
+			}
+
+			// Create identity for the converted user
+			identity := &auth.Identity{
+				UserID:     linkingUserID,
+				Provider:   provider,
+				ProviderID: userInfo.ProviderID,
+				IdentityData: map[string]interface{}{
+					"email":      userInfo.Email,
+					"name":       userInfo.Name,
+					"avatar_url": userInfo.AvatarURL,
+				},
+			}
+			if err := s.authService.CreateIdentity(identity); err != nil {
+				return nil, err
+			}
+
+			// Return the converted user
+			return s.authService.GetUserByID(linkingUserID)
+		}
 	}
 
 	// Identity doesn't exist, check if user with email exists
