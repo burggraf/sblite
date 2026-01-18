@@ -155,6 +155,37 @@ const { data } = await supabase
   .limit(10)
 ```
 
+### Ordering by Relevance
+
+To order search results by relevance (most relevant first), use `.order()` with the FTS column name. This matches Supabase behavior where ordering by the tsvector column sorts by relevance:
+
+```typescript
+// Order by relevance (most relevant first)
+const { data } = await supabase
+  .from('articles')
+  .select('*')
+  .textSearch('body', 'programming')
+  .order('body')  // Order by FTS column = order by relevance
+
+// Order by relevance descending (least relevant first)
+const { data } = await supabase
+  .from('articles')
+  .select('*')
+  .textSearch('body', 'programming')
+  .order('body', { ascending: false })
+
+// Combine relevance ordering with other filters
+const { data } = await supabase
+  .from('articles')
+  .select('*')
+  .textSearch('body', 'cat OR dog')
+  .eq('author', 'Alice')
+  .order('body')
+  .limit(10)
+```
+
+Internally, sblite uses FTS5's BM25 ranking algorithm to determine relevance scores. The `rank` column from FTS5 is used for ordering but is not exposed in the results.
+
 ## Managing FTS Indexes
 
 ### List Indexes
@@ -228,9 +259,9 @@ USING GIN (to_tsvector('english', title || ' ' || body));
 
 ### Current Limitations
 
-1. **Ranking**: FTS5 provides ranking via the `rank` column, but it's not yet exposed through the API
-2. **Highlighting**: `ts_headline` equivalent is not implemented
-3. **Configuration parameter**: The `config` option in textSearch is ignored (tokenizer is set at index creation)
+1. **Highlighting**: `ts_headline` equivalent is not implemented
+2. **Configuration parameter**: The `config` option in textSearch is ignored (tokenizer is set at index creation)
+3. **Rank score not exposed**: While ordering by relevance is supported, the actual BM25 score is not included in results
 
 ### FTS5 Limitations
 

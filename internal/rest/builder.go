@@ -163,10 +163,10 @@ func NewFTSConditionBuilder(manager *fts.Manager) *FTSConditionBuilder {
 }
 
 // BuildFTSCondition builds a SQL condition for an FTS filter
-// Returns the SQL condition, arguments, and any error
-func (b *FTSConditionBuilder) BuildFTSCondition(tableName string, filter FTSFilter) (string, []any, error) {
+// Returns the FTSCondition with SQL, arguments, and metadata for ranking
+func (b *FTSConditionBuilder) BuildFTSCondition(tableName string, filter FTSFilter) (FTSCondition, error) {
 	if b.ftsManager == nil {
-		return "", nil, fmt.Errorf("FTS not available")
+		return FTSCondition{}, fmt.Errorf("FTS not available")
 	}
 
 	// The filter.Column is the FTS index name or we need to find an index that includes this column
@@ -175,14 +175,14 @@ func (b *FTSConditionBuilder) BuildFTSCondition(tableName string, filter FTSFilt
 		// Try to find an index that includes this column
 		idx, err = b.ftsManager.FindIndexForColumn(tableName, filter.Column)
 		if err != nil || idx == nil {
-			return "", nil, fmt.Errorf("no FTS index found for column %q on table %q", filter.Column, tableName)
+			return FTSCondition{}, fmt.Errorf("no FTS index found for column %q on table %q", filter.Column, tableName)
 		}
 	}
 
 	// Convert the query to FTS5 syntax based on operator type
 	ftsQuery := fts.ToFTS5Query(fts.QueryType(filter.Operator), filter.Query)
 	if ftsQuery == "" {
-		return "", nil, fmt.Errorf("empty FTS query")
+		return FTSCondition{}, fmt.Errorf("empty FTS query")
 	}
 
 	// Build the FTS table name
@@ -191,16 +191,45 @@ func (b *FTSConditionBuilder) BuildFTSCondition(tableName string, filter FTSFilt
 	// Build the condition using a subquery
 	condition := fmt.Sprintf(`rowid IN (SELECT rowid FROM %q WHERE %q MATCH ?)`, ftsTable, ftsTable)
 
-	return condition, []any{ftsQuery}, nil
+	return FTSCondition{
+		SQL:      condition,
+		Args:     []any{ftsQuery},
+		Column:   filter.Column,
+		FTSTable: ftsTable,
+		FTSQuery: ftsQuery,
+	}, nil
+}
+
+// findFTSOrderColumn checks if any order column matches an FTS filter column
+// Returns the matching FTSCondition and the OrderBy, or nil if no match
+func findFTSOrderColumn(q Query) (*FTSCondition, *OrderBy) {
+	for i := range q.Order {
+		o := &q.Order[i]
+		for j := range q.FTSConditions {
+			ftsCond := &q.FTSConditions[j]
+			if ftsCond.Column == o.Column && ftsCond.FTSTable != "" {
+				return ftsCond, o
+			}
+		}
+	}
+	return nil, nil
 }
 
 func BuildSelectQuery(q Query) (string, []any) {
 	var args []any
 	var sb strings.Builder
 
+	// Check if we need FTS ranking (ordering by an FTS column)
+	ftsRankCond, ftsRankOrder := findFTSOrderColumn(q)
+	useFTSRanking := ftsRankCond != nil && ftsRankOrder != nil
+
 	// SELECT clause
 	sb.WriteString("SELECT ")
-	if len(q.Select) == 0 || (len(q.Select) == 1 && q.Select[0] == "*") {
+	if useFTSRanking {
+		// When using FTS ranking with JOIN, qualify columns with table name
+		sb.WriteString(quoteIdentifier(q.Table))
+		sb.WriteString(".*")
+	} else if len(q.Select) == 0 || (len(q.Select) == 1 && q.Select[0] == "*") {
 		sb.WriteString("*")
 	} else {
 		quotedCols := make([]string, len(q.Select))
@@ -213,6 +242,15 @@ func BuildSelectQuery(q Query) (string, []any) {
 	// FROM clause
 	sb.WriteString(" FROM ")
 	sb.WriteString(quoteIdentifier(q.Table))
+
+	// If using FTS ranking, add JOIN with FTS table for rank ordering
+	if useFTSRanking {
+		sb.WriteString(fmt.Sprintf(
+			` INNER JOIN (SELECT rowid, rank FROM %q WHERE %q MATCH ?) AS _fts_rank ON %s.rowid = _fts_rank.rowid`,
+			ftsRankCond.FTSTable, ftsRankCond.FTSTable, quoteIdentifier(q.Table),
+		))
+		args = append(args, ftsRankCond.FTSQuery)
+	}
 
 	// WHERE clause (regular filters and logical filters)
 	// Note: Related filters (f.ToSQL() returns empty string) are skipped here
@@ -252,8 +290,13 @@ func BuildSelectQuery(q Query) (string, []any) {
 	}
 
 	// FTS conditions (added after RLS conditions, before ORDER BY)
+	// Skip the FTS condition that's being used for ranking (it's handled via JOIN)
 	for _, ftsCond := range q.FTSConditions {
 		if ftsCond.SQL != "" {
+			// Skip if this is the ranking condition (already in JOIN)
+			if useFTSRanking && ftsCond.Column == ftsRankCond.Column {
+				continue
+			}
 			if hasConditions {
 				sb.WriteString(" AND ")
 			} else {
@@ -274,7 +317,12 @@ func BuildSelectQuery(q Query) (string, []any) {
 			if o.Desc {
 				dir = "DESC"
 			}
-			orders = append(orders, fmt.Sprintf("%s %s", quoteIdentifier(o.Column), dir))
+			// If this is the FTS ranking column, order by rank instead
+			if useFTSRanking && o.Column == ftsRankOrder.Column {
+				orders = append(orders, fmt.Sprintf("_fts_rank.rank %s", dir))
+			} else {
+				orders = append(orders, fmt.Sprintf("%s %s", quoteIdentifier(o.Column), dir))
+			}
 		}
 		sb.WriteString(strings.Join(orders, ", "))
 	}

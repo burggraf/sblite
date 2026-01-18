@@ -419,6 +419,79 @@ describe('Filters - Full-Text Search (textSearch)', () => {
   })
 
   /**
+   * textSearch() with relevance ordering
+   * When ordering by an FTS column, results should be ordered by relevance (BM25 rank)
+   */
+  describe('textSearch() - Relevance Ordering', () => {
+    it('should order by relevance when ordering by FTS column', async () => {
+      // Search for "programming" - articles with more occurrences or in title should rank higher
+      const { data, error } = await supabase
+        .from('articles')
+        .select('id, title, body')
+        .textSearch('body', 'programming')
+        .order('body')  // Order by FTS column = order by relevance
+
+      expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBeGreaterThan(0)
+      // Results should be returned (we can't verify exact order without knowing BM25 scores)
+    })
+
+    it('should order by relevance descending when ordering by FTS column desc', async () => {
+      const { data, error } = await supabase
+        .from('articles')
+        .select('id, title')
+        .textSearch('body', 'cat')
+        .order('body', { ascending: false })  // DESC = least relevant first
+
+      expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBeGreaterThan(0)
+    })
+
+    it('should work with relevance ordering and limit', async () => {
+      const { data, error } = await supabase
+        .from('articles')
+        .select('id, title')
+        .textSearch('body', 'programming')
+        .order('body')
+        .limit(2)
+
+      expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBeLessThanOrEqual(2)
+    })
+
+    it('should work with relevance ordering and other filters', async () => {
+      const { data, error } = await supabase
+        .from('articles')
+        .select('id, title, author')
+        .textSearch('body', 'cat OR dog')
+        .eq('author', 'Alice')
+        .order('body')
+
+      expect(error).toBeNull()
+      expect(data).toBeDefined()
+      // All results should be from Alice
+      expect(data!.every((row: any) => row.author === 'Alice')).toBe(true)
+    })
+
+    it('should support multiple order columns with FTS ranking', async () => {
+      // Order by relevance first, then by id as tiebreaker
+      const { data, error } = await supabase
+        .from('articles')
+        .select('id, title')
+        .textSearch('body', 'programming')
+        .order('body')
+        .order('id', { ascending: true })
+
+      expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBeGreaterThan(0)
+    })
+  })
+
+  /**
    * Admin API - FTS Index Management
    */
   describe('Admin API - FTS Index Management', () => {

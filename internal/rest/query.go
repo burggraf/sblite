@@ -42,8 +42,11 @@ type RelationModifiers struct {
 
 // FTSCondition represents a pre-built FTS condition with its SQL and arguments
 type FTSCondition struct {
-	SQL  string
-	Args []any
+	SQL      string
+	Args     []any
+	Column   string // The column/index name used in the FTS filter (for ranking detection)
+	FTSTable string // The FTS virtual table name (for JOIN-based ranking)
+	FTSQuery string // The converted FTS5 query (for ranking queries)
 }
 
 type Query struct {

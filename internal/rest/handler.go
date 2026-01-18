@@ -307,12 +307,12 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	if len(q.FTSFilters) > 0 {
 		ftsBuilder := NewFTSConditionBuilder(h.fts)
 		for _, ftsFilter := range q.FTSFilters {
-			cond, args, err := ftsBuilder.BuildFTSCondition(q.Table, ftsFilter)
+			ftsCond, err := ftsBuilder.BuildFTSCondition(q.Table, ftsFilter)
 			if err != nil {
 				h.writeError(w, http.StatusBadRequest, "fts_error", err.Error())
 				return
 			}
-			q.FTSConditions = append(q.FTSConditions, FTSCondition{SQL: cond, Args: args})
+			q.FTSConditions = append(q.FTSConditions, ftsCond)
 		}
 	}
 
