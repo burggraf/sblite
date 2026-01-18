@@ -143,6 +143,8 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 		s.storageHandler.SetRLSEnforcer(rlsService, rlsEnforcer)
 		// Pass JWT secret for signed URL generation
 		s.storageHandler.SetJWTSecret(cfg.JWTSecret)
+		// Set storage service on dashboard handler for management UI
+		s.dashboardHandler.SetStorageService(storageService)
 	} else {
 		log.Warn("failed to initialize storage service", "error", err.Error())
 	}

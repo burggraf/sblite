@@ -8,3 +8,4 @@ playwright-report/
 *.db-wal
 sblite
 pnpm-lock.yaml
+storage/

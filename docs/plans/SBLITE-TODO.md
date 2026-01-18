@@ -4,6 +4,35 @@ This document tracks main app features that haven't been implemented yet. Refere
 
 ## Major Features
 
+### Vector Search (pgvector-compatible)
+AI/ML similarity search for embeddings, RAG applications, and recommendations.
+
+```javascript
+// Client usage
+const { data } = await supabase.rpc('vector_search', {
+  table_name: 'documents',
+  embedding_column: 'embedding',
+  query_embedding: [0.1, 0.2, ...],
+  match_count: 10,
+  match_threshold: 0.7
+});
+```
+
+**Implementation approach:**
+- Store vectors as JSON arrays in TEXT columns
+- New `vector(n)` type in type system for validation/export
+- Built-in RPC functions (`vector_search`, `vector_match`)
+- Distance metrics: cosine, L2, dot product
+- Brute force search initially, optional HNSW index for performance
+- Export generates pgvector DDL and data conversion
+
+**Complexity:** Medium-Large
+**Priority:** Medium (enables AI/ML use cases)
+
+See `docs/plans/2026-01-18-vector-search-design.md` for full design.
+
+---
+
 ### Realtime Subscriptions
 WebSocket-based real-time updates when data changes. Core Supabase feature for reactive apps.
 
@@ -53,7 +82,7 @@ See `docs/STORAGE.md` for documentation.
 
 ---
 
-### Edge Functions
+### ~~Edge Functions~~ ✅ COMPLETE
 Serverless TypeScript/JavaScript functions using Deno runtime. Enables custom backend logic.
 
 ```javascript
@@ -61,19 +90,16 @@ Serverless TypeScript/JavaScript functions using Deno runtime. Enables custom ba
 supabase.functions.invoke('hello-world', { body: { name: 'World' } })
 ```
 
-**Implementation approach:**
-- Use Supabase's open-source Edge Runtime (separate binary, auto-downloaded)
-- sblite proxies `/functions/v1/*` to edge-runtime process
-- Process management (start/stop/health checks) handled by sblite
-- Secrets stored encrypted in SQLite, injected as env vars
-- Dashboard UI for function management and testing
+**Implemented:**
+- Supabase Edge Runtime integration (auto-downloaded binary)
+- HTTP proxy for `/functions/v1/*` endpoints
+- Process management with health checks
+- Encrypted secrets storage with env var injection
+- Per-function JWT verification toggle
+- Dashboard UI for function management
+- CLI commands for function scaffolding
 
-**Key benefit:** Functions migrate to Supabase without modification (same runtime).
-
-**Complexity:** Large
-**Priority:** Medium
-
-See `docs/plans/2026-01-18-edge-functions-design.md` for full design.
+See `docs/edge-functions.md` for documentation.
 
 ---
 
@@ -127,20 +153,20 @@ SMS/WhatsApp OTP authentication.
 
 ---
 
-### Anonymous Sign-In
+### ~~Anonymous Sign-In~~ ✅ COMPLETE
 Allow users to start without credentials, convert later.
 
 ```javascript
 supabase.auth.signInAnonymously()
 ```
 
-**Implementation:**
-- Create user with `is_anonymous` flag
-- No email/password required
-- Allow linking credentials later
+**Implemented:**
+- Create anonymous user with `is_anonymous` flag
+- OAuth-based conversion (link Google/GitHub account)
+- Password-based conversion (set email/password)
+- Automatic identity merging on conversion
 
-**Complexity:** Small
-**Priority:** Low
+See `docs/anonymous-signin.md` for documentation.
 
 ---
 
@@ -161,6 +187,7 @@ TOTP-based second factor.
 
 | Feature | Priority | Effort | Status |
 |---------|----------|--------|--------|
+| Vector search | Medium | Medium-Large | Pending |
 | Realtime subscriptions | Medium | Large | Pending |
 | File storage | Medium | Large | ✅ Complete |
 | Edge functions | Medium | Large | Pending |
