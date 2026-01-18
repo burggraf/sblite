@@ -206,6 +206,13 @@ func (rm *RuntimeManager) ensureBinary() (string, error) {
 		return rm.config.BinaryPath, nil
 	}
 
+	// Check default download location first (where build script installs it)
+	downloader := NewDownloader(DefaultDownloadDir())
+	defaultPath := downloader.BinaryPath()
+	if _, err := os.Stat(defaultPath); err == nil {
+		return defaultPath, nil
+	}
+
 	// Check common locations
 	commonPaths := []string{
 		"./bin/edge-runtime",
@@ -230,7 +237,6 @@ func (rm *RuntimeManager) ensureBinary() (string, error) {
 	}
 
 	// Try to download
-	downloader := NewDownloader(DefaultDownloadDir())
 	path, err := downloader.EnsureBinary()
 	if err != nil {
 		return "", fmt.Errorf("edge runtime not found and download failed: %w", err)
