@@ -151,6 +151,13 @@ CREATE TABLE IF NOT EXISTS texts (
   content TEXT NOT NULL
 );
 
+-- Table with spaces in name (for quoted identifier tests)
+CREATE TABLE IF NOT EXISTS "my table" (
+  id INTEGER PRIMARY KEY,
+  "my column" TEXT NOT NULL,
+  "another column" INTEGER
+);
+
 -- RLS test table (for Row Level Security tests)
 CREATE TABLE IF NOT EXISTS rls_test (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -231,6 +238,11 @@ INSERT OR REPLACE INTO texts (id, content) VALUES
   (1, 'Green eggs and ham are delicious'),
   (2, 'I do not like them Sam I am'),
   (3, 'Would you eat them in a box');
+
+INSERT OR REPLACE INTO "my table" (id, "my column", "another column") VALUES
+  (1, 'first row', 100),
+  (2, 'second row', 200),
+  (3, 'third row', 300);
 `
 
 // Write SQL to temp file and execute
@@ -276,6 +288,7 @@ Test tables created:
    - user_teams (3 rows)
    - texts (3 rows)
    - rls_test (0 rows, with RLS policy)
+   - "my table" (3 rows, for quoted identifier tests)
 
 Ready to run tests!
 `)

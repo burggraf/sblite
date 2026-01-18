@@ -65,24 +65,6 @@ supabase.from('posts').select().textSearch('content', 'search query')
 
 ---
 
-## REST API Gaps
-
-### Quoted Identifiers
-Support column/table names with spaces or reserved words.
-
-```javascript
-supabase.from('my table').select('my column')
-```
-
-**Implementation:**
-- Quote identifiers in SQL generation
-- Handle in query parser
-
-**Complexity:** Small
-**Priority:** Low
-
----
-
 ## Auth API Gaps
 
 ### OAuth Providers
@@ -154,11 +136,9 @@ TOTP-based second factor.
 | Anonymous sign-in | Low | Small | Nice to have |
 | Phone auth | Low | Medium | Requires SMS provider |
 | MFA | Low | Medium | Enterprise feature |
-| Quoted identifiers | Low | Small | Edge case |
 
 ## Notes
 
 - sblite is fully functional for typical use cases (CRUD + auth + RLS)
 - Realtime and Storage are the biggest gaps vs full Supabase
-- Most auth gaps are for enterprise/advanced use cases
-- REST API gaps are edge cases that rarely come up
+- All auth gaps are for enterprise/advanced use cases

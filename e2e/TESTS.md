@@ -12,11 +12,12 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 | Category | Total | Passing | Failing | Skipped |
 |----------|-------|---------|---------|---------|
-| REST - SELECT | 16 | 10 | 0 | 6 |
+| REST - SELECT | 17 | 12 | 0 | 5 |
 | REST - INSERT | 9 | 9 | 0 | 0 |
 | REST - UPDATE | 10 | 8 | 0 | 2 |
 | REST - UPSERT | 7 | 5 | 0 | 2 |
 | REST - DELETE | 10 | 10 | 0 | 0 |
+| REST - Quoted Identifiers | 11 | 11 | 0 | 0 |
 | Filters - Basic | 24 | 22 | 0 | 2 |
 | Filters - Advanced | 15 | 0 | 0 | 15 |
 | Filters - Logical | 12 | 10 | 0 | 2 |
@@ -36,7 +37,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Relations | 10 | 10 | 0 | 0 |
 | RLS | 9 | 9 | 0 | 0 |
 | API Key | 12 | 12 | 0 | 0 |
-| **TOTAL** | **288** | **225** | **0** | **62** |
+| **TOTAL** | **300** | **238** | **0** | **61** |
 
 *Last tested: 2026-01-17*
 
@@ -59,7 +60,8 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ⏭️ should fetch related data from referenced tables
 
 **4. Query referenced tables with spaces**
-- ⏭️ should handle table names with spaces using quotes
+- ✅ should handle table names with spaces
+- ✅ should handle column names with spaces in filters
 
 **5. Query referenced tables through join table**
 - ⏭️ should query through many-to-many join tables
@@ -176,6 +178,33 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should delete records using other filters
 - ✅ should handle delete on non-existent table with error
 - ✅ should handle delete with combined filters
+
+---
+
+### `tests/rest/quoted-identifiers.test.ts`
+
+**SELECT**
+- ✅ should select all columns from table with spaces in name
+- ✅ should select specific column with spaces via raw API
+- ✅ should select multiple columns with spaces via raw API
+- ✅ should filter on column with spaces in name
+- ✅ should order by column with spaces in name
+
+**INSERT**
+- ✅ should insert row into table with spaces in name
+
+**UPDATE**
+- ✅ should update column with spaces in name
+
+**DELETE**
+- ✅ should delete from table with spaces filtering on column with spaces
+
+**Edge Cases**
+- ✅ should handle comparison operators on columns with spaces
+- ✅ should handle IN filter on column with spaces
+- ✅ should handle LIKE filter on column with spaces
+
+*Note: supabase-js client strips spaces from column names in `.select()`. Tests use raw API for specific column selection.*
 
 ---
 
@@ -669,6 +698,7 @@ Each test maps to examples from the Supabase JavaScript documentation:
 | update.test.ts | https://supabase.com/docs/reference/javascript/update |
 | upsert.test.ts | https://supabase.com/docs/reference/javascript/upsert |
 | delete.test.ts | https://supabase.com/docs/reference/javascript/delete |
+| quoted-identifiers.test.ts | https://supabase.com/docs/reference/javascript/select#query-referenced-tables-with-spaces |
 | basic-filters.test.ts | https://supabase.com/docs/reference/javascript/using-filters |
 | advanced-filters.test.ts | https://supabase.com/docs/reference/javascript/contains |
 | logical-filters.test.ts | https://supabase.com/docs/reference/javascript/or |

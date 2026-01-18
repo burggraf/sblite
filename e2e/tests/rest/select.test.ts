@@ -103,11 +103,31 @@ describe('REST API - SELECT Operations', () => {
    * Example 4: Query referenced tables with spaces in their names
    * Docs: https://supabase.com/docs/reference/javascript/select#query-referenced-tables-with-spaces
    *
-   * Note: Not implemented in Phase 1 - requires embedded resources
+   * Full test coverage in quoted-identifiers.test.ts
+   * Note: supabase-js strips spaces in .select() but handles them in filters/order.
    */
   describe('4. Query referenced tables with spaces', () => {
-    it.skip('should handle table names with spaces using quotes', async () => {
-      // Not implemented in Phase 1
+    it('should handle table names with spaces', async () => {
+      const { data, error } = await supabase.from('my table').select()
+
+      expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBe(3)
+      // Verify columns with spaces are returned
+      expect(data![0]).toHaveProperty('my column')
+    })
+
+    it('should handle column names with spaces in filters', async () => {
+      // Note: .select('col') strips spaces, but filters work correctly
+      const { data, error } = await supabase
+        .from('my table')
+        .select()
+        .eq('my column', 'first row')
+
+      expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBe(1)
+      expect(data![0]['my column']).toBe('first row')
     })
   })
 

@@ -21,9 +21,9 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 | Selecting specific columns | ✅ | `.select('col1, col2')` |
 | Column renaming | ✅ | `.select('alias:column')` |
 | Query referenced tables | ✅ | Many-to-one via `table(columns)` |
-| Query with spaces in names | ❌ | Requires quoted identifiers |
-| Query through join table | ❌ | Requires many-to-many support |
-| Query same table multiple times | ❌ | Requires aliased joins |
+| Query with spaces in names | ✅ | Tables/columns with spaces via quoted identifiers |
+| Query through join table | ✅ | Many-to-many via junction table detection |
+| Query same table multiple times | ✅ | Aliased joins with `!hint` syntax |
 | Query nested foreign tables | ✅ | One-to-many via `table(columns)` |
 | Filter through referenced tables | ✅ | `table.column` filter syntax |
 | Query with count | ✅ | `count: 'exact' | 'planned' | 'estimated'` |
