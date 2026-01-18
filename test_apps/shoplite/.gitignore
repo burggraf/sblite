@@ -9,3 +9,4 @@ playwright-report/
 sblite
 pnpm-lock.yaml
 storage/
+functions/
