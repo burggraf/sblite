@@ -64,3 +64,18 @@ func (s *Service) ValidateAPIKey(tokenString string) (role string, err error) {
 func (s *Service) GetJWTSecret() string {
 	return s.jwtSecret
 }
+
+// GenerateAPIKey generates an API key with the given secret and role.
+// This is a standalone function for use outside of a Service context.
+func GenerateAPIKey(secret string, role string) string {
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"role": role,
+		"iss":  "sblite",
+		"iat":  now.Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte(secret))
+	return tokenString
+}

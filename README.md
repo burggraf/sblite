@@ -28,6 +28,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | Row Level Security | :white_check_mark: |
 | Web Dashboard | :white_check_mark: |
 | Full-text search (FTS5) | :white_check_mark: |
+| Edge Functions | :white_check_mark: |
 | Realtime subscriptions | :construction: Planned |
 | File storage | :white_check_mark: |
 
@@ -242,6 +243,7 @@ See [Email System Documentation](docs/EMAIL.md) for detailed configuration and u
 - [Logging System](docs/LOGGING.md) - Logging modes, rotation, database queries, and configuration
 - [Full-Text Search](docs/full-text-search.md) - FTS5 indexing, query types, and Supabase textSearch compatibility
 - [Storage API](docs/STORAGE.md) - File uploads, downloads, buckets, and public access
+- [Edge Functions](docs/edge-functions.md) - Serverless TypeScript/JavaScript functions with secrets and configuration
 
 ### Design & Implementation
 - [Design Document](docs/plans/2026-01-16-supabase-lite-design.md) - Architecture, schema design, and roadmap

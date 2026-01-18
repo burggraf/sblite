@@ -197,6 +197,36 @@ CREATE TABLE IF NOT EXISTS _fts_indexes (
 CREATE INDEX IF NOT EXISTS idx_fts_indexes_table ON _fts_indexes(table_name);
 `
 
+// Edge Functions schema for function configuration, secrets, and metadata
+const functionsSchema = `
+-- Functions configuration (key-value store)
+CREATE TABLE IF NOT EXISTS _functions_config (
+    key           TEXT PRIMARY KEY,
+    value         TEXT NOT NULL,
+    updated_at    TEXT DEFAULT (datetime('now'))
+);
+
+-- Functions secrets (encrypted with JWT secret)
+CREATE TABLE IF NOT EXISTS _functions_secrets (
+    name          TEXT PRIMARY KEY,
+    value         TEXT NOT NULL,
+    created_at    TEXT DEFAULT (datetime('now')),
+    updated_at    TEXT DEFAULT (datetime('now'))
+);
+
+-- Per-function metadata and configuration
+CREATE TABLE IF NOT EXISTS _functions_metadata (
+    name          TEXT PRIMARY KEY,
+    verify_jwt    INTEGER DEFAULT 1,
+    memory_mb     INTEGER,
+    timeout_ms    INTEGER,
+    import_map    TEXT,
+    env_vars      TEXT DEFAULT '{}' CHECK (json_valid(env_vars)),
+    created_at    TEXT DEFAULT (datetime('now')),
+    updated_at    TEXT DEFAULT (datetime('now'))
+);
+`
+
 // Storage schema for Supabase-compatible file storage
 // Based on https://supabase.com/docs/guides/storage/schema/design
 const storageSchema = `
@@ -295,6 +325,22 @@ datetime('now'));
 `
 
 func (db *DB) RunMigrations() error {
+	// First, check if auth_users exists and add is_anonymous column if missing
+	// This handles migration from older databases that don't have this column
+	var hasIsAnonymous int
+	row := db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('auth_users')
+		WHERE name = 'is_anonymous'
+	`)
+	if err := row.Scan(&hasIsAnonymous); err == nil && hasIsAnonymous == 0 {
+		// Table exists but column doesn't - add it
+		var tableExists int
+		row := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='auth_users'`)
+		if err := row.Scan(&tableExists); err == nil && tableExists > 0 {
+			_, _ = db.Exec(`ALTER TABLE auth_users ADD COLUMN is_anonymous INTEGER DEFAULT 0`)
+		}
+	}
+
 	_, err := db.Exec(authSchema)
 	if err != nil {
 		return fmt.Errorf("failed to run auth migrations: %w", err)
@@ -354,6 +400,11 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(`INSERT OR IGNORE INTO _rls_tables (table_name, enabled) VALUES ('storage_objects', 1)`)
 	if err != nil {
 		return fmt.Errorf("failed to enable RLS on storage_objects: %w", err)
+	}
+
+	_, err = db.Exec(functionsSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run functions schema migration: %w", err)
 	}
 
 	return nil

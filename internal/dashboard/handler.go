@@ -22,6 +22,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/markb/sblite/internal/fts"
+	"github.com/markb/sblite/internal/functions"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -32,16 +33,17 @@ const sessionCookieName = "_sblite_session"
 
 // Handler serves the dashboard UI and API.
 type Handler struct {
-	db              *sql.DB
-	store           *Store
-	auth            *Auth
-	sessions        *SessionManager
-	fts             *fts.Manager
-	migrationsDir   string
-	startTime       time.Time
-	serverConfig    *ServerConfig
-	jwtSecret       string
-	oauthReloadFunc func()
+	db               *sql.DB
+	store            *Store
+	auth             *Auth
+	sessions         *SessionManager
+	fts              *fts.Manager
+	functionsService *functions.Service
+	migrationsDir    string
+	startTime        time.Time
+	serverConfig     *ServerConfig
+	jwtSecret        string
+	oauthReloadFunc  func()
 }
 
 // ServerConfig holds server configuration for display in settings.
@@ -83,6 +85,11 @@ func (h *Handler) SetJWTSecret(secret string) {
 // SetOAuthReloadFunc sets the callback function to be called when OAuth settings change.
 func (h *Handler) SetOAuthReloadFunc(f func()) {
 	h.oauthReloadFunc = f
+}
+
+// SetFunctionsService sets the functions service for the handler.
+func (h *Handler) SetFunctionsService(svc *functions.Service) {
+	h.functionsService = svc
 }
 
 // RegisterRoutes registers the dashboard routes.
@@ -201,6 +208,26 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Route("/apikeys", func(r chi.Router) {
 			r.Use(h.requireAuth)
 			r.Get("/", h.handleGetAPIKeys)
+		})
+
+		// Functions management routes (require auth)
+		r.Route("/functions", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/", h.handleListFunctions)
+			r.Get("/status", h.handleGetFunctionsStatus)
+			r.Post("/{name}", h.handleCreateFunction)
+			r.Get("/{name}", h.handleGetFunction)
+			r.Delete("/{name}", h.handleDeleteFunction)
+			r.Get("/{name}/config", h.handleGetFunctionConfig)
+			r.Patch("/{name}/config", h.handleUpdateFunctionConfig)
+		})
+
+		// Secrets management routes (require auth)
+		r.Route("/secrets", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/", h.handleListSecrets)
+			r.Post("/", h.handleSetSecret)
+			r.Delete("/{name}", h.handleDeleteSecret)
 		})
 	})
 
@@ -3294,5 +3321,352 @@ func (h *Handler) handleTestFTSSearch(w http.ResponseWriter, r *http.Request) {
 		"index":       index,
 		"fts_query":   ftsQuery,
 		"query_type":  req.QueryType,
+	})
+}
+
+// ============================================================
+// Functions Management Handlers
+// ============================================================
+
+// handleListFunctions returns a list of all edge functions.
+func (h *Handler) handleListFunctions(w http.ResponseWriter, r *http.Request) {
+	if h.functionsService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"functions": []interface{}{},
+			"enabled":   false,
+			"message":   "Edge functions are not enabled. Start the server with --functions flag.",
+		})
+		return
+	}
+
+	funcs, err := h.functionsService.ListFunctions()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Enrich with metadata
+	for i := range funcs {
+		meta, err := h.functionsService.GetMetadata(funcs[i].Name)
+		if err == nil {
+			funcs[i].VerifyJWT = meta.VerifyJWT
+		} else {
+			funcs[i].VerifyJWT = true // Default
+		}
+
+		if h.functionsService.IsRunning() {
+			funcs[i].Status = "ready"
+		} else {
+			funcs[i].Status = "unavailable"
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"functions": funcs,
+		"enabled":   true,
+	})
+}
+
+// handleGetFunctionsStatus returns the status of the edge runtime.
+func (h *Handler) handleGetFunctionsStatus(w http.ResponseWriter, r *http.Request) {
+	if h.functionsService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"enabled":       false,
+			"status":        "disabled",
+			"runtime_port":  0,
+			"functions_dir": "",
+		})
+		return
+	}
+
+	status := "stopped"
+	if h.functionsService.IsRunning() {
+		status = "running"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"enabled":       true,
+		"status":        status,
+		"runtime_port":  h.functionsService.RuntimePort(),
+		"functions_dir": h.functionsService.FunctionsDir(),
+	})
+}
+
+// handleGetFunction returns details about a specific function.
+func (h *Handler) handleGetFunction(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if h.functionsService == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Edge functions not enabled"})
+		return
+	}
+
+	fn, err := h.functionsService.GetFunction(name)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Add metadata
+	meta, err := h.functionsService.GetMetadata(name)
+	if err == nil {
+		fn.VerifyJWT = meta.VerifyJWT
+	} else {
+		fn.VerifyJWT = true
+	}
+
+	if h.functionsService.IsRunning() {
+		fn.Status = "ready"
+	} else {
+		fn.Status = "unavailable"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(fn)
+}
+
+// handleCreateFunction creates a new edge function from template.
+func (h *Handler) handleCreateFunction(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if h.functionsService == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Edge functions not enabled"})
+		return
+	}
+
+	// Validate function name
+	if err := functions.ValidateFunctionName(name); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if err := h.functionsService.CreateFunction(name); err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "already exists") {
+			status = http.StatusConflict
+		}
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	fn, _ := h.functionsService.GetFunction(name)
+	w.WriteHeader(http.StatusCreated)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(fn)
+}
+
+// handleDeleteFunction deletes an edge function.
+func (h *Handler) handleDeleteFunction(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if h.functionsService == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Edge functions not enabled"})
+		return
+	}
+
+	if err := h.functionsService.DeleteFunction(name); err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleGetFunctionConfig returns the configuration for a specific function.
+func (h *Handler) handleGetFunctionConfig(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if h.functionsService == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Edge functions not enabled"})
+		return
+	}
+
+	meta, err := h.functionsService.GetMetadata(name)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(meta)
+}
+
+// handleUpdateFunctionConfig updates the configuration for a specific function.
+func (h *Handler) handleUpdateFunctionConfig(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if h.functionsService == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Edge functions not enabled"})
+		return
+	}
+
+	var req struct {
+		VerifyJWT *bool             `json:"verify_jwt"`
+		MemoryMB  *int              `json:"memory_mb"`
+		TimeoutMS *int              `json:"timeout_ms"`
+		ImportMap *string           `json:"import_map"`
+		EnvVars   map[string]string `json:"env_vars"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+		return
+	}
+
+	// Get existing metadata
+	meta, err := h.functionsService.GetMetadata(name)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Update fields if provided
+	if req.VerifyJWT != nil {
+		meta.VerifyJWT = *req.VerifyJWT
+	}
+	if req.MemoryMB != nil {
+		meta.MemoryMB = *req.MemoryMB
+	}
+	if req.TimeoutMS != nil {
+		meta.TimeoutMS = *req.TimeoutMS
+	}
+	if req.ImportMap != nil {
+		meta.ImportMap = *req.ImportMap
+	}
+	if req.EnvVars != nil {
+		meta.EnvVars = req.EnvVars
+	}
+
+	if err := h.functionsService.SetMetadata(meta); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(meta)
+}
+
+// ============================================================
+// Secrets Management Handlers
+// ============================================================
+
+// handleListSecrets returns a list of all secrets (names only, no values).
+func (h *Handler) handleListSecrets(w http.ResponseWriter, r *http.Request) {
+	if h.functionsService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"secrets": []interface{}{},
+			"enabled": false,
+		})
+		return
+	}
+
+	secrets, err := h.functionsService.ListSecrets()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"secrets": secrets,
+		"enabled": true,
+	})
+}
+
+// handleSetSecret creates or updates a secret.
+func (h *Handler) handleSetSecret(w http.ResponseWriter, r *http.Request) {
+	if h.functionsService == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Edge functions not enabled"})
+		return
+	}
+
+	var req struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+		return
+	}
+
+	if req.Name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Secret name is required"})
+		return
+	}
+
+	if req.Value == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Secret value is required"})
+		return
+	}
+
+	if err := h.functionsService.SetSecret(req.Name, req.Value); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"name":    req.Name,
+		"message": "Secret set. Restart edge runtime for changes to take effect.",
+	})
+}
+
+// handleDeleteSecret deletes a secret.
+func (h *Handler) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if h.functionsService == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Edge functions not enabled"})
+		return
+	}
+
+	if err := h.functionsService.DeleteSecret(name); err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"name":    name,
+		"message": "Secret deleted. Restart edge runtime for changes to take effect.",
 	})
 }

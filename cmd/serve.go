@@ -2,13 +2,18 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 
+	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/dashboard"
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
 	"github.com/markb/sblite/internal/server"
@@ -87,6 +92,56 @@ var serveCmd = &cobra.Command{
 		)
 		if mailConfig.Mode == mail.ModeCatch {
 			log.Info("mail UI available", "url", "http://"+addr+"/mail")
+		}
+
+		// Enable edge functions if requested
+		functionsEnabled, _ := cmd.Flags().GetBool("functions")
+		if functionsEnabled {
+			functionsDir, _ := cmd.Flags().GetString("functions-dir")
+			functionsPort, _ := cmd.Flags().GetInt("functions-port")
+
+			// Generate API keys for function environment
+			anonKey := auth.GenerateAPIKey(jwtSecret, "anon")
+			serviceKey := auth.GenerateAPIKey(jwtSecret, "service_role")
+
+			cfg := &functions.Config{
+				FunctionsDir: functionsDir,
+				RuntimePort:  functionsPort,
+				JWTSecret:    jwtSecret,
+				BaseURL:      "http://" + addr,
+				SblitePort:   port,
+				AnonKey:      anonKey,
+				ServiceKey:   serviceKey,
+				DBPath:       dbPath,
+			}
+
+			if err := srv.EnableFunctions(cfg); err != nil {
+				return fmt.Errorf("failed to enable functions: %w", err)
+			}
+
+			// Start edge runtime
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			if err := srv.StartFunctions(ctx); err != nil {
+				log.Warn("failed to start edge runtime", "error", err)
+				log.Info("functions API will return errors until runtime is available")
+			} else {
+				log.Info("edge functions enabled",
+					"functions_api", "http://"+addr+"/functions/v1",
+					"functions_dir", functionsDir,
+				)
+			}
+
+			// Handle graceful shutdown
+			go func() {
+				sigCh := make(chan os.Signal, 1)
+				signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+				<-sigCh
+				log.Info("shutting down...")
+				srv.StopFunctions()
+				cancel()
+			}()
 		}
 
 		return srv.ListenAndServe(addr)
@@ -304,4 +359,9 @@ func init() {
 	serveCmd.Flags().Int("log-max-age", 0, "Max age of logs in days (default: 7)")
 	serveCmd.Flags().Int("log-max-backups", 0, "Max backup files to keep (default: 3)")
 	serveCmd.Flags().StringSlice("log-fields", nil, "DB log fields: source,request_id,user_id,extra")
+
+	// Edge functions flags
+	serveCmd.Flags().Bool("functions", false, "Enable edge functions support")
+	serveCmd.Flags().String("functions-dir", "./functions", "Path to functions directory")
+	serveCmd.Flags().Int("functions-port", 8081, "Internal port for edge runtime")
 }

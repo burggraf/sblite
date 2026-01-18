@@ -30,7 +30,8 @@ sblite/
 │   ├── migrate.go            # `sblite migrate` - export to PostgreSQL
 │   ├── migration.go          # `sblite migration` - manage migrations
 │   ├── db.go                 # `sblite db` - database operations
-│   └── dashboard.go          # `sblite dashboard` - manage dashboard password
+│   ├── dashboard.go          # `sblite dashboard` - manage dashboard password
+│   └── functions.go          # `sblite functions` - edge functions management
 ├── internal/
 │   ├── auth/                 # Authentication service
 │   │   ├── jwt.go            # JWT generation/validation, sessions
@@ -77,6 +78,15 @@ sblite/
 │   │       ├── backend.go    # Backend interface
 │   │       ├── local.go      # Local filesystem backend
 │   │       └── s3.go         # S3-compatible backend (AWS, MinIO, R2)
+│   ├── functions/            # Edge Functions (Supabase-compatible)
+│   │   ├── functions.go      # Service orchestration
+│   │   ├── runtime.go        # Edge runtime process management
+│   │   ├── download.go       # Binary download and verification
+│   │   ├── proxy.go          # HTTP reverse proxy
+│   │   ├── handler.go        # HTTP handlers
+│   │   ├── store.go          # Database operations for config/secrets
+│   │   ├── scaffold.go       # Function templates
+│   │   └── types.go          # Type definitions
 │   ├── log/                  # Logging system
 │   │   ├── logger.go         # Config, initialization
 │   │   ├── console.go        # Console handler
@@ -124,6 +134,15 @@ go test ./...
 # Dashboard management
 ./sblite dashboard setup                      # Set initial dashboard password
 ./sblite dashboard reset-password             # Reset password and clear sessions
+
+# Edge Functions
+./sblite serve --functions                    # Start server with edge functions enabled
+./sblite functions new hello-world            # Create new function from template
+./sblite functions list                       # List all functions
+./sblite functions delete hello-world         # Delete a function
+./sblite functions secrets set API_KEY        # Set a secret (prompts for value)
+./sblite functions secrets list               # List all secrets
+./sblite functions config set-jwt fn disabled # Disable JWT verification for function
 
 # Run E2E tests (requires Node.js 18+)
 cd e2e
@@ -215,6 +234,16 @@ npm test         # Run all tests (server must be running)
 | `/storage/v1/object/copy` | POST | Copy a file |
 | `/storage/v1/object/move` | POST | Move/rename a file |
 
+### Functions API (`/functions/v1`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/functions/v1/{name}` | POST | Invoke a function |
+| `/functions/v1/{name}` | GET | Invoke function with GET method |
+| `/functions/v1/{name}` | PUT | Invoke function with PUT method |
+| `/functions/v1/{name}` | PATCH | Invoke function with PATCH method |
+| `/functions/v1/{name}` | DELETE | Invoke function with DELETE method |
+
 ### Admin API (`/admin/v1`)
 
 | Endpoint | Method | Description |
@@ -279,6 +308,16 @@ Web dashboard accessible at `http://localhost:8080/_`
 | `/_/api/settings/oauth/redirect-urls` | GET | List allowed redirect URLs |
 | `/_/api/settings/oauth/redirect-urls` | POST | Add allowed redirect URL |
 | `/_/api/settings/oauth/redirect-urls` | DELETE | Remove allowed redirect URL |
+| `/_/api/functions` | GET | List all edge functions |
+| `/_/api/functions/status` | GET | Get edge runtime status |
+| `/_/api/functions/{name}` | GET | Get function details |
+| `/_/api/functions/{name}` | POST | Create function |
+| `/_/api/functions/{name}` | DELETE | Delete function |
+| `/_/api/functions/{name}/config` | GET | Get function config |
+| `/_/api/functions/{name}/config` | PATCH | Update function config |
+| `/_/api/secrets` | GET | List all secrets (names only) |
+| `/_/api/secrets` | POST | Set a secret |
+| `/_/api/secrets/{name}` | DELETE | Delete a secret |
 
 ### Query Operators
 
@@ -444,10 +483,13 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - SQL Browser for database queries
 - File storage API (Supabase-compatible, local and S3 backends)
 - Storage RLS policies (storage.filename, storage.foldername, storage.extension helpers)
+- Edge Functions (Supabase-compatible, TypeScript/JavaScript)
+- Functions secrets management (encrypted storage)
+- Per-function JWT verification toggle
+- Full-text search (SQLite FTS5)
 
 ### Planned
 - Realtime subscriptions (WebSocket)
-- Full-text search (SQLite FTS5)
 
 See `docs/plans/SBLITE-TODO.md` for detailed tracking.
 
@@ -511,3 +553,13 @@ See `docs/plans/SBLITE-TODO.md` for detailed tracking.
 2. Register route in `RegisterRoutes()` function in same file
 3. Add E2E test in `e2e/tests/storage/`
 4. Update `docs/STORAGE.md` with new endpoint documentation
+
+### Adding a new edge function feature
+
+1. Modify types in `internal/functions/types.go` if needed
+2. Add functionality in appropriate file (`functions.go`, `runtime.go`, `store.go`)
+3. If CLI command needed, add to `cmd/functions.go`
+4. If dashboard API needed, add handler in `internal/dashboard/handler.go`
+5. Add tests in `internal/functions/*_test.go`
+6. Add E2E test in `e2e/tests/functions/`
+7. Update `docs/edge-functions.md` with documentation

@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/dashboard"
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
 	"github.com/markb/sblite/internal/mail/viewer"
@@ -46,6 +48,12 @@ type Server struct {
 	// Storage fields
 	storageService *storage.Service
 	storageHandler *storage.Handler
+
+	// Functions fields
+	jwtSecret        string
+	functionsService *functions.Service
+	functionsHandler *functions.Handler
+	functionsEnabled bool
 }
 
 // ServerConfig holds server configuration.
@@ -90,6 +98,7 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 		restHandler:     rest.NewHandler(database, rlsEnforcer, schemaInstance),
 		mailConfig:      cfg.MailConfig,
 		schema:          schemaInstance,
+		jwtSecret:       cfg.JWTSecret,
 		oauthRegistry:   oauth.NewRegistry(),
 		oauthStateStore: oauth.NewStateStore(database.DB),
 	}
@@ -330,4 +339,58 @@ func (s *Server) setAllowedRedirectURLs(urls []string) {
 // SetBaseURL sets the base URL for constructing callback URLs.
 func (s *Server) SetBaseURL(url string) {
 	s.baseURL = url
+}
+
+// EnableFunctions enables edge functions support.
+func (s *Server) EnableFunctions(cfg *functions.Config) error {
+	if s.functionsEnabled {
+		return nil
+	}
+
+	// Create functions service
+	svc, err := functions.NewService(s.db.DB, cfg)
+	if err != nil {
+		return err
+	}
+
+	s.functionsService = svc
+	s.functionsHandler = functions.NewHandler(svc, s.jwtSecret)
+	s.functionsEnabled = true
+
+	// Set functions service on dashboard handler for management UI
+	s.dashboardHandler.SetFunctionsService(svc)
+
+	// Register routes
+	s.router.Route("/functions/v1", func(r chi.Router) {
+		s.functionsHandler.RegisterRoutes(r)
+	})
+
+	log.Info("edge functions enabled", "functions_dir", cfg.FunctionsDir)
+	return nil
+}
+
+// StartFunctions starts the edge runtime.
+func (s *Server) StartFunctions(ctx context.Context) error {
+	if !s.functionsEnabled || s.functionsService == nil {
+		return nil
+	}
+	return s.functionsService.Start(ctx)
+}
+
+// StopFunctions stops the edge runtime.
+func (s *Server) StopFunctions() error {
+	if !s.functionsEnabled || s.functionsService == nil {
+		return nil
+	}
+	return s.functionsService.Stop()
+}
+
+// FunctionsService returns the functions service if enabled.
+func (s *Server) FunctionsService() *functions.Service {
+	return s.functionsService
+}
+
+// FunctionsEnabled returns true if functions are enabled.
+func (s *Server) FunctionsEnabled() bool {
+	return s.functionsEnabled
 }
