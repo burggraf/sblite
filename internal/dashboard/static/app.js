@@ -5809,7 +5809,9 @@ const App = {
                      ondrop="App.handleDrop(event)">
                     ${loading && !hasMore ? '<div class="loading">Loading...</div>' : ''}
                     ${!loading && allItems.length === 0 ? `
-                        <div class="file-browser-empty">
+                        <div class="file-browser-empty"
+                             ondragover="event.preventDefault(); event.stopPropagation();"
+                             ondrop="App.handleDrop(event)">
                             <p>No files in this ${currentPath ? 'folder' : 'bucket'}</p>
                             <p class="text-muted">Drag and drop files here or click Upload</p>
                         </div>
@@ -5881,8 +5883,11 @@ const App = {
                     } else {
                         const isSelected = selectedFiles.includes(item.name);
                         const isImage = this.isImageFile(item.displayName);
-                        const thumbUrl = isImage && selectedBucket.public
-                            ? `/storage/v1/object/public/${selectedBucket.name}/${item.name}`
+                        // Use public URL for public buckets, dashboard download URL for private
+                        const thumbUrl = isImage
+                            ? (selectedBucket.public
+                                ? `/storage/v1/object/public/${selectedBucket.name}/${item.name}`
+                                : `/_/api/storage/objects/download?bucket=${encodeURIComponent(selectedBucket.name)}&path=${encodeURIComponent(item.name)}`)
                             : null;
 
                         return `
@@ -5901,7 +5906,7 @@ const App = {
                                     <div class="file-icon">${this.getFileIcon(item.displayName)}</div>
                                 `}
                                 <div class="file-name" title="${this.escapeHtml(item.displayName)}">${this.escapeHtml(item.displayName)}</div>
-                                <div class="file-size">${this.formatFileSize(item.metadata?.size || 0)}</div>
+                                <div class="file-size">${this.formatFileSize(item.size || 0)}</div>
                             </div>
                         `;
                     }
@@ -5957,8 +5962,8 @@ const App = {
                                             <span class="file-icon">${this.getFileIcon(item.displayName)}</span>
                                             ${this.escapeHtml(item.displayName)}
                                         </td>
-                                        <td class="col-size">${this.formatFileSize(item.metadata?.size || 0)}</td>
-                                        <td class="col-type">${this.escapeHtml(item.metadata?.mimetype || '-')}</td>
+                                        <td class="col-size">${this.formatFileSize(item.size || 0)}</td>
+                                        <td class="col-type">${this.escapeHtml(item.mime_type || '-')}</td>
                                         <td class="col-modified">${item.updated_at ? new Date(item.updated_at).toLocaleDateString() : '-'}</td>
                                     </tr>
                                 `;
