@@ -188,7 +188,18 @@ func (h *DashboardHandler) handleGetFunction(w http.ResponseWriter, r *http.Requ
 func (h *DashboardHandler) handleCreateFunction(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	if err := h.service.CreateFunction(name); err != nil {
+	// Parse request body for template type
+	var req struct {
+		Template string `json:"template"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.Template = "default"
+	}
+	if req.Template == "" {
+		req.Template = "default"
+	}
+
+	if err := h.service.CreateFunction(name, req.Template); err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "already exists") {
 			status = http.StatusConflict

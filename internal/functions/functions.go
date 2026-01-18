@@ -264,7 +264,7 @@ func (s *Service) GetFunction(name string) (*FunctionInfo, error) {
 }
 
 // CreateFunction creates a new function from a template.
-func (s *Service) CreateFunction(name string) error {
+func (s *Service) CreateFunction(name string, templateType string) error {
 	path := filepath.Join(s.functionsDir, name)
 
 	if _, err := os.Stat(path); err == nil {
@@ -275,14 +275,15 @@ func (s *Service) CreateFunction(name string) error {
 		return fmt.Errorf("failed to create function directory: %w", err)
 	}
 
-	// Write default template
+	// Write template based on type
 	indexPath := filepath.Join(path, "index.ts")
-	if err := os.WriteFile(indexPath, []byte(defaultFunctionTemplate(name)), 0644); err != nil {
+	templateContent := GetTemplate(TemplateType(templateType), name)
+	if err := os.WriteFile(indexPath, []byte(templateContent), 0644); err != nil {
 		os.RemoveAll(path)
 		return fmt.Errorf("failed to write function template: %w", err)
 	}
 
-	log.Info("created function", "name", name, "path", path)
+	log.Info("created function", "name", name, "path", path, "template", templateType)
 	return nil
 }
 

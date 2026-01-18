@@ -3504,7 +3504,19 @@ func (h *Handler) handleCreateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.functionsService.CreateFunction(name); err != nil {
+	// Parse request body for template type
+	var req struct {
+		Template string `json:"template"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// Default to "default" template if no body
+		req.Template = "default"
+	}
+	if req.Template == "" {
+		req.Template = "default"
+	}
+
+	if err := h.functionsService.CreateFunction(name, req.Template); err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "already exists") {
 			status = http.StatusConflict

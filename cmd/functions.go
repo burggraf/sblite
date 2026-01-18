@@ -53,18 +53,12 @@ var functionsNewCmd = &cobra.Command{
 			return fmt.Errorf("function %q already exists", name)
 		}
 
-		// Create function directory
-		if err := svc.CreateFunction(name); err != nil {
-			return err
+		// Create function with specified template
+		if template == "" {
+			template = "default"
 		}
-
-		// If a specific template was requested, overwrite with that template
-		if template != "" && template != "default" {
-			tmpl := functions.GetTemplate(functions.TemplateType(template), name)
-			path := fmt.Sprintf("%s/%s/index.ts", functionsDir, name)
-			if err := os.WriteFile(path, []byte(tmpl), 0644); err != nil {
-				return fmt.Errorf("failed to write template: %w", err)
-			}
+		if err := svc.CreateFunction(name, template); err != nil {
+			return err
 		}
 
 		fmt.Printf("Created function %q in %s/%s\n", name, functionsDir, name)

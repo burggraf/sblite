@@ -170,8 +170,8 @@ func TestServiceCreateFunction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create function
-	if err := svc.CreateFunction("new-func"); err != nil {
+	// Create function with default template
+	if err := svc.CreateFunction("new-func", "default"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -187,7 +187,7 @@ func TestServiceCreateFunction(t *testing.T) {
 	}
 
 	// Creating same function again should fail
-	if err := svc.CreateFunction("new-func"); err == nil {
+	if err := svc.CreateFunction("new-func", "default"); err == nil {
 		t.Error("Creating duplicate function should fail")
 	}
 }
@@ -207,7 +207,7 @@ func TestServiceDeleteFunction(t *testing.T) {
 	}
 
 	// Create function
-	if err := svc.CreateFunction("delete-me"); err != nil {
+	if err := svc.CreateFunction("delete-me", "default"); err != nil {
 		t.Fatal(err)
 	}
 
