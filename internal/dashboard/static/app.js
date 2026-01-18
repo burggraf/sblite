@@ -5856,6 +5856,28 @@ const App = {
                      oncontextmenu="App.showFileContextMenu(event, '${currentPath}', 'file')">
                     <span class="file-icon">${this.getFileIcon(node.name)}</span>
                     <span class="file-name">${this.escapeHtml(node.name)}${isDirty ? ' ●' : ''}</span>
+                </div>
+            `;
+        }
+
+        // Directory
+        const children = node.children || [];
+        return `
+            <div class="file-tree-item dir ${isRoot ? 'root' : ''}">
+                <div class="dir-header" onclick="App.toggleFolder('${currentPath}')"
+                     oncontextmenu="App.showFileContextMenu(event, '${currentPath}', 'dir')">
+                    <span class="expand-icon">${isExpanded ? '▼' : '▶'}</span>
+                    <span class="dir-name">${this.escapeHtml(node.name)}</span>
+                </div>
+                ${isExpanded ? `
+                    <div class="dir-children">
+                        ${children.map(child => this.renderFileTree(child, isRoot ? '' : currentPath)).join('')}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
     // Storage methods
 
     async loadBuckets() {
@@ -6465,20 +6487,6 @@ const App = {
             `;
         }
 
-        // Directory
-        const children = node.children || [];
-        return `
-            <div class="file-tree-item dir ${isRoot ? 'root' : ''}">
-                <div class="dir-header" onclick="App.toggleFolder('${currentPath}')"
-                     oncontextmenu="App.showFileContextMenu(event, '${currentPath}', 'dir')">
-                    <span class="expand-icon">${isExpanded ? '▼' : '▶'}</span>
-                    <span class="dir-name">${this.escapeHtml(node.name)}</span>
-                </div>
-                ${isExpanded ? `
-                    <div class="dir-children">
-                        ${children.map(child => this.renderFileTree(child, isRoot ? '' : currentPath)).join('')}
-                    </div>
-                ` : ''}
         return `
             <div class="modal-header">
                 <h3 title="${this.escapeHtml(fullPath)}">${this.escapeHtml(filename)}</h3>
