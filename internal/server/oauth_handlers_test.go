@@ -3,11 +3,13 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/oauth"
 	"github.com/stretchr/testify/assert"
 )
@@ -391,4 +393,229 @@ func TestCallbackEndpointOAuthErrorWithRedirect(t *testing.T) {
 
 	// Without redirect_to context, returns JSON error
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// Identity list and unlink endpoint tests
+
+func TestGetIdentitiesEndpoint(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user and identity
+	user, err := srv.authService.CreateUserWithOptions("test@example.com", "password123", nil, true)
+	assert.NoError(t, err)
+
+	err = srv.authService.CreateIdentity(&auth.Identity{
+		UserID:     user.ID,
+		Provider:   "google",
+		ProviderID: "google-123",
+	})
+	assert.NoError(t, err)
+
+	// Create access token
+	session, _, err := srv.authService.CreateSession(user)
+	assert.NoError(t, err)
+	accessToken, err := srv.authService.GenerateAccessToken(user, session.ID)
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest("GET", "/auth/v1/user/identities", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Identities []*auth.Identity `json:"identities"`
+	}
+	err = json.NewDecoder(w.Body).Decode(&resp)
+	assert.NoError(t, err)
+	assert.Len(t, resp.Identities, 1)
+	assert.Equal(t, "google", resp.Identities[0].Provider)
+}
+
+func TestGetIdentitiesEndpointNoIdentities(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user without any OAuth identities
+	user, err := srv.authService.CreateUserWithOptions("test@example.com", "password123", nil, true)
+	assert.NoError(t, err)
+
+	// Create access token
+	session, _, err := srv.authService.CreateSession(user)
+	assert.NoError(t, err)
+	accessToken, err := srv.authService.GenerateAccessToken(user, session.ID)
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest("GET", "/auth/v1/user/identities", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Identities []*auth.Identity `json:"identities"`
+	}
+	err = json.NewDecoder(w.Body).Decode(&resp)
+	assert.NoError(t, err)
+	assert.Len(t, resp.Identities, 0)
+}
+
+func TestGetIdentitiesEndpointUnauthorized(t *testing.T) {
+	srv := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/auth/v1/user/identities", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestUnlinkIdentityEndpoint(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user with password (so unlinking OAuth is allowed)
+	user, err := srv.authService.CreateUserWithOptions("test@example.com", "password123", nil, true)
+	assert.NoError(t, err)
+
+	err = srv.authService.CreateIdentity(&auth.Identity{
+		UserID:     user.ID,
+		Provider:   "google",
+		ProviderID: "google-123",
+	})
+	assert.NoError(t, err)
+
+	session, _, err := srv.authService.CreateSession(user)
+	assert.NoError(t, err)
+	accessToken, err := srv.authService.GenerateAccessToken(user, session.ID)
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest("DELETE", "/auth/v1/user/identities/google", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify identity is deleted
+	identities, err := srv.authService.GetIdentitiesByUser(user.ID)
+	assert.NoError(t, err)
+	assert.Len(t, identities, 0)
+}
+
+func TestUnlinkIdentityEndpointWithMultipleIdentities(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create OAuth-only user (no password) but with multiple identities
+	user, err := srv.authService.CreateOAuthUser("test@example.com", "google", nil)
+	assert.NoError(t, err)
+
+	// Create two identities
+	err = srv.authService.CreateIdentity(&auth.Identity{
+		UserID:     user.ID,
+		Provider:   "google",
+		ProviderID: "google-123",
+	})
+	assert.NoError(t, err)
+
+	err = srv.authService.CreateIdentity(&auth.Identity{
+		UserID:     user.ID,
+		Provider:   "github",
+		ProviderID: "github-456",
+	})
+	assert.NoError(t, err)
+
+	// Add github provider to app_metadata
+	srv.authService.AddProviderToUser(user.ID, "github")
+
+	session, _, err := srv.authService.CreateSession(user)
+	assert.NoError(t, err)
+	accessToken, err := srv.authService.GenerateAccessToken(user, session.ID)
+	assert.NoError(t, err)
+
+	// Unlinking one identity should be allowed since there's another
+	req := httptest.NewRequest("DELETE", "/auth/v1/user/identities/google", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify only github identity remains
+	identities, err := srv.authService.GetIdentitiesByUser(user.ID)
+	assert.NoError(t, err)
+	assert.Len(t, identities, 1)
+	assert.Equal(t, "github", identities[0].Provider)
+}
+
+func TestUnlinkLastIdentityBlocked(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create OAuth-only user (no password)
+	user, err := srv.authService.CreateOAuthUser("test@example.com", "google", nil)
+	assert.NoError(t, err)
+
+	err = srv.authService.CreateIdentity(&auth.Identity{
+		UserID:     user.ID,
+		Provider:   "google",
+		ProviderID: "google-123",
+	})
+	assert.NoError(t, err)
+
+	session, _, err := srv.authService.CreateSession(user)
+	assert.NoError(t, err)
+	accessToken, err := srv.authService.GenerateAccessToken(user, session.ID)
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest("DELETE", "/auth/v1/user/identities/google", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	// Should be blocked - can't remove last auth method
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// Verify identity still exists
+	identities, err := srv.authService.GetIdentitiesByUser(user.ID)
+	assert.NoError(t, err)
+	assert.Len(t, identities, 1)
+}
+
+func TestUnlinkIdentityNotFound(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user with password
+	user, err := srv.authService.CreateUserWithOptions("test@example.com", "password123", nil, true)
+	assert.NoError(t, err)
+
+	session, _, err := srv.authService.CreateSession(user)
+	assert.NoError(t, err)
+	accessToken, err := srv.authService.GenerateAccessToken(user, session.ID)
+	assert.NoError(t, err)
+
+	// Try to unlink identity that doesn't exist
+	req := httptest.NewRequest("DELETE", "/auth/v1/user/identities/google", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestUnlinkIdentityUnauthorized(t *testing.T) {
+	srv := setupTestServer(t)
+
+	req := httptest.NewRequest("DELETE", "/auth/v1/user/identities/google", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }

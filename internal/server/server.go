@@ -139,6 +139,8 @@ func (s *Server) setupRoutes() {
 			r.Put("/user", s.handleUpdateUser)
 			r.Post("/logout", s.handleLogout)
 			r.Post("/invite", s.handleInvite)
+			r.Get("/user/identities", s.handleGetIdentities)
+			r.Delete("/user/identities/{provider}", s.handleUnlinkIdentity)
 		})
 	})
 

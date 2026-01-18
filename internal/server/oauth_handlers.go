@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/oauth"
 )
@@ -302,4 +303,100 @@ func (s *Server) redirectWithError(w http.ResponseWriter, r *http.Request, redir
 
 	redirectURL := redirectTo + "#" + fragment.Encode()
 	http.Redirect(w, r, redirectURL, http.StatusFound)
+}
+
+// handleGetIdentities returns the user's linked OAuth identities.
+// GET /auth/v1/user/identities
+func (s *Server) handleGetIdentities(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r)
+	if user == nil {
+		s.oauthError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	identities, err := s.authService.GetIdentitiesByUser(user.ID)
+	if err != nil {
+		s.oauthError(w, http.StatusInternalServerError, "failed to get identities")
+		return
+	}
+
+	// Return empty array if no identities (not nil)
+	if identities == nil {
+		identities = []*auth.Identity{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"identities": identities,
+	})
+}
+
+// handleUnlinkIdentity removes an OAuth identity from the user.
+// DELETE /auth/v1/user/identities/{provider}
+func (s *Server) handleUnlinkIdentity(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r)
+	if user == nil {
+		s.oauthError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	provider := chi.URLParam(r, "provider")
+	if provider == "" {
+		s.oauthError(w, http.StatusBadRequest, "provider is required")
+		return
+	}
+
+	// Get current identities
+	identities, err := s.authService.GetIdentitiesByUser(user.ID)
+	if err != nil {
+		s.oauthError(w, http.StatusInternalServerError, "failed to check identities")
+		return
+	}
+
+	// Check if the identity to unlink exists
+	identityExists := false
+	for _, identity := range identities {
+		if identity.Provider == provider {
+			identityExists = true
+			break
+		}
+	}
+
+	if !identityExists {
+		s.oauthError(w, http.StatusNotFound, "identity not found")
+		return
+	}
+
+	// Check if user has other auth methods
+	hasPassword := user.EncryptedPassword != ""
+
+	// Count auth methods (identities count includes the one being removed)
+	authMethodCount := len(identities)
+	if hasPassword {
+		authMethodCount++
+	}
+
+	// Check if this is the last auth method (would leave with 0 methods after removal)
+	if authMethodCount <= 1 {
+		s.oauthError(w, http.StatusBadRequest, "cannot remove last authentication method")
+		return
+	}
+
+	// Delete the identity
+	if err := s.authService.DeleteIdentity(user.ID, provider); err != nil {
+		if err == auth.ErrIdentityNotFound {
+			s.oauthError(w, http.StatusNotFound, "identity not found")
+			return
+		}
+		s.oauthError(w, http.StatusInternalServerError, "failed to delete identity")
+		return
+	}
+
+	// Remove provider from app_metadata
+	s.authService.RemoveProviderFromUser(user.ID, provider)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "identity unlinked successfully",
+	})
 }

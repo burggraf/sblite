@@ -404,3 +404,61 @@ func (s *Service) AddProviderToUser(userID, provider string) error {
 
 	return nil
 }
+
+// RemoveProviderFromUser removes a provider from the user's app_metadata.providers array.
+func (s *Service) RemoveProviderFromUser(userID, provider string) error {
+	// Get current app_metadata
+	var rawAppMetaData string
+	err := s.db.QueryRow("SELECT raw_app_meta_data FROM auth_users WHERE id = ?", userID).Scan(&rawAppMetaData)
+	if err != nil {
+		return fmt.Errorf("failed to get user app_metadata: %w", err)
+	}
+
+	// Parse existing app_metadata
+	appMeta := map[string]interface{}{}
+	if rawAppMetaData != "" {
+		if err := json.Unmarshal([]byte(rawAppMetaData), &appMeta); err != nil {
+			return fmt.Errorf("failed to parse app_metadata: %w", err)
+		}
+	}
+
+	// Get existing providers array
+	providers := []string{}
+	if existingProviders, ok := appMeta["providers"].([]interface{}); ok {
+		for _, p := range existingProviders {
+			if pStr, ok := p.(string); ok {
+				// Skip the provider we're removing
+				if pStr != provider {
+					providers = append(providers, pStr)
+				}
+			}
+		}
+	}
+
+	// Update providers array
+	appMeta["providers"] = providers
+
+	// If the removed provider was the primary provider, update it
+	if primaryProvider, ok := appMeta["provider"].(string); ok && primaryProvider == provider {
+		if len(providers) > 0 {
+			appMeta["provider"] = providers[0]
+		} else {
+			delete(appMeta, "provider")
+		}
+	}
+
+	// Marshal and update
+	appMetaJSON, err := json.Marshal(appMeta)
+	if err != nil {
+		return fmt.Errorf("failed to marshal app_metadata: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.Exec("UPDATE auth_users SET raw_app_meta_data = ?, updated_at = ? WHERE id = ?",
+		string(appMetaJSON), now, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update app_metadata: %w", err)
+	}
+
+	return nil
+}
