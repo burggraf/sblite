@@ -308,17 +308,21 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse scope from request body (default to "local")
-	var req LogoutRequest
-	if r.Body != nil && r.ContentLength > 0 {
-		json.NewDecoder(r.Body).Decode(&req)
+	// Parse scope from query parameter or request body (default to "local")
+	scope := r.URL.Query().Get("scope")
+	if scope == "" {
+		var req LogoutRequest
+		if r.Body != nil {
+			json.NewDecoder(r.Body).Decode(&req)
+		}
+		scope = req.Scope
 	}
-	if req.Scope == "" {
-		req.Scope = "local"
+	if scope == "" {
+		scope = "local"
 	}
 
 	var err error
-	switch req.Scope {
+	switch scope {
 	case "global":
 		err = s.authService.RevokeAllUserSessions(userID)
 	case "others":

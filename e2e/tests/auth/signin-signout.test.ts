@@ -137,11 +137,14 @@ describe('Auth - Sign In / Sign Out', () => {
      * Example 2: Sign out (current session only)
      */
     describe('2. Sign out current session', () => {
-      it.skip('should sign out only the current session', async () => {
-        // Requires scope: 'local' support
+      it('should sign out only the current session with scope local', async () => {
         const { error } = await supabase.auth.signOut({ scope: 'local' })
 
         expect(error).toBeNull()
+
+        // Verify signed out
+        const { data: sessionData } = await supabase.auth.getSession()
+        expect(sessionData.session).toBeNull()
       })
     })
 
@@ -149,11 +152,72 @@ describe('Auth - Sign In / Sign Out', () => {
      * Example 3: Sign out (other sessions)
      */
     describe('3. Sign out other sessions', () => {
-      it.skip('should sign out all other sessions except current', async () => {
-        // Requires scope: 'others' support
-        const { error } = await supabase.auth.signOut({ scope: 'others' })
+      it('should sign out all other sessions except current', async () => {
+        // Create a second client to simulate another session
+        const supabase2 = createClient(TEST_CONFIG.SBLITE_URL, TEST_CONFIG.SBLITE_ANON_KEY, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        })
 
+        // Sign in on second client
+        const { data: session2 } = await supabase2.auth.signInWithPassword({
+          email: testEmail,
+          password: testPassword,
+        })
+        expect(session2.session).toBeDefined()
+        const refreshToken2 = session2.session?.refresh_token
+
+        // Sign out others from first client (should revoke session2)
+        const { error } = await supabase.auth.signOut({ scope: 'others' })
         expect(error).toBeNull()
+
+        // First session should still be valid
+        const { data: sessionData } = await supabase.auth.getSession()
+        expect(sessionData.session).not.toBeNull()
+
+        // Second session's refresh token should be revoked
+        if (refreshToken2) {
+          const { error: refreshError } = await supabase2.auth.refreshSession({ refresh_token: refreshToken2 })
+          expect(refreshError).not.toBeNull()
+        }
+      })
+    })
+
+    /**
+     * Example 4: Sign out (global - all sessions)
+     */
+    describe('4. Sign out global', () => {
+      it('should sign out all sessions with scope global', async () => {
+        // Create a second client to simulate another session
+        const supabase2 = createClient(TEST_CONFIG.SBLITE_URL, TEST_CONFIG.SBLITE_ANON_KEY, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        })
+
+        // Sign in on second client
+        const { data: session2 } = await supabase2.auth.signInWithPassword({
+          email: testEmail,
+          password: testPassword,
+        })
+        expect(session2.session).toBeDefined()
+        const refreshToken2 = session2.session?.refresh_token
+
+        // Get first session's refresh token before signing out
+        const { data: session1 } = await supabase.auth.getSession()
+        const refreshToken1 = session1.session?.refresh_token
+
+        // Sign out global from first client (should revoke both sessions)
+        const { error } = await supabase.auth.signOut({ scope: 'global' })
+        expect(error).toBeNull()
+
+        // Both sessions should be revoked - try to refresh them
+        if (refreshToken1) {
+          const { error: refreshError1 } = await supabase.auth.refreshSession({ refresh_token: refreshToken1 })
+          expect(refreshError1).not.toBeNull()
+        }
+
+        if (refreshToken2) {
+          const { error: refreshError2 } = await supabase2.auth.refreshSession({ refresh_token: refreshToken2 })
+          expect(refreshError2).not.toBeNull()
+        }
       })
     })
   })
@@ -203,10 +267,11 @@ describe('Auth - Sign In / Sign Out', () => {
  * IMPLEMENTED:
  * - signInWithPassword with email
  * - signOut (all sessions)
+ * - signOut with scope: 'local' (current session only)
+ * - signOut with scope: 'global' (all sessions)
+ * - signOut with scope: 'others' (all except current)
  * - Session returned with access_token, refresh_token, expires_in
  *
  * NOT IMPLEMENTED:
  * - signInWithPassword with phone
- * - signOut with scope: 'local'
- * - signOut with scope: 'others'
  */
