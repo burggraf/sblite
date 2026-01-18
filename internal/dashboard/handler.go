@@ -3694,8 +3694,12 @@ func (h *Handler) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 // handleListBuckets returns a list of all storage buckets.
 func (h *Handler) handleListBuckets(w http.ResponseWriter, r *http.Request) {
 	if h.storageService == nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Storage service not configured"})
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "service_unavailable",
+			"message": "Storage service not configured",
+		})
 		return
 	}
 
@@ -3728,15 +3732,20 @@ func (h *Handler) handleListBuckets(w http.ResponseWriter, r *http.Request) {
 // handleCreateBucket creates a new storage bucket.
 func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request) {
 	if h.storageService == nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Storage service not configured"})
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "service_unavailable",
+			"message": "Storage service not configured",
+		})
 		return
 	}
 
 	var req storage.CreateBucketRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid_request", "message": "Invalid request body"})
 		return
 	}
 
@@ -3754,12 +3763,23 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request) {
 // handleGetBucket returns a specific bucket by ID.
 func (h *Handler) handleGetBucket(w http.ResponseWriter, r *http.Request) {
 	if h.storageService == nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Storage service not configured"})
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "service_unavailable",
+			"message": "Storage service not configured",
+		})
 		return
 	}
 
 	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing_id", "message": "Bucket ID is required"})
+		return
+	}
+
 	bucket, err := h.storageService.GetBucket(id)
 	if err != nil {
 		h.handleStorageError(w, err)
@@ -3773,17 +3793,28 @@ func (h *Handler) handleGetBucket(w http.ResponseWriter, r *http.Request) {
 // handleUpdateBucket updates a bucket's configuration.
 func (h *Handler) handleUpdateBucket(w http.ResponseWriter, r *http.Request) {
 	if h.storageService == nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Storage service not configured"})
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "service_unavailable",
+			"message": "Storage service not configured",
+		})
 		return
 	}
 
 	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing_id", "message": "Bucket ID is required"})
+		return
+	}
 
 	var req storage.UpdateBucketRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid_request", "message": "Invalid request body"})
 		return
 	}
 
@@ -3800,12 +3831,22 @@ func (h *Handler) handleUpdateBucket(w http.ResponseWriter, r *http.Request) {
 // handleDeleteBucket deletes a bucket.
 func (h *Handler) handleDeleteBucket(w http.ResponseWriter, r *http.Request) {
 	if h.storageService == nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Storage service not configured"})
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "service_unavailable",
+			"message": "Storage service not configured",
+		})
 		return
 	}
 
 	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing_id", "message": "Bucket ID is required"})
+		return
+	}
 
 	// Check for force parameter
 	force := r.URL.Query().Get("force") == "true"
@@ -3821,12 +3862,22 @@ func (h *Handler) handleDeleteBucket(w http.ResponseWriter, r *http.Request) {
 // handleEmptyBucket removes all objects from a bucket.
 func (h *Handler) handleEmptyBucket(w http.ResponseWriter, r *http.Request) {
 	if h.storageService == nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Storage service not configured"})
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "service_unavailable",
+			"message": "Storage service not configured",
+		})
 		return
 	}
 
 	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing_id", "message": "Bucket ID is required"})
+		return
+	}
 
 	if err := h.storageService.EmptyBucket(id); err != nil {
 		h.handleStorageError(w, err)
@@ -3839,6 +3890,7 @@ func (h *Handler) handleEmptyBucket(w http.ResponseWriter, r *http.Request) {
 
 // handleStorageError handles storage service errors and returns appropriate HTTP responses.
 func (h *Handler) handleStorageError(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json")
 	if storageErr, ok := err.(*storage.StorageError); ok {
 		w.WriteHeader(storageErr.StatusCode)
 		json.NewEncoder(w).Encode(map[string]string{
@@ -3849,5 +3901,5 @@ func (h *Handler) handleStorageError(w http.ResponseWriter, err error) {
 	}
 
 	w.WriteHeader(http.StatusInternalServerError)
-	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	json.NewEncoder(w).Encode(map[string]string{"error": "internal_error", "message": err.Error()})
 }
