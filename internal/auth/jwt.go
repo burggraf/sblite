@@ -175,3 +175,33 @@ func (s *Service) RevokeSession(sessionID string) error {
 
 	return nil
 }
+
+// RevokeAllUserSessions revokes all sessions for a user (global logout).
+func (s *Service) RevokeAllUserSessions(userID string) error {
+	_, err := s.db.Exec("UPDATE auth_refresh_tokens SET revoked = 1 WHERE user_id = ?", userID)
+	if err != nil {
+		return fmt.Errorf("failed to revoke refresh tokens: %w", err)
+	}
+
+	_, err = s.db.Exec("DELETE FROM auth_sessions WHERE user_id = ?", userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete sessions: %w", err)
+	}
+
+	return nil
+}
+
+// RevokeOtherSessions revokes all sessions for a user except the current one.
+func (s *Service) RevokeOtherSessions(userID, currentSessionID string) error {
+	_, err := s.db.Exec("UPDATE auth_refresh_tokens SET revoked = 1 WHERE user_id = ? AND session_id != ?", userID, currentSessionID)
+	if err != nil {
+		return fmt.Errorf("failed to revoke other refresh tokens: %w", err)
+	}
+
+	_, err = s.db.Exec("DELETE FROM auth_sessions WHERE user_id = ? AND id != ?", userID, currentSessionID)
+	if err != nil {
+		return fmt.Errorf("failed to delete other sessions: %w", err)
+	}
+
+	return nil
+}

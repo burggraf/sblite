@@ -302,3 +302,244 @@ func TestLogoutEndpoint(t *testing.T) {
 		t.Errorf("expected status 204, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestLogoutScopedLocal(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user
+	signupBody := `{"email": "test@example.com", "password": "password123"}`
+	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	// Login twice to create two sessions
+	loginBody := `{"email": "test@example.com", "password": "password123"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var loginResp1 map[string]any
+	json.Unmarshal(w.Body.Bytes(), &loginResp1)
+	token1 := loginResp1["access_token"].(string)
+	refreshToken1 := loginResp1["refresh_token"].(string)
+
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var loginResp2 map[string]any
+	json.Unmarshal(w.Body.Bytes(), &loginResp2)
+	token2 := loginResp2["access_token"].(string)
+	refreshToken2 := loginResp2["refresh_token"].(string)
+
+	// Logout session 1 with scope=local
+	logoutBody := `{"scope": "local"}`
+	req = httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
+	req.Header.Set("Authorization", "Bearer "+token1)
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected status 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Session 1's refresh token should be revoked
+	refreshBody := `{"refresh_token": "` + refreshToken1 + `"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=refresh_token", bytes.NewBufferString(refreshBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected session 1 refresh to fail with 401, got %d", w.Code)
+	}
+
+	// Session 2 should still work
+	refreshBody = `{"refresh_token": "` + refreshToken2 + `"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=refresh_token", bytes.NewBufferString(refreshBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected session 2 refresh to succeed with 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Session 2's access token should still work
+	req = httptest.NewRequest("GET", "/auth/v1/user", nil)
+	req.Header.Set("Authorization", "Bearer "+token2)
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected session 2 to still be valid with 200, got %d", w.Code)
+	}
+}
+
+func TestLogoutScopedGlobal(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user
+	signupBody := `{"email": "test@example.com", "password": "password123"}`
+	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	// Login twice to create two sessions
+	loginBody := `{"email": "test@example.com", "password": "password123"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var loginResp1 map[string]any
+	json.Unmarshal(w.Body.Bytes(), &loginResp1)
+	token1 := loginResp1["access_token"].(string)
+	refreshToken1 := loginResp1["refresh_token"].(string)
+
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var loginResp2 map[string]any
+	json.Unmarshal(w.Body.Bytes(), &loginResp2)
+	refreshToken2 := loginResp2["refresh_token"].(string)
+
+	// Logout with scope=global (should revoke ALL sessions)
+	logoutBody := `{"scope": "global"}`
+	req = httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
+	req.Header.Set("Authorization", "Bearer "+token1)
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected status 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Both refresh tokens should be revoked
+	refreshBody := `{"refresh_token": "` + refreshToken1 + `"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=refresh_token", bytes.NewBufferString(refreshBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected session 1 refresh to fail with 401, got %d", w.Code)
+	}
+
+	refreshBody = `{"refresh_token": "` + refreshToken2 + `"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=refresh_token", bytes.NewBufferString(refreshBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected session 2 refresh to fail with 401, got %d", w.Code)
+	}
+}
+
+func TestLogoutScopedOthers(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user
+	signupBody := `{"email": "test@example.com", "password": "password123"}`
+	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	// Login twice to create two sessions
+	loginBody := `{"email": "test@example.com", "password": "password123"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var loginResp1 map[string]any
+	json.Unmarshal(w.Body.Bytes(), &loginResp1)
+	token1 := loginResp1["access_token"].(string)
+	refreshToken1 := loginResp1["refresh_token"].(string)
+
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var loginResp2 map[string]any
+	json.Unmarshal(w.Body.Bytes(), &loginResp2)
+	refreshToken2 := loginResp2["refresh_token"].(string)
+
+	// Logout with scope=others (should revoke all except current)
+	logoutBody := `{"scope": "others"}`
+	req = httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
+	req.Header.Set("Authorization", "Bearer "+token1)
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected status 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Session 1's refresh token should still work (current session)
+	refreshBody := `{"refresh_token": "` + refreshToken1 + `"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=refresh_token", bytes.NewBufferString(refreshBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected session 1 refresh to succeed with 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Session 2's refresh token should be revoked
+	refreshBody = `{"refresh_token": "` + refreshToken2 + `"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=refresh_token", bytes.NewBufferString(refreshBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected session 2 refresh to fail with 401, got %d", w.Code)
+	}
+}
+
+func TestLogoutInvalidScope(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user and login
+	signupBody := `{"email": "test@example.com", "password": "password123"}`
+	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	loginBody := `{"email": "test@example.com", "password": "password123"}`
+	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var loginResp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &loginResp)
+	token := loginResp["access_token"].(string)
+
+	// Logout with invalid scope
+	logoutBody := `{"scope": "invalid"}`
+	req = httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for invalid scope, got %d: %s", w.Code, w.Body.String())
+	}
+}
