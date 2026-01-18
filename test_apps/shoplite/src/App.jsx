@@ -100,6 +100,13 @@ function App() {
     signOut: async () => {
       const { error } = await supabase.auth.signOut()
       return { error }
+    },
+    resendConfirmation: async (email) => {
+      const { data, error } = await supabase.auth.resend({
+        type: 'signup',
+        email
+      })
+      return { data, error }
     }
   }
 

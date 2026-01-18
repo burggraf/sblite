@@ -243,6 +243,16 @@ func (s *Service) VerifyEmail(token string) (*User, error) {
 	return s.GetUserByID(userID)
 }
 
+// ConfirmEmail directly confirms a user's email by setting email_confirmed_at.
+// This is useful for testing or admin operations.
+func (s *Service) ConfirmEmail(userID string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(`
+		UPDATE auth_users SET email_confirmed_at = ? WHERE id = ?
+	`, now, userID)
+	return err
+}
+
 func (s *Service) GenerateRecoveryToken(email string) (string, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 

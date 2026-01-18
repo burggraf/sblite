@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type SignupRequest struct {
@@ -36,7 +37,11 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.authService.CreateUser(req.Email, req.Password, req.Data)
+	// Check if email confirmation is required
+	requireConfirmation := s.dashboardHandler.GetRequireEmailConfirmation()
+
+	// Create user (auto-confirm only if confirmation not required)
+	user, err := s.authService.CreateUserWithOptions(req.Email, req.Password, req.Data, !requireConfirmation)
 	if err != nil {
 		if strings.Contains(err.Error(), "already exists") {
 			s.writeError(w, http.StatusBadRequest, "user_already_exists", "User already registered")
@@ -46,7 +51,27 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create session and generate tokens
+	if requireConfirmation {
+		// Generate confirmation token and send email
+		token, err := s.authService.GenerateConfirmationToken(user.ID)
+		if err != nil {
+			slog.Error("failed to generate confirmation token", "error", err)
+		} else {
+			s.emailService.SendConfirmation(r.Context(), user.ID, user.Email, token)
+		}
+
+		// Return response indicating confirmation needed (no tokens)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":                          user.ID,
+			"email":                       user.Email,
+			"confirmation_sent_at":        time.Now().UTC().Format(time.RFC3339),
+			"email_confirmation_required": true,
+		})
+		return
+	}
+
+	// Create session and generate tokens (when confirmation not required)
 	session, refreshToken, err := s.authService.CreateSession(user)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to create session")
@@ -134,6 +159,14 @@ func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request) {
 
 	if !s.authService.ValidatePassword(user, req.Password) {
 		s.writeError(w, http.StatusUnauthorized, "invalid_credentials", "Invalid email or password")
+		return
+	}
+
+	// Check if email confirmation is required and user hasn't confirmed
+	requireConfirmation := s.dashboardHandler.GetRequireEmailConfirmation()
+	if requireConfirmation && user.EmailConfirmedAt == nil {
+		s.writeError(w, http.StatusForbidden, "email_not_confirmed",
+			"Email not confirmed. Please check your email for a confirmation link.")
 		return
 	}
 
@@ -441,6 +474,9 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	// mailer_autoconfirm is the inverse of require_email_confirmation
+	requireConfirmation := s.dashboardHandler.GetRequireEmailConfirmation()
+
 	settings := map[string]any{
 		"external": map[string]bool{
 			"email":    true, // Always enabled
@@ -454,7 +490,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"twitch":   false,
 		},
 		"disable_signup":     false,
-		"mailer_autoconfirm": true, // sblite doesn't require email confirmation by default
+		"mailer_autoconfirm": !requireConfirmation,
 		"phone_autoconfirm":  false,
 		"sms_provider":       "",
 	}
@@ -570,7 +606,7 @@ func (s *Server) handleResend(w http.ResponseWriter, r *http.Request) {
 	case "confirmation", "signup":
 		user, err := s.authService.GetUserByEmail(req.Email)
 		if err == nil && user.EmailConfirmedAt == nil {
-			token, _ := s.authService.GenerateConfirmationTokenNew(user.ID)
+			token, _ := s.authService.GenerateConfirmationToken(user.ID)
 			s.emailService.SendConfirmation(r.Context(), user.ID, req.Email, token)
 		}
 	case "recovery":

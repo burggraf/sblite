@@ -156,6 +156,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/oauth/redirect-urls", h.handleGetRedirectURLs)
 			r.Post("/oauth/redirect-urls", h.handleAddRedirectURL)
 			r.Delete("/oauth/redirect-urls", h.handleDeleteRedirectURL)
+			// Auth configuration settings routes
+			r.Get("/auth-config", h.handleGetAuthConfig)
+			r.Patch("/auth-config", h.handlePatchAuthConfig)
 		})
 
 		// Export API routes (require auth)

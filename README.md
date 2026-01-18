@@ -218,6 +218,7 @@ See [Email System Documentation](docs/EMAIL.md) for detailed configuration and u
 ## Documentation
 
 ### Guides
+- [Authentication](docs/AUTH.md) - Email confirmation, password recovery, magic links, and session management
 - [OAuth Authentication](docs/OAUTH.md) - Google and GitHub OAuth setup, API reference, and troubleshooting
 - [Email System](docs/EMAIL.md) - Complete guide to email modes, configuration, and authentication flows
 - [Logging System](docs/LOGGING.md) - Logging modes, rotation, database queries, and configuration

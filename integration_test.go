@@ -53,6 +53,18 @@ func TestFullAuthFlow(t *testing.T) {
 		t.Fatalf("signup failed: %d %s", w.Code, w.Body.String())
 	}
 
+	// Parse signup response to get user ID
+	var signupResp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &signupResp)
+	userID := signupResp["id"].(string)
+
+	// Confirm email directly in database (email confirmation is required by default)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = database.Exec("UPDATE auth_users SET email_confirmed_at = ? WHERE id = ?", now, userID)
+	if err != nil {
+		t.Fatalf("failed to confirm email: %v", err)
+	}
+
 	// 2. Login
 	loginBody := `{"email": "test@example.com", "password": "password123"}`
 	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))

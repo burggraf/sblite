@@ -62,7 +62,7 @@ describe('Auth - Sign Up', () => {
       expect(data.user).toHaveProperty('created_at')
     })
 
-    it('should return session when email confirmation is disabled', async () => {
+    it('should not return session when email confirmation is required (default)', async () => {
       const email = uniqueEmail()
       const { data, error } = await supabase.auth.signUp({
         email,
@@ -70,9 +70,10 @@ describe('Auth - Sign Up', () => {
       })
 
       expect(error).toBeNull()
-      // sblite doesn't require email confirmation by default
-      expect(data.session).toBeDefined()
-      expect(data.session?.access_token).toBeDefined()
+      // sblite requires email confirmation by default (matching Supabase behavior)
+      // Session is null until email is confirmed
+      expect(data.session).toBeNull()
+      expect(data.user).toBeDefined()
     })
 
     it('should reject duplicate email addresses', async () => {
@@ -266,13 +267,13 @@ describe('Auth - Sign Up', () => {
  * IMPLEMENTED:
  * - Email + password signup
  * - User metadata during signup
- * - Session returned on signup (no email confirmation)
+ * - Email confirmation flow (required by default)
+ * - Configurable email confirmation setting
  * - Duplicate email detection
  *
  * NOT IMPLEMENTED:
  * - Phone signup (SMS)
  * - Phone signup (WhatsApp)
  * - Email redirect URL
- * - Email confirmation flow
  * - CAPTCHA verification
  */

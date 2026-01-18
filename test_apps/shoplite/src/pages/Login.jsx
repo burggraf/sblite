@@ -3,25 +3,53 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../App'
 
 function Login() {
-  const { signIn } = useAuth()
+  const { signIn, resendConfirmation } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [needsConfirmation, setNeedsConfirmation] = useState(false)
+  const [resendLoading, setResendLoading] = useState(false)
+  const [resendSuccess, setResendSuccess] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+    setNeedsConfirmation(false)
+    setResendSuccess(false)
     setLoading(true)
 
     const { error } = await signIn(email, password)
 
     if (error) {
-      setError(error.message)
+      // Check if the error is due to unconfirmed email
+      if (error.message?.toLowerCase().includes('not confirmed') ||
+          error.message?.toLowerCase().includes('email_not_confirmed')) {
+        setNeedsConfirmation(true)
+        setError('Your email address has not been confirmed. Please check your inbox for a confirmation link.')
+      } else {
+        setError(error.message)
+      }
       setLoading(false)
     } else {
       navigate('/')
+    }
+  }
+
+  async function handleResendConfirmation() {
+    setResendLoading(true)
+    setResendSuccess(false)
+
+    const { error } = await resendConfirmation(email)
+
+    setResendLoading(false)
+
+    if (error) {
+      setError(`Failed to resend: ${error.message}`)
+    } else {
+      setResendSuccess(true)
+      setError('')
     }
   }
 
@@ -31,6 +59,26 @@ function Login() {
         <h1 className="auth-title">Sign In</h1>
 
         {error && <div className="alert alert-error">{error}</div>}
+
+        {resendSuccess && (
+          <div className="alert alert-success">
+            Confirmation email sent! Please check your inbox.
+          </div>
+        )}
+
+        {needsConfirmation && !resendSuccess && (
+          <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={handleResendConfirmation}
+              disabled={resendLoading}
+              style={{ marginTop: '0.5rem' }}
+            >
+              {resendLoading ? 'Sending...' : 'Resend Confirmation Email'}
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">

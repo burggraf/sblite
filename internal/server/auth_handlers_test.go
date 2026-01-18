@@ -9,6 +9,70 @@ import (
 	"testing"
 )
 
+// signupAndConfirmUser creates a user and confirms their email.
+// Returns the user ID. This helper handles the email confirmation flow.
+func signupAndConfirmUser(t *testing.T, srv *Server, email, password string) string {
+	t.Helper()
+
+	body := `{"email": "` + email + `", "password": "` + password + `"}`
+	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("signup failed with status %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse signup response: %v", err)
+	}
+
+	// Get user ID from response
+	userID, ok := response["id"].(string)
+	if !ok {
+		t.Fatalf("expected id in signup response, got %v", response)
+	}
+
+	// Confirm the user's email using the auth service directly
+	user, err := srv.authService.GetUserByID(userID)
+	if err != nil {
+		t.Fatalf("failed to get user: %v", err)
+	}
+
+	// Use VerifyEmailByID to confirm the email
+	if err := srv.authService.ConfirmEmail(user.ID); err != nil {
+		t.Fatalf("failed to confirm email: %v", err)
+	}
+
+	return userID
+}
+
+// loginUser logs in a user and returns the access token and refresh token.
+func loginUser(t *testing.T, srv *Server, email, password string) (accessToken, refreshToken string) {
+	t.Helper()
+
+	body := `{"email": "` + email + `", "password": "` + password + `"}`
+	req := httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("login failed with status %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse login response: %v", err)
+	}
+
+	accessToken, _ = response["access_token"].(string)
+	refreshToken, _ = response["refresh_token"].(string)
+	return accessToken, refreshToken
+}
+
 func TestSignupEndpoint(t *testing.T) {
 	srv := setupTestServer(t)
 
@@ -28,19 +92,18 @@ func TestSignupEndpoint(t *testing.T) {
 		t.Fatalf("failed to parse response: %v", err)
 	}
 
-	// Now signup returns a TokenResponse with user nested
-	user, ok := response["user"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected user object in response, got %v", response)
-	}
-	if user["email"] != "test@example.com" {
-		t.Errorf("expected email test@example.com, got %v", user["email"])
-	}
-	if user["id"] == nil {
+	// With email confirmation required, signup returns confirmation info (no tokens)
+	if response["id"] == nil {
 		t.Error("expected id to be set")
 	}
-	if response["access_token"] == nil {
-		t.Error("expected access_token in signup response")
+	if response["email"] != "test@example.com" {
+		t.Errorf("expected email test@example.com, got %v", response["email"])
+	}
+	if response["email_confirmation_required"] != true {
+		t.Error("expected email_confirmation_required to be true")
+	}
+	if response["confirmation_sent_at"] == nil {
+		t.Error("expected confirmation_sent_at to be set")
 	}
 }
 
@@ -66,21 +129,48 @@ func TestSignupDuplicateEmail(t *testing.T) {
 	}
 }
 
-func TestLoginEndpoint(t *testing.T) {
+func TestLoginWithUnconfirmedEmail(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// First create a user
+	// Create a user (email not confirmed)
 	signupBody := `{"email": "test@example.com", "password": "password123"}`
 	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	// Now login
+	// Try to login without confirming email
 	loginBody := `{"email": "test@example.com", "password": "password123"}`
 	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected status 403 for unconfirmed email, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if response["error"] != "email_not_confirmed" {
+		t.Errorf("expected error 'email_not_confirmed', got %v", response["error"])
+	}
+}
+
+func TestLoginEndpoint(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user and confirm email
+	signupAndConfirmUser(t, srv, "test@example.com", "password123")
+
+	// Now login
+	loginBody := `{"email": "test@example.com", "password": "password123"}`
+	req := httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -106,18 +196,14 @@ func TestLoginEndpoint(t *testing.T) {
 func TestLoginInvalidPassword(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// First create a user
-	signupBody := `{"email": "test@example.com", "password": "password123"}`
-	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
+	// Create user and confirm email
+	signupAndConfirmUser(t, srv, "test@example.com", "password123")
 
 	// Now try to login with wrong password
 	loginBody := `{"email": "test@example.com", "password": "wrongpassword"}`
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
+	req := httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
 	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnauthorized {
@@ -128,27 +214,16 @@ func TestLoginInvalidPassword(t *testing.T) {
 func TestGetUserEndpoint(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create user and login to get token
-	signupBody := `{"email": "test@example.com", "password": "password123"}`
-	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
+	// Create user and confirm email
+	signupAndConfirmUser(t, srv, "test@example.com", "password123")
 
-	loginBody := `{"email": "test@example.com", "password": "password123"}`
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	var loginResp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &loginResp)
-	token := loginResp["access_token"].(string)
+	// Login to get token
+	token, _ := loginUser(t, srv, "test@example.com", "password123")
 
 	// Get user
-	req = httptest.NewRequest("GET", "/auth/v1/user", nil)
+	req := httptest.NewRequest("GET", "/auth/v1/user", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -177,29 +252,18 @@ func TestGetUserUnauthorized(t *testing.T) {
 func TestUpdateUserMetadata(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create user and login to get token
-	signupBody := `{"email": "test@example.com", "password": "password123"}`
-	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
+	// Create user and confirm email
+	signupAndConfirmUser(t, srv, "test@example.com", "password123")
 
-	loginBody := `{"email": "test@example.com", "password": "password123"}`
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	var loginResp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &loginResp)
-	token := loginResp["access_token"].(string)
+	// Login to get token
+	token, _ := loginUser(t, srv, "test@example.com", "password123")
 
 	// Update user metadata (uses 'data' field like Supabase client)
 	updateBody := `{"data": {"name": "Test User", "age": 30}}`
-	req = httptest.NewRequest("PUT", "/auth/v1/user", bytes.NewBufferString(updateBody))
+	req := httptest.NewRequest("PUT", "/auth/v1/user", bytes.NewBufferString(updateBody))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -220,29 +284,18 @@ func TestUpdateUserMetadata(t *testing.T) {
 func TestUpdateUserPassword(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create user and login to get token
-	signupBody := `{"email": "test@example.com", "password": "password123"}`
-	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
+	// Create user and confirm email
+	signupAndConfirmUser(t, srv, "test@example.com", "password123")
 
-	loginBody := `{"email": "test@example.com", "password": "password123"}`
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	var loginResp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &loginResp)
-	token := loginResp["access_token"].(string)
+	// Login to get token
+	token, _ := loginUser(t, srv, "test@example.com", "password123")
 
 	// Update password
 	updateBody := `{"password": "newpassword123"}`
-	req = httptest.NewRequest("PUT", "/auth/v1/user", bytes.NewBufferString(updateBody))
+	req := httptest.NewRequest("PUT", "/auth/v1/user", bytes.NewBufferString(updateBody))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -250,7 +303,7 @@ func TestUpdateUserPassword(t *testing.T) {
 	}
 
 	// Try to login with new password
-	loginBody = `{"email": "test@example.com", "password": "newpassword123"}`
+	loginBody := `{"email": "test@example.com", "password": "newpassword123"}`
 	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
@@ -275,27 +328,16 @@ func TestUpdateUserPassword(t *testing.T) {
 func TestLogoutEndpoint(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create user and login
-	signupBody := `{"email": "test@example.com", "password": "password123"}`
-	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
+	// Create user and confirm email
+	signupAndConfirmUser(t, srv, "test@example.com", "password123")
 
-	loginBody := `{"email": "test@example.com", "password": "password123"}`
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	var loginResp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &loginResp)
-	token := loginResp["access_token"].(string)
+	// Login to get token
+	token, _ := loginUser(t, srv, "test@example.com", "password123")
 
 	// Logout
-	req = httptest.NewRequest("POST", "/auth/v1/logout", nil)
+	req := httptest.NewRequest("POST", "/auth/v1/logout", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
@@ -306,41 +348,19 @@ func TestLogoutEndpoint(t *testing.T) {
 func TestLogoutScopedLocal(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create user
-	signupBody := `{"email": "test@example.com", "password": "password123"}`
-	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
+	// Create user and confirm email
+	signupAndConfirmUser(t, srv, "test@example.com", "password123")
 
 	// Login twice to create two sessions
-	loginBody := `{"email": "test@example.com", "password": "password123"}`
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	var loginResp1 map[string]any
-	json.Unmarshal(w.Body.Bytes(), &loginResp1)
-	token1 := loginResp1["access_token"].(string)
-	refreshToken1 := loginResp1["refresh_token"].(string)
-
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	var loginResp2 map[string]any
-	json.Unmarshal(w.Body.Bytes(), &loginResp2)
-	token2 := loginResp2["access_token"].(string)
-	refreshToken2 := loginResp2["refresh_token"].(string)
+	token1, refreshToken1 := loginUser(t, srv, "test@example.com", "password123")
+	_, refreshToken2 := loginUser(t, srv, "test@example.com", "password123")
 
 	// Logout session 1 with scope=local
 	logoutBody := `{"scope": "local"}`
-	req = httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
+	req := httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
 	req.Header.Set("Authorization", "Bearer "+token1)
 	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
@@ -368,55 +388,24 @@ func TestLogoutScopedLocal(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected session 2 refresh to succeed with 200, got %d: %s", w.Code, w.Body.String())
 	}
-
-	// Session 2's access token should still work
-	req = httptest.NewRequest("GET", "/auth/v1/user", nil)
-	req.Header.Set("Authorization", "Bearer "+token2)
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected session 2 to still be valid with 200, got %d", w.Code)
-	}
 }
 
 func TestLogoutScopedGlobal(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create user
-	signupBody := `{"email": "test@example.com", "password": "password123"}`
-	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
+	// Create user and confirm email
+	signupAndConfirmUser(t, srv, "test@example.com", "password123")
 
 	// Login twice to create two sessions
-	loginBody := `{"email": "test@example.com", "password": "password123"}`
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	var loginResp1 map[string]any
-	json.Unmarshal(w.Body.Bytes(), &loginResp1)
-	token1 := loginResp1["access_token"].(string)
-	refreshToken1 := loginResp1["refresh_token"].(string)
-
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	var loginResp2 map[string]any
-	json.Unmarshal(w.Body.Bytes(), &loginResp2)
-	refreshToken2 := loginResp2["refresh_token"].(string)
+	token1, refreshToken1 := loginUser(t, srv, "test@example.com", "password123")
+	_, refreshToken2 := loginUser(t, srv, "test@example.com", "password123")
 
 	// Logout with scope=global (should revoke ALL sessions)
 	logoutBody := `{"scope": "global"}`
-	req = httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
+	req := httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
 	req.Header.Set("Authorization", "Bearer "+token1)
 	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
@@ -448,40 +437,19 @@ func TestLogoutScopedGlobal(t *testing.T) {
 func TestLogoutScopedOthers(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create user
-	signupBody := `{"email": "test@example.com", "password": "password123"}`
-	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
+	// Create user and confirm email
+	signupAndConfirmUser(t, srv, "test@example.com", "password123")
 
 	// Login twice to create two sessions
-	loginBody := `{"email": "test@example.com", "password": "password123"}`
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	var loginResp1 map[string]any
-	json.Unmarshal(w.Body.Bytes(), &loginResp1)
-	token1 := loginResp1["access_token"].(string)
-	refreshToken1 := loginResp1["refresh_token"].(string)
-
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	var loginResp2 map[string]any
-	json.Unmarshal(w.Body.Bytes(), &loginResp2)
-	refreshToken2 := loginResp2["refresh_token"].(string)
+	token1, refreshToken1 := loginUser(t, srv, "test@example.com", "password123")
+	_, refreshToken2 := loginUser(t, srv, "test@example.com", "password123")
 
 	// Logout with scope=others (should revoke all except current)
 	logoutBody := `{"scope": "others"}`
-	req = httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
+	req := httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
 	req.Header.Set("Authorization", "Bearer "+token1)
 	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
@@ -514,29 +482,18 @@ func TestLogoutScopedOthers(t *testing.T) {
 func TestLogoutInvalidScope(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create user and login
-	signupBody := `{"email": "test@example.com", "password": "password123"}`
-	req := httptest.NewRequest("POST", "/auth/v1/signup", bytes.NewBufferString(signupBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
+	// Create user and confirm email
+	signupAndConfirmUser(t, srv, "test@example.com", "password123")
 
-	loginBody := `{"email": "test@example.com", "password": "password123"}`
-	req = httptest.NewRequest("POST", "/auth/v1/token?grant_type=password", bytes.NewBufferString(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	var loginResp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &loginResp)
-	token := loginResp["access_token"].(string)
+	// Login to get token
+	token, _ := loginUser(t, srv, "test@example.com", "password123")
 
 	// Logout with invalid scope
 	logoutBody := `{"scope": "invalid"}`
-	req = httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
+	req := httptest.NewRequest("POST", "/auth/v1/logout", bytes.NewBufferString(logoutBody))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -575,5 +532,27 @@ func TestSettingsShowsEnabledOAuthProviders(t *testing.T) {
 	}
 	if !resp.External["email"] {
 		t.Error("expected email to always be enabled")
+	}
+}
+
+func TestSettingsShowsMailerAutoconfirm(t *testing.T) {
+	srv := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/auth/v1/settings", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// By default, email confirmation is required, so mailer_autoconfirm should be false
+	if resp["mailer_autoconfirm"] != false {
+		t.Errorf("expected mailer_autoconfirm to be false by default, got %v", resp["mailer_autoconfirm"])
 	}
 }

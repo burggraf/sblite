@@ -45,6 +45,7 @@ const App = {
         settings: {
             server: null,
             auth: null,
+            authConfig: { require_email_confirmation: true },
             templates: [],
             loading: false,
             expandedSections: { server: true, apiKeys: false, auth: false, oauth: false, templates: false, export: false },
@@ -2306,13 +2307,14 @@ const App = {
         this.render();
 
         try {
-            const [serverRes, authRes, templatesRes, oauthRes, redirectUrlsRes, apiKeysRes] = await Promise.all([
+            const [serverRes, authRes, templatesRes, oauthRes, redirectUrlsRes, apiKeysRes, authConfigRes] = await Promise.all([
                 fetch('/_/api/settings/server'),
                 fetch('/_/api/settings/auth'),
                 fetch('/_/api/settings/templates'),
                 fetch('/_/api/settings/oauth'),
                 fetch('/_/api/settings/oauth/redirect-urls'),
-                fetch('/_/api/apikeys')
+                fetch('/_/api/apikeys'),
+                fetch('/_/api/settings/auth-config')
             ]);
 
             if (serverRes.ok) {
@@ -2333,6 +2335,9 @@ const App = {
             }
             if (apiKeysRes.ok) {
                 this.state.settings.apiKeys = await apiKeysRes.json();
+            }
+            if (authConfigRes.ok) {
+                this.state.settings.authConfig = await authConfigRes.json();
             }
         } catch (e) {
             this.state.error = 'Failed to load settings';
@@ -2631,6 +2636,8 @@ const App = {
     },
 
     renderAuthSection(auth, expanded) {
+        const authConfig = this.state.settings.authConfig || { require_email_confirmation: true };
+
         return `
             <div class="settings-section">
                 <div class="section-header" onclick="App.toggleSettingsSection('auth')">
@@ -2639,6 +2646,18 @@ const App = {
                 </div>
                 ${expanded ? `
                     <div class="section-content">
+                        <div class="setting-group">
+                            <label class="setting-toggle">
+                                <input type="checkbox"
+                                       ${authConfig.require_email_confirmation ? 'checked' : ''}
+                                       onchange="App.toggleEmailConfirmation(this.checked)">
+                                <span>Require email confirmation for new signups</span>
+                            </label>
+                            <p class="text-muted" style="margin-top: 4px; margin-left: 24px;">
+                                When enabled, users must verify their email address before signing in.
+                            </p>
+                        </div>
+                        <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border-color);">
                         <div class="info-grid">
                             <div class="info-item">
                                 <label>JWT Secret</label>
@@ -2757,6 +2776,28 @@ const App = {
                 </div>
             </div>
         `;
+    },
+
+    async toggleEmailConfirmation(required) {
+        try {
+            const res = await fetch('/_/api/settings/auth-config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ require_email_confirmation: required })
+            });
+
+            if (res.ok) {
+                this.state.settings.authConfig.require_email_confirmation = required;
+                this.render();
+            } else {
+                const data = await res.json();
+                this.state.error = data.error || 'Failed to update setting';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to update setting';
+            this.render();
+        }
     },
 
     async toggleOAuthProvider(provider, enabled) {
