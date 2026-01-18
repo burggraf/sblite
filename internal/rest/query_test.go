@@ -935,3 +935,190 @@ func TestJSONPathFilter(t *testing.T) {
 		t.Errorf("expected Value '90210', got %q", f.Value)
 	}
 }
+
+func TestParseFTSOperator(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedBaseOp string
+		expectedConfig string
+	}{
+		{
+			name:           "simple fts",
+			input:          "fts",
+			expectedBaseOp: "fts",
+			expectedConfig: "",
+		},
+		{
+			name:           "fts with english config",
+			input:          "fts(english)",
+			expectedBaseOp: "fts",
+			expectedConfig: "english",
+		},
+		{
+			name:           "plfts with german config",
+			input:          "plfts(german)",
+			expectedBaseOp: "plfts",
+			expectedConfig: "german",
+		},
+		{
+			name:           "phfts with spanish config",
+			input:          "phfts(spanish)",
+			expectedBaseOp: "phfts",
+			expectedConfig: "spanish",
+		},
+		{
+			name:           "wfts with simple config",
+			input:          "wfts(simple)",
+			expectedBaseOp: "wfts",
+			expectedConfig: "simple",
+		},
+		{
+			name:           "simple plfts",
+			input:          "plfts",
+			expectedBaseOp: "plfts",
+			expectedConfig: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseOp, config := parseFTSOperator(tt.input)
+			if baseOp != tt.expectedBaseOp {
+				t.Errorf("expected baseOp %q, got %q", tt.expectedBaseOp, baseOp)
+			}
+			if config != tt.expectedConfig {
+				t.Errorf("expected config %q, got %q", tt.expectedConfig, config)
+			}
+		})
+	}
+}
+
+func TestIsFTSOperator(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"fts", "fts", true},
+		{"plfts", "plfts", true},
+		{"phfts", "phfts", true},
+		{"wfts", "wfts", true},
+		{"fts with config", "fts(english)", true},
+		{"plfts with config", "plfts(german)", true},
+		{"phfts with config", "phfts(spanish)", true},
+		{"wfts with config", "wfts(simple)", true},
+		{"unknown operator", "unknown", false},
+		{"eq operator", "eq", false},
+		{"empty string", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsFTSOperator(tt.input)
+			if result != tt.expected {
+				t.Errorf("IsFTSOperator(%q) = %v, expected %v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseFTSFilter(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedColumn string
+		expectedOp     string
+		expectedQuery  string
+		expectedConfig string
+		isNil          bool
+		wantErr        bool
+	}{
+		{
+			name:           "simple fts",
+			input:          "content=fts.programming",
+			expectedColumn: "content",
+			expectedOp:     "fts",
+			expectedQuery:  "programming",
+			expectedConfig: "",
+		},
+		{
+			name:           "fts with config",
+			input:          "content=fts(english).programming",
+			expectedColumn: "content",
+			expectedOp:     "fts",
+			expectedQuery:  "programming",
+			expectedConfig: "english",
+		},
+		{
+			name:           "plfts with config",
+			input:          "body=plfts(german).'fat cat'",
+			expectedColumn: "body",
+			expectedOp:     "plfts",
+			expectedQuery:  "'fat cat'",
+			expectedConfig: "german",
+		},
+		{
+			name:           "phfts with config",
+			input:          "title=phfts(spanish).'hello world'",
+			expectedColumn: "title",
+			expectedOp:     "phfts",
+			expectedQuery:  "'hello world'",
+			expectedConfig: "spanish",
+		},
+		{
+			name:           "wfts with config",
+			input:          "text=wfts(simple).fat or cat",
+			expectedColumn: "text",
+			expectedOp:     "wfts",
+			expectedQuery:  "fat or cat",
+			expectedConfig: "simple",
+		},
+		{
+			name:  "not an FTS filter",
+			input: "status=eq.active",
+			isNil: true,
+		},
+		{
+			name:    "invalid format",
+			input:   "invalid",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter, err := ParseFTSFilter(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.isNil {
+				if filter != nil {
+					t.Errorf("expected nil filter, got %+v", filter)
+				}
+				return
+			}
+			if filter == nil {
+				t.Fatal("expected filter, got nil")
+			}
+			if filter.Column != tt.expectedColumn {
+				t.Errorf("expected Column %q, got %q", tt.expectedColumn, filter.Column)
+			}
+			if filter.Operator != tt.expectedOp {
+				t.Errorf("expected Operator %q, got %q", tt.expectedOp, filter.Operator)
+			}
+			if filter.Query != tt.expectedQuery {
+				t.Errorf("expected Query %q, got %q", tt.expectedQuery, filter.Query)
+			}
+			if filter.Config != tt.expectedConfig {
+				t.Errorf("expected Config %q, got %q", tt.expectedConfig, filter.Config)
+			}
+		})
+	}
+}

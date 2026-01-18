@@ -23,6 +23,7 @@ type FTSFilter struct {
 	Column   string // The FTS index name or column to search
 	Operator string // fts, plfts, phfts, or wfts
 	Query    string // The search query
+	Config   string // Optional text search config (e.g., "english") - ignored for SQLite FTS5
 }
 
 // LogicalFilter groups multiple filters with OR or AND logic
@@ -92,9 +93,29 @@ var ftsOperators = map[string]bool{
 	"wfts":  true, // websearch (websearch_to_tsquery equivalent)
 }
 
-// IsFTSOperator checks if the operator is a full-text search operator
+// IsFTSOperator checks if the operator is a full-text search operator.
+// Handles both simple operators (fts, plfts) and operators with config (fts(english), plfts(english)).
 func IsFTSOperator(op string) bool {
-	return ftsOperators[op]
+	baseOp, _ := parseFTSOperator(op)
+	return ftsOperators[baseOp]
+}
+
+// parseFTSOperator extracts the base operator and optional config from an FTS operator.
+// Examples:
+//   - "fts" -> "fts", ""
+//   - "fts(english)" -> "fts", "english"
+//   - "plfts(german)" -> "plfts", "german"
+func parseFTSOperator(op string) (baseOp, config string) {
+	// Check for config in parentheses: operator(config)
+	if idx := strings.Index(op, "("); idx != -1 {
+		baseOp = op[:idx]
+		// Extract config, removing trailing )
+		if endIdx := strings.Index(op, ")"); endIdx > idx {
+			config = op[idx+1 : endIdx]
+		}
+		return baseOp, config
+	}
+	return op, ""
 }
 
 func ParseFilter(input string) (Filter, error) {
@@ -157,6 +178,7 @@ func ParseFilter(input string) (Filter, error) {
 
 // ParseFTSFilter parses a full-text search filter string.
 // Returns an FTSFilter if the operator is an FTS operator, nil otherwise.
+// Supports both simple operators (fts, plfts) and operators with config (fts(english)).
 func ParseFTSFilter(input string) (*FTSFilter, error) {
 	parts := strings.SplitN(input, "=", 2)
 	if len(parts) != 2 {
@@ -174,14 +196,18 @@ func ParseFTSFilter(input string) (*FTSFilter, error) {
 	operator := opParts[0]
 	query := opParts[1]
 
-	if !IsFTSOperator(operator) {
+	// Parse operator and optional config (e.g., "fts(english)" -> "fts", "english")
+	baseOp, config := parseFTSOperator(operator)
+
+	if !ftsOperators[baseOp] {
 		return nil, nil // Not an FTS filter
 	}
 
 	return &FTSFilter{
 		Column:   column,
-		Operator: operator,
+		Operator: baseOp, // Store the base operator without config
 		Query:    query,
+		Config:   config, // Store config (ignored for SQLite FTS5, but accepted for compatibility)
 	}, nil
 }
 

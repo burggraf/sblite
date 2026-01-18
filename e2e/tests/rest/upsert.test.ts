@@ -115,19 +115,32 @@ describe('REST API - UPSERT Operations', () => {
    *   .select()
    */
   describe('3. Upserting into tables with constraints', () => {
-    it.skip('should use specified column for conflict resolution', async () => {
-      // Requires onConflict option support
-      // This is not standard PostgREST - it's a Supabase client feature
+    it('should use specified column for conflict resolution', async () => {
+      // Test upsert with explicit onConflict column
+      // First insert a record
+      const { error: insertError } = await supabase
+        .from('characters')
+        .upsert({ id: 9005, name: 'Test Character', homeworld: 'Earth' })
 
+      expect(insertError).toBeNull()
+
+      // Now upsert with onConflict=id to update
       const { data, error } = await supabase
-        .from('users')
+        .from('characters')
         .upsert(
-          { id: 9005, handle: 'testuser', display_name: 'Test User' },
-          { onConflict: 'handle' }
+          { id: 9005, name: 'Updated Character', homeworld: 'Mars' },
+          { onConflict: 'id' }
         )
         .select()
 
       expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBe(1)
+      expect(data![0].name).toBe('Updated Character')
+      expect(data![0].homeworld).toBe('Mars')
+
+      // Clean up
+      await supabase.from('characters').delete().eq('id', 9005)
     })
   })
 
@@ -177,8 +190,6 @@ describe('REST API - UPSERT Operations', () => {
  * - Single upsert: .upsert({...})
  * - Upsert with return: .upsert({...}).select()
  * - Bulk upsert: .upsert([{...}, {...}])
- *
- * NOT IMPLEMENTED:
  * - onConflict option for custom conflict columns
- * - ignoreDuplicates option
+ * - ignoreDuplicates option (resolution=ignore-duplicates)
  */

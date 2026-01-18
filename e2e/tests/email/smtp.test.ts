@@ -135,12 +135,7 @@ describe.skipIf(!runSmtpTests)('SMTP Mode', () => {
     })
   })
 
-  /**
-   * User Invite tests are skipped because the current auth middleware
-   * requires a 'sub' claim in the JWT to look up a user, but service_role
-   * keys don't have a user ID. This is a server design limitation.
-   */
-  describe.skip('User Invite via SMTP', () => {
+  describe('User Invite via SMTP', () => {
     it('should send invite email through SMTP', async () => {
       const inviteEmail = uniqueEmail()
 

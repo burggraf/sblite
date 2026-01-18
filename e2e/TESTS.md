@@ -15,11 +15,11 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | REST - SELECT | 17 | 12 | 0 | 5 |
 | REST - INSERT | 9 | 9 | 0 | 0 |
 | REST - UPDATE | 10 | 8 | 0 | 2 |
-| REST - UPSERT | 7 | 5 | 0 | 2 |
+| REST - UPSERT | 7 | 7 | 0 | 0 |
 | REST - DELETE | 10 | 10 | 0 | 0 |
 | REST - Quoted Identifiers | 11 | 11 | 0 | 0 |
-| Filters - Basic | 24 | 22 | 0 | 2 |
-| Filters - Advanced | 15 | 0 | 0 | 15 |
+| Filters - Basic | 24 | 24 | 0 | 0 |
+| Filters - Advanced | 17 | 4 | 0 | 13 |
 | Filters - Logical | 12 | 10 | 0 | 2 |
 | Modifiers | 23 | 20 | 0 | 3 |
 | Modifiers - Count | 12 | 12 | 0 | 0 |
@@ -41,14 +41,14 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | API Key | 12 | 12 | 0 | 0 |
 | Edge Functions | 17 | 14 | 0 | 3 |
 | Edge Functions - Config | 8 | 8 | 0 | 0 |
-| Edge Functions - Dashboard | 9 | 6 | 0 | 3 |
+| Edge Functions - Dashboard | 12 | 12 | 0 | 0 |
 | Storage - Buckets | 13 | 13 | 0 | 0 |
 | Storage - Objects | 19 | 19 | 0 | 0 |
 | Storage - Public Access | 6 | 6 | 0 | 0 |
 | Storage - RLS | 11 | 11 | 0 | 0 |
 | Storage - Signed URLs | 12 | 12 | 0 | 0 |
 | Dashboard - Storage | 16 | 16 | 0 | 0 |
-| **TOTAL** | **452** | **384** | **0** | **67** |
+| **TOTAL** | **457** | **399** | **0** | **57** |
 
 *Last tested: 2026-01-18*
 
@@ -161,7 +161,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should upsert multiple records
 
 **3. Upserting into tables with constraints**
-- ⏭️ should use specified column for conflict resolution
+- ✅ should use specified column for conflict resolution
 
 **Additional UPSERT functionality**
 - ✅ should handle upsert without select (no return)
@@ -226,7 +226,7 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 **Using Filters - General**
 - ✅ should apply filters after select
 - ✅ should chain multiple filters (AND logic)
-- ⏭️ should filter on JSON columns using arrow notation
+- ✅ should filter on JSON columns using arrow notation
 
 **eq() - Equals**
 - ✅ should match rows where column equals value
@@ -259,8 +259,8 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 **is() - Null/Boolean Check**
 - ✅ should match rows where column is null
-- ⏭️ should match rows where boolean column is true
-- ⏭️ should match rows where boolean column is false
+- ✅ should match rows where boolean column is true
+- ✅ should match rows where boolean column is false
 
 **in() - Match Any in Array**
 - ✅ should match rows where column is in array of values
@@ -305,10 +305,10 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ⏭️ should match rows where range overlaps
 
 **textSearch() - Full Text Search**
-- ⏭️ should perform text search with AND logic
-- ⏭️ should perform text search with plain type
-- ⏭️ should perform text search with phrase type
-- ⏭️ should perform websearch-style text search
+- ✅ should perform text search with config parameter
+- ✅ should perform text search with plain type and config
+- ✅ should perform text search with phrase type and config
+- ✅ should perform websearch-style text search with config
 
 ---
 
@@ -825,9 +825,9 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ should delete a secret
 
 **Function Creation API**
-- ⏭️ should create a new function (requires functions directory write access)
-- ⏭️ should reject invalid function names
-- ⏭️ should delete a function
+- ✅ should create a new function
+- ✅ should reject invalid function names
+- ✅ should delete a function
 
 ---
 

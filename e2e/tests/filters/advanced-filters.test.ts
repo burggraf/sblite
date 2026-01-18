@@ -13,18 +13,120 @@
  * https://supabase.com/docs/reference/javascript/textsearch
  */
 
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { TEST_CONFIG } from '../../setup/global-setup'
 
 describe('Filters - Advanced Operators', () => {
   let supabase: SupabaseClient
+  let serviceClient: SupabaseClient
 
-  beforeAll(() => {
+  beforeAll(async () => {
     supabase = createClient(TEST_CONFIG.SBLITE_URL, TEST_CONFIG.SBLITE_ANON_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     })
+
+    serviceClient = createClient(TEST_CONFIG.SBLITE_URL, TEST_CONFIG.SBLITE_SERVICE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
+
+    // Set up tables and FTS indexes for text search tests
+    await setupFTSTables()
   })
+
+  afterAll(async () => {
+    // Clean up FTS tables
+    await cleanupFTSTables()
+  })
+
+  // Helper function to set up FTS tables for text search tests
+  async function setupFTSTables() {
+    // Create texts table if it doesn't exist
+    try {
+      // First try to drop existing FTS indexes
+      await fetch(`${TEST_CONFIG.SBLITE_URL}/admin/v1/tables/texts/fts/content_search`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${TEST_CONFIG.SBLITE_SERVICE_KEY}` },
+      }).catch(() => {})
+
+      await fetch(`${TEST_CONFIG.SBLITE_URL}/admin/v1/tables/texts`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${TEST_CONFIG.SBLITE_SERVICE_KEY}` },
+      }).catch(() => {})
+
+      // Create texts table
+      await fetch(`${TEST_CONFIG.SBLITE_URL}/admin/v1/tables`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${TEST_CONFIG.SBLITE_SERVICE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: 'texts',
+          columns: [
+            { name: 'id', type: 'integer', primary: true },
+            { name: 'content', type: 'text' },
+          ],
+        }),
+      })
+
+      // Insert test data for texts table
+      await serviceClient.from('texts').insert([
+        { id: 1, content: 'I like eggs and ham' },
+        { id: 2, content: 'Green eggs and ham is a book by Dr. Seuss' },
+        { id: 3, content: 'Sam I am, I do not like green eggs and ham' },
+      ])
+
+      // Create FTS index on texts.content
+      await fetch(`${TEST_CONFIG.SBLITE_URL}/admin/v1/tables/texts/fts`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${TEST_CONFIG.SBLITE_SERVICE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: 'content_search',
+          columns: ['content'],
+        }),
+      })
+    } catch (e) {
+      // Ignore setup errors (table might already exist)
+    }
+
+    // Create FTS index on quotes.catchphrase (quotes table already exists from seed data)
+    try {
+      await fetch(`${TEST_CONFIG.SBLITE_URL}/admin/v1/tables/quotes/fts/catchphrase_search`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${TEST_CONFIG.SBLITE_SERVICE_KEY}` },
+      }).catch(() => {})
+
+      await fetch(`${TEST_CONFIG.SBLITE_URL}/admin/v1/tables/quotes/fts`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${TEST_CONFIG.SBLITE_SERVICE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: 'catchphrase_search',
+          columns: ['catchphrase'],
+        }),
+      })
+    } catch (e) {
+      // Ignore setup errors
+    }
+  }
+
+  // Helper function to clean up FTS tables
+  async function cleanupFTSTables() {
+    try {
+      await fetch(`${TEST_CONFIG.SBLITE_URL}/admin/v1/tables/texts`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${TEST_CONFIG.SBLITE_SERVICE_KEY}` },
+      })
+    } catch (e) {
+      // Ignore cleanup errors
+    }
+  }
 
   /**
    * contains() - Array/Range/JSONB Contains
@@ -226,71 +328,100 @@ describe('Filters - Advanced Operators', () => {
   /**
    * textSearch() - Full Text Search
    * Docs: https://supabase.com/docs/reference/javascript/textsearch
+   *
+   * Note: The config parameter (e.g., 'english') is accepted for compatibility
+   * but ignored by SQLite FTS5. Language configuration is handled via tokenizers
+   * at index creation time instead.
    */
   describe('textSearch() - Full Text Search', () => {
     /**
-     * Example 1: Text search
+     * Example 1: Text search with config parameter
+     * Tests that the config parameter is accepted (even though ignored for SQLite)
      */
-    it.skip('should perform text search with AND logic', async () => {
+    it('should perform text search with config parameter', async () => {
       const { data, error } = await supabase
         .from('texts')
         .select('content')
-        .textSearch('content', `'eggs' & 'ham'`, {
+        .textSearch('content', 'eggs ham', {
           config: 'english',
         })
 
       expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBeGreaterThan(0)
+      // Should match rows containing both eggs and ham
+      expect(data![0].content.toLowerCase()).toContain('eggs')
     })
 
     /**
-     * Example 2: Basic normalization
+     * Example 2: Plain text search with config
+     * Tests type: 'plain' with config parameter
      */
-    it.skip('should perform text search with plain type', async () => {
+    it('should perform text search with plain type and config', async () => {
       const { data, error } = await supabase
         .from('quotes')
         .select('catchphrase')
-        .textSearch('catchphrase', `'fat' & 'cat'`, {
+        .textSearch('catchphrase', 'fat cat', {
           type: 'plain',
           config: 'english',
         })
 
       expect(error).toBeNull()
+      expect(data).toBeDefined()
+      expect(data!.length).toBeGreaterThan(0)
+      // Should match "The fat cat sat on the mat"
+      expect(data![0].catchphrase.toLowerCase()).toContain('fat')
+      expect(data![0].catchphrase.toLowerCase()).toContain('cat')
     })
 
     /**
-     * Example 3: Full normalization
+     * Example 3: Phrase search with config
+     * Tests type: 'phrase' with config parameter
      */
-    it.skip('should perform text search with phrase type', async () => {
+    it('should perform text search with phrase type and config', async () => {
       const { data, error } = await supabase
         .from('quotes')
         .select('catchphrase')
-        .textSearch('catchphrase', `'fat' & 'cat'`, {
+        .textSearch('catchphrase', 'fat cat', {
           type: 'phrase',
           config: 'english',
         })
 
       expect(error).toBeNull()
+      expect(data).toBeDefined()
+      // Should match "The fat cat sat on the mat" (exact phrase)
+      expect(data!.length).toBeGreaterThan(0)
     })
 
     /**
-     * Example 4: Websearch
+     * Example 4: Websearch with config
+     * Tests type: 'websearch' with config parameter
      */
-    it.skip('should perform websearch-style text search', async () => {
+    it('should perform websearch-style text search with config', async () => {
       const { data, error } = await supabase
         .from('quotes')
         .select('catchphrase')
-        .textSearch('catchphrase', `'fat or cat'`, {
+        .textSearch('catchphrase', 'fat or dog', {
           type: 'websearch',
           config: 'english',
         })
 
       expect(error).toBeNull()
+      expect(data).toBeDefined()
+      // Should match rows containing "fat" OR "dog"
+      expect(data!.length).toBeGreaterThan(0)
     })
   })
 })
 
 /**
  * Compatibility Summary for Advanced Filters:
+ *
+ * IMPLEMENTED:
+ * - textSearch(): Full text search using SQLite FTS5
+ *   - Supports all query types: fts, plfts (plain), phfts (phrase), wfts (websearch)
+ *   - The 'config' parameter is accepted for API compatibility but ignored
+ *     (SQLite FTS5 uses tokenizers configured at index creation time instead)
  *
  * NOT IMPLEMENTED (require PostgreSQL-specific features):
  * - contains(): Array/Range/JSONB containment
@@ -301,9 +432,8 @@ describe('Filters - Advanced Operators', () => {
  * - rangeLte(): Less than or equal range
  * - rangeAdjacent(): Adjacent range check
  * - overlaps(): Array/Range overlap
- * - textSearch(): Full text search
  *
- * These filters require PostgreSQL-specific data types and operators
- * that are not available in SQLite. Future implementations could use
- * SQLite FTS5 for text search and JSON functions for some containment checks.
+ * These filters require PostgreSQL-specific data types (arrays, ranges)
+ * that are not available in SQLite. JSON containment could potentially
+ * be implemented using SQLite's JSON functions in the future.
  */

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -101,9 +100,6 @@ func parsePreferHeader(prefer string) (count string, head bool, explain bool) {
 	return
 }
 
-// onConflictRegex matches "on-conflict=col1,col2" in Prefer header
-var onConflictRegex = regexp.MustCompile(`on-conflict=([a-zA-Z0-9_,]+)`)
-
 // parseUpsertOptions parses upsert-related options from Prefer header
 // Returns onConflict columns and whether to ignore duplicates (DO NOTHING)
 func parseUpsertOptions(prefer string) (onConflict []string, ignoreDuplicates bool) {
@@ -112,11 +108,70 @@ func parseUpsertOptions(prefer string) (onConflict []string, ignoreDuplicates bo
 		ignoreDuplicates = true
 	}
 
-	// Parse on-conflict columns
-	if match := onConflictRegex.FindStringSubmatch(prefer); match != nil {
-		onConflict = strings.Split(match[1], ",")
+	// Split Prefer header into directives
+	// Prefer headers can use ", " (comma-space), ";" (semicolon), or "," (comma) as separators
+	// We need to handle all cases while supporting on-conflict=col1,col2 (comma-separated columns)
+
+	// First try to find "on-conflict=" anywhere in the string
+	onConflictIdx := strings.Index(prefer, "on-conflict=")
+	if onConflictIdx == -1 {
+		return
 	}
 
+	// Extract from "on-conflict=" to the end
+	remaining := prefer[onConflictIdx+len("on-conflict="):]
+
+	// Parse column names until we hit a directive separator or another directive
+	var cols []string
+	for len(remaining) > 0 {
+		// Find next comma, semicolon, or space
+		endIdx := strings.IndexAny(remaining, ",; ")
+		if endIdx == -1 {
+			// Rest of string is the last column
+			col := strings.TrimSpace(remaining)
+			if col != "" && !strings.Contains(col, "=") {
+				cols = append(cols, col)
+			}
+			break
+		}
+
+		col := strings.TrimSpace(remaining[:endIdx])
+		sep := remaining[endIdx]
+
+		// If this part contains "=", it's a new directive, stop parsing columns
+		if strings.Contains(col, "=") {
+			break
+		}
+
+		if col != "" {
+			cols = append(cols, col)
+		}
+
+		remaining = remaining[endIdx+1:]
+
+		// If separator was space or semicolon, we've reached a new directive
+		if sep == ' ' || sep == ';' {
+			break
+		}
+
+		// If separator was comma, check if next part looks like a directive
+		nextEq := strings.Index(remaining, "=")
+		nextComma := strings.Index(remaining, ",")
+		if nextEq != -1 && (nextComma == -1 || nextEq < nextComma) {
+			// Next part has "=" before any comma, likely a new directive
+			// But check if there's a space before the "=" (like "return=representation")
+			nextPart := remaining
+			if nextComma != -1 && nextComma < nextEq {
+				nextPart = remaining[:nextComma]
+			}
+			if !strings.Contains(strings.TrimSpace(nextPart), " ") && strings.Contains(nextPart, "=") {
+				// This is a directive like "return=representation", stop
+				break
+			}
+		}
+	}
+
+	onConflict = cols
 	return
 }
 

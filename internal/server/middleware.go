@@ -45,6 +45,16 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Check if this is a service_role token (admin API key)
+		// Service role tokens don't have a real user, so skip user lookup
+		role, _ := (*claims)["role"].(string)
+		if role == "service_role" {
+			ctx := context.WithValue(r.Context(), ClaimsContextKey, claims)
+			ctx = context.WithValue(ctx, contextKeyStr, claims)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
 		userID := (*claims)["sub"].(string)
 		user, err := s.authService.GetUserByID(userID)
 		if err != nil {

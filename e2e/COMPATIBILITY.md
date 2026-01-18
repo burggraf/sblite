@@ -111,7 +111,7 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 
 | Filter | Status | Notes |
 |--------|--------|-------|
-| `textSearch()` | ❌ | Could use SQLite FTS5 |
+| `textSearch()` | ✅ | SQLite FTS5 with all query types (fts, plfts, phfts, wfts) |
 
 ### Logical Filters
 
@@ -265,7 +265,7 @@ This document tracks sblite's compatibility with the Supabase JavaScript client 
 | Arrays | Native `[]` type | JSON text |
 | JSON | `jsonb` type | TEXT (parse in app) |
 | Ranges | Native range types | Not supported |
-| Full-text search | `tsvector` | Could use FTS5 |
+| Full-text search | `tsvector` | FTS5 (all query types) |
 | Schemas | Multiple schemas | Single schema |
 | Foreign keys | Full support | Full support |
 
