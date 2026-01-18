@@ -5576,12 +5576,341 @@ const App = {
     },
 
     renderFileBrowser() {
-        return '<div class="file-browser"><p>File browser coming next...</p></div>';
+        const { selectedBucket, objects, currentPath, viewMode, selectedFiles, loading } = this.state.storage;
+
+        // Separate folders and files
+        const folders = [];
+        const files = [];
+        const seenFolders = new Set();
+
+        for (const obj of objects) {
+            const relativePath = obj.name.slice(currentPath.length);
+            const slashIndex = relativePath.indexOf('/');
+            if (slashIndex > 0) {
+                const folderName = relativePath.slice(0, slashIndex);
+                if (!seenFolders.has(folderName)) {
+                    seenFolders.add(folderName);
+                    folders.push({ name: folderName, isFolder: true });
+                }
+            } else if (relativePath && !relativePath.endsWith('/')) {
+                files.push({ ...obj, displayName: relativePath, isFolder: false });
+            }
+        }
+
+        const allItems = [...folders, ...files];
+
+        return `
+            <div class="file-browser">
+                ${this.renderFileBrowserToolbar()}
+                <div class="file-browser-content ${viewMode}">
+                    ${loading ? '<div class="loading">Loading...</div>' : ''}
+                    ${!loading && allItems.length === 0 ? `
+                        <div class="file-browser-empty">
+                            <p>No files in this ${currentPath ? 'folder' : 'bucket'}</p>
+                            <p class="text-muted">Drag and drop files here or click Upload</p>
+                        </div>
+                    ` : ''}
+                    ${viewMode === 'grid' ? this.renderFileGrid(allItems) : this.renderFileList(allItems)}
+                </div>
+            </div>
+        `;
+    },
+
+    renderFileBrowserToolbar() {
+        const { selectedBucket, currentPath, viewMode, selectedFiles } = this.state.storage;
+        const pathParts = currentPath.split('/').filter(Boolean);
+
+        return `
+            <div class="file-browser-toolbar">
+                <div class="toolbar-left">
+                    ${currentPath ? `<button class="btn btn-sm" onclick="App.navigateToFolder('..')">&#8592; Back</button>` : ''}
+                    <div class="breadcrumb">
+                        <span class="breadcrumb-item clickable" onclick="App.navigateToFolder('')">
+                            ${this.escapeHtml(selectedBucket.name)}
+                        </span>
+                        ${pathParts.map((part, i) => `
+                            <span class="breadcrumb-sep">/</span>
+                            <span class="breadcrumb-item clickable" onclick="App.navigateToFolder('${pathParts.slice(0, i + 1).join('/')}/')">
+                                ${this.escapeHtml(part)}
+                            </span>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="toolbar-right">
+                    <button class="btn btn-primary btn-sm" onclick="App.triggerFileUpload()">Upload</button>
+                    <input type="file" id="file-upload-input" multiple style="display:none" onchange="App.handleFileSelect(event)">
+                    <div class="view-toggle">
+                        <button class="btn btn-sm ${viewMode === 'grid' ? 'active' : ''}" onclick="App.setStorageViewMode('grid')" title="Grid view">&#8862;</button>
+                        <button class="btn btn-sm ${viewMode === 'list' ? 'active' : ''}" onclick="App.setStorageViewMode('list')" title="List view">&#9776;</button>
+                    </div>
+                    ${selectedFiles.length > 0 ? `<button class="btn btn-sm btn-danger" onclick="App.deleteSelectedFiles()">Delete (${selectedFiles.length})</button>` : ''}
+                </div>
+            </div>
+        `;
+    },
+
+    renderFileGrid(items) {
+        if (items.length === 0) return '';
+        const { selectedBucket, currentPath, selectedFiles } = this.state.storage;
+
+        return `
+            <div class="file-grid">
+                ${items.map(item => {
+                    if (item.isFolder) {
+                        return `
+                            <div class="file-card folder" ondblclick="App.navigateToFolder('${currentPath}${item.name}/')">
+                                <div class="file-icon folder-icon">&#128193;</div>
+                                <div class="file-name">${this.escapeHtml(item.name)}</div>
+                            </div>
+                        `;
+                    } else {
+                        const isSelected = selectedFiles.includes(item.name);
+                        const isImage = this.isImageFile(item.displayName);
+                        const thumbUrl = isImage && selectedBucket.public
+                            ? `/storage/v1/object/public/${selectedBucket.name}/${item.name}`
+                            : null;
+
+                        return `
+                            <div class="file-card ${isSelected ? 'selected' : ''}"
+                                 onclick="App.toggleFileSelection('${item.name}')"
+                                 ondblclick="App.downloadFile('${item.name}')">
+                                <div class="file-select">
+                                    <input type="checkbox" ${isSelected ? 'checked' : ''}
+                                           onclick="event.stopPropagation(); App.toggleFileSelection('${item.name}')">
+                                </div>
+                                ${thumbUrl ? `
+                                    <div class="file-thumbnail" style="background-image: url('${thumbUrl}')"></div>
+                                ` : `
+                                    <div class="file-icon">${this.getFileIcon(item.displayName)}</div>
+                                `}
+                                <div class="file-name" title="${this.escapeHtml(item.displayName)}">${this.escapeHtml(item.displayName)}</div>
+                                <div class="file-size">${this.formatFileSize(item.metadata?.size || 0)}</div>
+                            </div>
+                        `;
+                    }
+                }).join('')}
+            </div>
+        `;
+    },
+
+    renderFileList(items) {
+        if (items.length === 0) return '';
+        const { currentPath, selectedFiles } = this.state.storage;
+
+        return `
+            <div class="file-list">
+                <table class="file-list-table">
+                    <thead>
+                        <tr>
+                            <th class="col-checkbox"></th>
+                            <th class="col-name">Name</th>
+                            <th class="col-size">Size</th>
+                            <th class="col-type">Type</th>
+                            <th class="col-modified">Modified</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${items.map(item => {
+                            if (item.isFolder) {
+                                return `
+                                    <tr class="file-row folder" ondblclick="App.navigateToFolder('${currentPath}${item.name}/')">
+                                        <td class="col-checkbox"></td>
+                                        <td class="col-name">
+                                            <span class="file-icon">&#128193;</span>
+                                            ${this.escapeHtml(item.name)}
+                                        </td>
+                                        <td class="col-size">-</td>
+                                        <td class="col-type">Folder</td>
+                                        <td class="col-modified">-</td>
+                                    </tr>
+                                `;
+                            } else {
+                                const isSelected = selectedFiles.includes(item.name);
+                                return `
+                                    <tr class="file-row ${isSelected ? 'selected' : ''}"
+                                        onclick="App.toggleFileSelection('${item.name}')"
+                                        ondblclick="App.downloadFile('${item.name}')">
+                                        <td class="col-checkbox">
+                                            <input type="checkbox" ${isSelected ? 'checked' : ''}
+                                                   onclick="event.stopPropagation(); App.toggleFileSelection('${item.name}')">
+                                        </td>
+                                        <td class="col-name">
+                                            <span class="file-icon">${this.getFileIcon(item.displayName)}</span>
+                                            ${this.escapeHtml(item.displayName)}
+                                        </td>
+                                        <td class="col-size">${this.formatFileSize(item.metadata?.size || 0)}</td>
+                                        <td class="col-type">${this.escapeHtml(item.metadata?.mimetype || '-')}</td>
+                                        <td class="col-modified">${item.updated_at ? new Date(item.updated_at).toLocaleDateString() : '-'}</td>
+                                    </tr>
+                                `;
+                            }
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
     },
 
     async loadObjects() {
-        // Will be implemented in Task 5
+        const { selectedBucket, currentPath } = this.state.storage;
+        if (!selectedBucket) return;
+
+        this.state.storage.loading = true;
         this.render();
+
+        try {
+            const res = await fetch('/_/api/storage/objects/list', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    bucket: selectedBucket.name,
+                    prefix: currentPath,
+                    limit: 100
+                })
+            });
+            if (!res.ok) throw new Error('Failed to load objects');
+            this.state.storage.objects = await res.json() || [];
+        } catch (err) {
+            this.showToast(err.message, 'error');
+            this.state.storage.objects = [];
+        } finally {
+            this.state.storage.loading = false;
+            this.render();
+        }
+    },
+
+    // File browser helper methods
+    isImageFile(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext);
+    },
+
+    getFileIcon(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        const iconMap = {
+            // Documents
+            'pdf': '&#128196;',
+            'doc': '&#128196;',
+            'docx': '&#128196;',
+            'txt': '&#128196;',
+            'rtf': '&#128196;',
+            // Spreadsheets
+            'xls': '&#128200;',
+            'xlsx': '&#128200;',
+            'csv': '&#128200;',
+            // Images
+            'jpg': '&#128247;',
+            'jpeg': '&#128247;',
+            'png': '&#128247;',
+            'gif': '&#128247;',
+            'webp': '&#128247;',
+            'svg': '&#128247;',
+            'bmp': '&#128247;',
+            'ico': '&#128247;',
+            // Videos
+            'mp4': '&#127909;',
+            'mov': '&#127909;',
+            'avi': '&#127909;',
+            'mkv': '&#127909;',
+            'webm': '&#127909;',
+            // Audio
+            'mp3': '&#127925;',
+            'wav': '&#127925;',
+            'ogg': '&#127925;',
+            'flac': '&#127925;',
+            // Code
+            'js': '&#128187;',
+            'ts': '&#128187;',
+            'json': '&#128187;',
+            'html': '&#128187;',
+            'css': '&#128187;',
+            'py': '&#128187;',
+            'go': '&#128187;',
+            // Archives
+            'zip': '&#128230;',
+            'tar': '&#128230;',
+            'gz': '&#128230;',
+            'rar': '&#128230;',
+            '7z': '&#128230;',
+        };
+        return iconMap[ext] || '&#128196;';
+    },
+
+    formatFileSize(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+    },
+
+    setStorageViewMode(mode) {
+        this.state.storage.viewMode = mode;
+        this.render();
+    },
+
+    async navigateToFolder(path) {
+        if (path === '..') {
+            // Go up one level
+            const parts = this.state.storage.currentPath.split('/').filter(Boolean);
+            parts.pop();
+            this.state.storage.currentPath = parts.length > 0 ? parts.join('/') + '/' : '';
+        } else {
+            this.state.storage.currentPath = path;
+        }
+        this.state.storage.selectedFiles = [];
+        await this.loadObjects();
+    },
+
+    toggleFileSelection(filename) {
+        const idx = this.state.storage.selectedFiles.indexOf(filename);
+        if (idx >= 0) {
+            this.state.storage.selectedFiles.splice(idx, 1);
+        } else {
+            this.state.storage.selectedFiles.push(filename);
+        }
+        this.render();
+    },
+
+    triggerFileUpload() {
+        document.getElementById('file-upload-input').click();
+    },
+
+    handleFileSelect(event) {
+        // Will be implemented in Task 6 (Upload)
+        const files = event.target.files;
+        if (files.length > 0) {
+            this.showToast('Upload functionality coming in next task', 'info');
+        }
+        event.target.value = '';
+    },
+
+    async downloadFile(filename) {
+        const { selectedBucket } = this.state.storage;
+        // For public buckets, open in new tab; for private, need authenticated download
+        if (selectedBucket.public) {
+            window.open(`/storage/v1/object/public/${selectedBucket.name}/${filename}`, '_blank');
+        } else {
+            this.showToast('Authenticated download coming in next task', 'info');
+        }
+    },
+
+    async deleteSelectedFiles() {
+        // Will be implemented in Task 7 (File operations)
+        this.showToast('Delete functionality coming in next task', 'info');
+    },
+
+    showToast(message, type = 'info') {
+        // Simple toast implementation - could be enhanced later
+        console.log(`[${type}] ${message}`);
+        // For now, show as an alert for error messages
+        if (type === 'error') {
+            this.state.error = message;
+            this.render();
+            setTimeout(() => {
+                this.state.error = null;
+                this.render();
+            }, 3000);
+        }
     },
 
     copyToClipboard(text) {
