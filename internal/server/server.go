@@ -14,6 +14,7 @@ import (
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
 	"github.com/markb/sblite/internal/mail/viewer"
+	"github.com/markb/sblite/internal/oauth"
 	"github.com/markb/sblite/internal/rest"
 	"github.com/markb/sblite/internal/rls"
 	"github.com/markb/sblite/internal/schema"
@@ -33,6 +34,12 @@ type Server struct {
 	adminHandler     *admin.Handler
 	schema           *schema.Schema
 	dashboardHandler *dashboard.Handler
+
+	// OAuth fields
+	oauthRegistry       *oauth.Registry
+	oauthStateStore     *oauth.StateStore
+	allowedRedirectURLs []string
+	baseURL             string
 }
 
 func New(database *db.DB, jwtSecret string, mailConfig *mail.Config, migrationsDir string) *Server {
@@ -48,14 +55,16 @@ func New(database *db.DB, jwtSecret string, mailConfig *mail.Config, migrationsD
 	schemaInstance := schema.New(database.DB)
 
 	s := &Server{
-		db:          database,
-		router:      chi.NewRouter(),
-		authService: auth.NewService(database, jwtSecret),
-		rlsService:  rlsService,
-		rlsEnforcer: rlsEnforcer,
-		restHandler: rest.NewHandler(database, rlsEnforcer, schemaInstance),
-		mailConfig:  mailConfig,
-		schema:      schemaInstance,
+		db:              database,
+		router:          chi.NewRouter(),
+		authService:     auth.NewService(database, jwtSecret),
+		rlsService:      rlsService,
+		rlsEnforcer:     rlsEnforcer,
+		restHandler:     rest.NewHandler(database, rlsEnforcer, schemaInstance),
+		mailConfig:      mailConfig,
+		schema:          schemaInstance,
+		oauthRegistry:   oauth.NewRegistry(),
+		oauthStateStore: oauth.NewStateStore(database.DB),
 	}
 
 	// Initialize admin handler (uses schema)
@@ -118,6 +127,9 @@ func (s *Server) setupRoutes() {
 		r.Get("/settings", s.handleSettings)
 		r.Post("/magiclink", s.handleMagicLink)
 		r.Post("/resend", s.handleResend)
+
+		// OAuth routes
+		r.Get("/authorize", s.handleAuthorize)
 
 		// Protected routes
 		r.Group(func(r chi.Router) {
@@ -195,4 +207,36 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 // EmailService returns the email service for use by auth handlers.
 func (s *Server) EmailService() *mail.EmailService {
 	return s.emailService
+}
+
+// configureOAuthProvider creates and registers an OAuth provider.
+// This is primarily used for testing.
+func (s *Server) configureOAuthProvider(name, clientID, clientSecret string, enabled bool) {
+	cfg := oauth.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Enabled:      enabled,
+	}
+
+	var provider oauth.Provider
+	switch name {
+	case "google":
+		provider = oauth.NewGoogleProvider(cfg)
+	case "github":
+		provider = oauth.NewGitHubProvider(cfg)
+	default:
+		return
+	}
+
+	s.oauthRegistry.RegisterWithConfig(provider, enabled)
+}
+
+// setAllowedRedirectURLs sets the allowed redirect URLs for OAuth flows.
+func (s *Server) setAllowedRedirectURLs(urls []string) {
+	s.allowedRedirectURLs = urls
+}
+
+// SetBaseURL sets the base URL for constructing callback URLs.
+func (s *Server) SetBaseURL(url string) {
+	s.baseURL = url
 }
