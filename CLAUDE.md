@@ -318,6 +318,16 @@ Web dashboard accessible at `http://localhost:8080/_`
 | `/_/api/secrets` | GET | List all secrets (names only) |
 | `/_/api/secrets` | POST | Set a secret |
 | `/_/api/secrets/{name}` | DELETE | Delete a secret |
+| `/_/api/storage/buckets` | GET | List all buckets |
+| `/_/api/storage/buckets` | POST | Create bucket |
+| `/_/api/storage/buckets/{id}` | GET | Get bucket details |
+| `/_/api/storage/buckets/{id}` | PUT | Update bucket settings |
+| `/_/api/storage/buckets/{id}` | DELETE | Delete bucket |
+| `/_/api/storage/buckets/{id}/empty` | POST | Empty bucket |
+| `/_/api/storage/objects/list` | POST | List objects in bucket |
+| `/_/api/storage/objects/upload` | POST | Upload file (multipart) |
+| `/_/api/storage/objects/download` | GET | Download file |
+| `/_/api/storage/objects` | DELETE | Delete objects (bulk) |
 
 ### Query Operators
 

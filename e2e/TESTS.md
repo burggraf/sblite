@@ -41,7 +41,8 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Edge Functions | 17 | 14 | 0 | 3 |
 | Edge Functions - Config | 8 | 8 | 0 | 0 |
 | Edge Functions - Dashboard | 9 | 6 | 0 | 3 |
-| **TOTAL** | **356** | **288** | **0** | **67** |
+| Dashboard - Storage | 16 | 16 | 0 | 0 |
+| **TOTAL** | **372** | **304** | **0** | **67** |
 
 *Last tested: 2026-01-18*
 
@@ -787,6 +788,38 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 ---
 
+### `tests/dashboard/storage.test.ts`
+
+**Storage Navigation**
+- ✅ should display storage navigation
+
+**Bucket Management**
+- ✅ should create a bucket
+- ✅ should list buckets
+- ✅ should select a bucket
+
+**File Browser**
+- ✅ should upload a file
+- ✅ should toggle between grid and list view
+- ✅ should delete files
+
+**Bucket Settings**
+- ✅ should update bucket settings
+- ✅ should delete a bucket
+
+**Empty States**
+- ✅ should show empty state
+- ✅ should empty a bucket
+
+**Storage Dashboard API**
+- ✅ API: list buckets (GET /_/api/storage/buckets)
+- ✅ API: create bucket (POST /_/api/storage/buckets)
+- ✅ API: update bucket (PUT /_/api/storage/buckets/:id)
+- ✅ API: delete bucket (DELETE /_/api/storage/buckets/:id)
+- ✅ API: list objects (POST /_/api/storage/objects/list)
+
+---
+
 ## Known Issues Summary
 
 ### Fixed Issues (as of 2026-01-16)
@@ -840,3 +873,4 @@ Each test maps to examples from the Supabase JavaScript documentation:
 | functions.test.ts | https://supabase.com/docs/reference/javascript/functions-invoke |
 | functions-config.test.ts | (sblite-specific per-function configuration) |
 | functions-dashboard.test.ts | (sblite-specific dashboard API for functions) |
+| storage.test.ts | (sblite-specific dashboard API for storage) |
