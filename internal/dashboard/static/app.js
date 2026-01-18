@@ -5155,7 +5155,7 @@ const App = {
     // Function test console methods
     updateFunctionTestMethod(method) {
         this.state.functions.testConsole.method = method;
-        this.render();
+        this.updateTestConsole();
     },
 
     updateFunctionTestBody(body) {
@@ -5164,7 +5164,7 @@ const App = {
 
     addFunctionTestHeader() {
         this.state.functions.testConsole.headers.push({ key: '', value: '' });
-        this.render();
+        this.updateTestConsole();
     },
 
     updateFunctionTestHeader(index, field, value) {
@@ -5173,7 +5173,7 @@ const App = {
 
     removeFunctionTestHeader(index) {
         this.state.functions.testConsole.headers.splice(index, 1);
-        this.render();
+        this.updateTestConsole();
     },
 
     async invokeFunctionTest() {
@@ -5184,7 +5184,7 @@ const App = {
 
         this.state.functions.testConsole.loading = true;
         this.state.functions.testConsole.response = null;
-        this.render();
+        this.updateTestConsole();
 
         try {
             // Build headers
@@ -5242,7 +5242,14 @@ const App = {
         }
 
         this.state.functions.testConsole.loading = false;
-        this.render();
+        this.updateTestConsole();
+    },
+
+    updateTestConsole() {
+        const container = document.querySelector('.test-dropdown');
+        if (container) {
+            container.innerHTML = this.renderFunctionTestConsole();
+        }
     },
 
     // =====================
