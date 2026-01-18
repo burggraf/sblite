@@ -3029,6 +3029,19 @@ const App = {
                                 When enabled, users must verify their email address before signing in.
                             </p>
                         </div>
+                        <div class="setting-group">
+                            <label class="setting-toggle">
+                                <input type="checkbox"
+                                       ${authConfig.allow_anonymous ? 'checked' : ''}
+                                       onchange="App.toggleAnonymousSignin(this.checked)">
+                                <span>Allow anonymous sign-in</span>
+                            </label>
+                            <p class="text-muted" style="margin-top: 4px; margin-left: 24px;">
+                                When enabled, users can sign in without email or password.
+                                ${authConfig.anonymous_user_count !== undefined ?
+                                  `<br>Anonymous users: <strong>${authConfig.anonymous_user_count}</strong>` : ''}
+                            </p>
+                        </div>
                         <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border-color);">
                         <div class="info-grid">
                             <div class="info-item">
@@ -3168,6 +3181,30 @@ const App = {
             }
         } catch (e) {
             this.state.error = 'Failed to update setting';
+            this.render();
+        }
+    },
+
+    async toggleAnonymousSignin(enabled) {
+        try {
+            const res = await fetch('/_/api/settings/auth-config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ allow_anonymous: enabled })
+            });
+
+            if (!res.ok) throw new Error('Failed to update setting');
+
+            this.showToast(
+                enabled ? 'Anonymous sign-in enabled' : 'Anonymous sign-in disabled',
+                'success'
+            );
+
+            // Reload settings to refresh count
+            await this.loadSettings();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+            // Revert checkbox on error
             this.render();
         }
     },
