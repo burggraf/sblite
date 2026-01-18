@@ -6,3 +6,4 @@ e2e/package-lock.json
 .worktrees/
 .DS_Store
 migrations/
+node_modules/
