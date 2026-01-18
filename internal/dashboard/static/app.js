@@ -1814,7 +1814,30 @@ const App = {
     },
 
     async confirmDeleteUser(userId, email) {
-        if (!confirm(`Delete user "${email}"? This will also delete their sessions and cannot be undone.`)) return;
+        // Find the user in the list to check if they're anonymous
+        const user = this.state.users.list.find(u => u.id === userId);
+
+        let confirmMessage;
+        if (user && user.is_anonymous) {
+            // Enhanced dialog for anonymous users
+            const truncatedId = userId.length > 20 ? userId.substring(0, 20) + '...' : userId;
+            const createdDate = user.created_at ? new Date(user.created_at).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            }) : 'Unknown';
+
+            confirmMessage = `Delete Anonymous User?\n\n` +
+                `This will permanently delete this anonymous user and all associated data.\n\n` +
+                `User ID: ${truncatedId}\n` +
+                `Created: ${createdDate}\n\n` +
+                `This action cannot be undone.`;
+        } else {
+            // Regular user confirmation
+            confirmMessage = `Delete user "${email}"? This will also delete their sessions and cannot be undone.`;
+        }
+
+        if (!confirm(confirmMessage)) return;
 
         try {
             const res = await fetch(`/_/api/users/${userId}`, { method: 'DELETE' });
