@@ -4034,22 +4034,11 @@ func (h *Handler) handleRestartFunctions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Stop the runtime
-	if err := h.functionsService.Stop(); err != nil {
+	if err := h.functionsService.Restart(r.Context()); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{
-			"error": fmt.Sprintf("Failed to stop runtime: %v", err),
-		})
-		return
-	}
-
-	// Start the runtime
-	if err := h.functionsService.Start(r.Context()); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": fmt.Sprintf("Failed to start runtime: %v", err),
+			"error": fmt.Sprintf("Failed to restart runtime: %v", err),
 		})
 		return
 	}

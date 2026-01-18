@@ -352,6 +352,14 @@ func (s *Service) SetMetadata(meta *FunctionMetadata) error {
 	return s.store.SetMetadata(meta)
 }
 
+// Restart restarts the edge runtime (stops and starts).
+func (s *Service) Restart(ctx context.Context) error {
+	if err := s.Stop(); err != nil {
+		return err
+	}
+	return s.Start(ctx)
+}
+
 // ReloadSecrets reloads secrets from the store and updates the runtime.
 // Call this after modifying secrets, then restart the runtime for changes to take effect.
 func (s *Service) ReloadSecrets() error {
