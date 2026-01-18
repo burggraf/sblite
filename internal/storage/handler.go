@@ -9,16 +9,26 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/markb/sblite/internal/rls"
 )
 
 // Handler provides HTTP handlers for storage operations.
 type Handler struct {
-	service *Service
+	service    *Service
+	rlsService *rls.Service
+	rlsEnforcer *rls.Enforcer
 }
 
 // NewHandler creates a new storage handler.
 func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
+}
+
+// SetRLSEnforcer sets the RLS service and enforcer for storage operations.
+func (h *Handler) SetRLSEnforcer(rlsService *rls.Service, rlsEnforcer *rls.Enforcer) {
+	h.rlsService = rlsService
+	h.rlsEnforcer = rlsEnforcer
 }
 
 // RegisterRoutes registers all storage routes on the given router.
@@ -90,7 +100,198 @@ func getUserID(r *http.Request) string {
 	if userID := r.Context().Value("user_id"); userID != nil {
 		return userID.(string)
 	}
+	// Try to get from JWT claims - handle various claim types
+	if claims := r.Context().Value("claims"); claims != nil {
+		// Try as *jwt.MapClaims (what the middleware stores)
+		if c, ok := claims.(*jwt.MapClaims); ok && c != nil {
+			if sub, ok := (*c)["sub"].(string); ok {
+				return sub
+			}
+		}
+		// Try as jwt.MapClaims (non-pointer)
+		if c, ok := claims.(jwt.MapClaims); ok {
+			if sub, ok := c["sub"].(string); ok {
+				return sub
+			}
+		}
+		// Try as generic map[string]interface{} (fallback)
+		if c, ok := claims.(map[string]interface{}); ok {
+			if sub, ok := c["sub"].(string); ok {
+				return sub
+			}
+		}
+	}
 	return ""
+}
+
+// getAuthContext extracts RLS auth context from the request
+func (h *Handler) getAuthContext(r *http.Request) *rls.AuthContext {
+	// Check if service_role API key was used (bypasses RLS)
+	if role := r.Context().Value("apikey_role"); role != nil {
+		if role.(string) == "service_role" {
+			return &rls.AuthContext{BypassRLS: true}
+		}
+	}
+
+	// Extract JWT claims if present - handle various claim types
+	if claims := r.Context().Value("claims"); claims != nil {
+		ctx := &rls.AuthContext{}
+		ctx.Claims = make(map[string]any)
+
+		// Try as *jwt.MapClaims (what the middleware stores)
+		if c, ok := claims.(*jwt.MapClaims); ok && c != nil {
+			if sub, ok := (*c)["sub"].(string); ok {
+				ctx.UserID = sub
+			}
+			if email, ok := (*c)["email"].(string); ok {
+				ctx.Email = email
+			}
+			if role, ok := (*c)["role"].(string); ok {
+				ctx.Role = role
+			}
+			for k, v := range *c {
+				ctx.Claims[k] = v
+			}
+			return ctx
+		}
+
+		// Try as jwt.MapClaims (non-pointer)
+		if c, ok := claims.(jwt.MapClaims); ok {
+			if sub, ok := c["sub"].(string); ok {
+				ctx.UserID = sub
+			}
+			if email, ok := c["email"].(string); ok {
+				ctx.Email = email
+			}
+			if role, ok := c["role"].(string); ok {
+				ctx.Role = role
+			}
+			for k, v := range c {
+				ctx.Claims[k] = v
+			}
+			return ctx
+		}
+
+		// Try as generic map[string]interface{} (fallback)
+		if c, ok := claims.(map[string]interface{}); ok {
+			if sub, ok := c["sub"].(string); ok {
+				ctx.UserID = sub
+			}
+			if email, ok := c["email"].(string); ok {
+				ctx.Email = email
+			}
+			if role, ok := c["role"].(string); ok {
+				ctx.Role = role
+			}
+			for k, v := range c {
+				ctx.Claims[k] = v
+			}
+			return ctx
+		}
+	}
+
+	return nil
+}
+
+// checkStorageRLS checks if the user is allowed to perform the operation on the object.
+// Returns an error if access is denied.
+func (h *Handler) checkStorageRLS(r *http.Request, bucketName, objectPath, command string) error {
+	if h.rlsService == nil || h.rlsEnforcer == nil {
+		return nil // RLS not configured
+	}
+
+	ctx := h.getAuthContext(r)
+
+	// service_role bypasses RLS
+	if ctx != nil && ctx.BypassRLS {
+		return nil
+	}
+
+	// Check if RLS is enabled for storage_objects
+	enabled, err := h.rlsService.IsRLSEnabled("storage_objects")
+	if err != nil || !enabled {
+		return nil // RLS not enabled, allow all
+	}
+
+	// Build a WHERE condition that matches the specific object
+	var whereConditions string
+	switch command {
+	case "SELECT":
+		whereConditions, err = h.rlsEnforcer.GetSelectConditions("storage_objects", ctx)
+	case "INSERT":
+		whereConditions, err = h.rlsEnforcer.GetInsertConditions("storage_objects", ctx)
+	case "DELETE":
+		whereConditions, err = h.rlsEnforcer.GetDeleteConditions("storage_objects", ctx)
+	default:
+		return nil
+	}
+	if err != nil {
+		return &StorageError{StatusCode: 500, ErrorCode: "rls_error", Message: "Failed to evaluate RLS policies"}
+	}
+
+	// If no policies defined and RLS is enabled, deny access
+	if whereConditions == "" {
+		return &StorageError{StatusCode: 403, ErrorCode: "access_denied", Message: "Access denied by RLS policy"}
+	}
+
+	// Check if the specific object matches the RLS conditions
+	// We need to query with the object's bucket_id and name
+	query := `SELECT 1 FROM storage_objects WHERE bucket_id = ? AND name = ? AND (` + whereConditions + `) LIMIT 1`
+
+	var exists int
+	err = h.service.DB().QueryRow(query, bucketName, objectPath).Scan(&exists)
+	if err != nil {
+		// Object doesn't exist or doesn't match RLS - return 404 to prevent information leakage
+		return &StorageError{StatusCode: 404, ErrorCode: "not_found", Message: "Object not found"}
+	}
+
+	return nil
+}
+
+// checkStorageInsertRLS checks if the user is allowed to insert an object.
+// For INSERT, we need to evaluate the CHECK expression against the proposed values.
+func (h *Handler) checkStorageInsertRLS(r *http.Request, bucketName, objectPath, ownerID string) error {
+	if h.rlsService == nil || h.rlsEnforcer == nil {
+		return nil // RLS not configured
+	}
+
+	ctx := h.getAuthContext(r)
+
+	// service_role bypasses RLS
+	if ctx != nil && ctx.BypassRLS {
+		return nil
+	}
+
+	// Check if RLS is enabled for storage_objects
+	enabled, err := h.rlsService.IsRLSEnabled("storage_objects")
+	if err != nil || !enabled {
+		return nil // RLS not enabled, allow all
+	}
+
+	// Get INSERT check conditions
+	checkConditions, err := h.rlsEnforcer.GetInsertConditions("storage_objects", ctx)
+	if err != nil {
+		return &StorageError{StatusCode: 500, ErrorCode: "rls_error", Message: "Failed to evaluate RLS policies"}
+	}
+
+	// If no policies defined and RLS is enabled, deny access
+	if checkConditions == "" {
+		return &StorageError{StatusCode: 403, ErrorCode: "access_denied", Message: "Access denied by RLS policy"}
+	}
+
+	// Evaluate the CHECK expression against the proposed values
+	// Create a temporary SELECT to evaluate the conditions
+	query := `SELECT CASE WHEN (` + checkConditions + `) THEN 1 ELSE 0 END FROM (
+		SELECT ? as bucket_id, ? as name, ? as owner_id
+	)`
+
+	var allowed int
+	err = h.service.DB().QueryRow(query, bucketName, objectPath, ownerID).Scan(&allowed)
+	if err != nil || allowed != 1 {
+		return &StorageError{StatusCode: 403, ErrorCode: "access_denied", Message: "Access denied by RLS policy"}
+	}
+
+	return nil
 }
 
 // Bucket Handlers
@@ -219,6 +420,13 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 	bucketName := chi.URLParam(r, "bucketName")
 	objectPath := chi.URLParam(r, "*")
 
+	// Check RLS policies for INSERT
+	ownerID := getUserID(r)
+	if err := h.checkStorageInsertRLS(r, bucketName, objectPath, ownerID); err != nil {
+		h.jsonError(w, err)
+		return
+	}
+
 	// Check for upsert header
 	upsert := r.Header.Get("x-upsert") == "true"
 
@@ -308,7 +516,11 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 	bucketName := chi.URLParam(r, "bucketName")
 	objectPath := chi.URLParam(r, "*")
 
-	// TODO: Check authentication and RLS policies
+	// Check RLS policies for SELECT
+	if err := h.checkStorageRLS(r, bucketName, objectPath, "SELECT"); err != nil {
+		h.jsonError(w, err)
+		return
+	}
 
 	reader, contentType, size, err := h.service.GetObject(bucketName, objectPath)
 	if err != nil {
@@ -396,6 +608,12 @@ func (h *Handler) DeleteObject(w http.ResponseWriter, r *http.Request) {
 	bucketName := chi.URLParam(r, "bucketName")
 	objectPath := chi.URLParam(r, "*")
 
+	// Check RLS policies for DELETE
+	if err := h.checkStorageRLS(r, bucketName, objectPath, "DELETE"); err != nil {
+		h.jsonError(w, err)
+		return
+	}
+
 	if err := h.service.DeleteObject(bucketName, objectPath); err != nil {
 		h.jsonError(w, err)
 		return
@@ -419,6 +637,10 @@ func (h *Handler) BatchDeleteObjects(w http.ResponseWriter, r *http.Request) {
 
 	var deleted []DeletedObject
 	for _, path := range req.Prefixes {
+		// Check RLS policies for DELETE on each file
+		if err := h.checkStorageRLS(r, bucketName, path, "DELETE"); err != nil {
+			continue // Skip files that fail RLS check
+		}
 		if err := h.service.DeleteObject(bucketName, path); err == nil {
 			deleted = append(deleted, DeletedObject{
 				BucketID: bucketName,

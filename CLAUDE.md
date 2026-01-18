@@ -442,6 +442,7 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - API Console for interactive API testing
 - SQL Browser for database queries
 - File storage API (Supabase-compatible, local and S3 backends)
+- Storage RLS policies (storage.filename, storage.foldername, storage.extension helpers)
 
 ### Planned
 - Realtime subscriptions (WebSocket)

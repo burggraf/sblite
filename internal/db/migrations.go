@@ -328,5 +328,11 @@ func (db *DB) RunMigrations() error {
 		return fmt.Errorf("failed to run storage schema migration: %w", err)
 	}
 
+	// Enable RLS by default on storage_objects table (matches Supabase behavior)
+	_, err = db.Exec(`INSERT OR IGNORE INTO _rls_tables (table_name, enabled) VALUES ('storage_objects', 1)`)
+	if err != nil {
+		return fmt.Errorf("failed to enable RLS on storage_objects: %w", err)
+	}
+
 	return nil
 }

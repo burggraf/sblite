@@ -7,6 +7,7 @@ sblite provides a Supabase-compatible Storage API for file uploads, downloads, a
 - **100% Supabase API compatible** - Works with the official Supabase JavaScript client
 - **Multiple storage backends** - Local filesystem or S3-compatible storage (AWS S3, MinIO, R2, etc.)
 - **Public and private buckets** - Support for public URLs and authenticated access
+- **Row Level Security (RLS)** - Supabase-compatible RLS policies for fine-grained access control
 - **File size limits** - Per-bucket configurable size limits
 - **MIME type restrictions** - Per-bucket allowed MIME types
 
@@ -297,13 +298,99 @@ storage/
 
 Each bucket has its own subdirectory. Object paths within the bucket map directly to file paths.
 
+## Row Level Security (RLS)
+
+sblite supports Supabase-compatible RLS policies for storage. Policies are applied to the `storage_objects` table to control file access.
+
+### Default Behavior
+
+- **RLS is enabled by default** on the `storage_objects` table
+- Without any policies, authenticated users cannot access files
+- Service role API key bypasses RLS completely
+- Public bucket endpoint (`/object/public/*`) is unaffected by RLS
+
+### Storage Helper Functions
+
+Use these functions in RLS policy expressions:
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `storage.filename(name)` | Extract filename from path | `'folder/image.png'` → `'image.png'` |
+| `storage.foldername(name)` | Extract folder path | `'folder/sub/file.txt'` → `'folder/sub'` |
+| `storage.extension(name)` | Extract file extension | `'image.png'` → `'png'` |
+
+### Common Policy Patterns
+
+#### Owner-based access (users can only access their own files):
+
+```sql
+-- SELECT policy (download)
+CREATE POLICY "Users can view own files" ON storage_objects
+FOR SELECT USING (owner_id = auth.uid());
+
+-- INSERT policy (upload)
+CREATE POLICY "Users can upload own files" ON storage_objects
+FOR INSERT WITH CHECK (owner_id = auth.uid());
+
+-- DELETE policy
+CREATE POLICY "Users can delete own files" ON storage_objects
+FOR DELETE USING (owner_id = auth.uid());
+```
+
+#### Bucket-specific access:
+
+```sql
+CREATE POLICY "Allow public bucket access" ON storage_objects
+FOR SELECT USING (bucket_id = 'public-assets');
+```
+
+#### File type restrictions:
+
+```sql
+CREATE POLICY "Only images allowed" ON storage_objects
+FOR INSERT WITH CHECK (storage.extension(name) IN ('png', 'jpg', 'gif'));
+```
+
+#### Folder-based access:
+
+```sql
+CREATE POLICY "Users can access their folder" ON storage_objects
+FOR SELECT USING (storage.foldername(name) = auth.uid());
+```
+
+### Storage Operation Mapping
+
+| Storage Operation | RLS Command | Description |
+|-------------------|-------------|-------------|
+| Upload (POST/PUT) | INSERT | `WITH CHECK` expression evaluated |
+| Download (GET) | SELECT | `USING` expression evaluated |
+| Delete (DELETE) | DELETE | `USING` expression evaluated |
+| List (POST /list) | SELECT | `USING` expression evaluated |
+| Copy | SELECT + INSERT | Both checked |
+| Move | SELECT + DELETE + INSERT | All three checked |
+
+### Creating Policies
+
+Use the Dashboard API to create storage RLS policies:
+
+```bash
+curl -X POST http://localhost:8080/_/api/policies \
+  -H "Content-Type: application/json" \
+  -H "apikey: YOUR_SERVICE_ROLE_KEY" \
+  -d '{
+    "table_name": "storage_objects",
+    "policy_name": "owner_access",
+    "command": "SELECT",
+    "using_expr": "owner_id = auth.uid()"
+  }'
+```
+
 ## Limitations
 
 Current implementation limitations compared to Supabase:
 
 1. **No signed URLs** - Signed URL generation not yet implemented
 2. **No image transformations** - Image resizing/transformations not supported
-3. **No RLS policies** - Row Level Security for storage not yet implemented
 
 ## Error Responses
 
@@ -328,3 +415,4 @@ Common error codes:
 | `invalid_request` | 400 | Invalid request body or parameters |
 | `file_too_large` | 413 | File exceeds bucket size limit |
 | `invalid_mime_type` | 400 | MIME type not in allowed list |
+| `access_denied` | 403 | Access denied by RLS policy |

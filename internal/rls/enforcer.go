@@ -16,6 +16,13 @@ func NewEnforcer(policyService *Service) *Enforcer {
 	return &Enforcer{policyService: policyService}
 }
 
+// substituteAllFunctions applies both auth and storage function substitutions
+func substituteAllFunctions(expr string, ctx *AuthContext) string {
+	expr = SubstituteAuthFunctions(expr, ctx)
+	expr = SubstituteStorageFunctions(expr)
+	return expr
+}
+
 // GetSelectConditions returns WHERE conditions for SELECT queries
 func (e *Enforcer) GetSelectConditions(tableName string, ctx *AuthContext) (string, error) {
 	// service_role bypasses RLS
@@ -32,7 +39,7 @@ func (e *Enforcer) GetSelectConditions(tableName string, ctx *AuthContext) (stri
 	for _, p := range policies {
 		if p.Command == "SELECT" || p.Command == "ALL" {
 			if p.UsingExpr != "" {
-				substituted := SubstituteAuthFunctions(p.UsingExpr, ctx)
+				substituted := substituteAllFunctions(p.UsingExpr, ctx)
 				conditions = append(conditions, "("+substituted+")")
 			}
 		}
@@ -62,7 +69,7 @@ func (e *Enforcer) GetInsertConditions(tableName string, ctx *AuthContext) (stri
 	for _, p := range policies {
 		if p.Command == "INSERT" || p.Command == "ALL" {
 			if p.CheckExpr != "" {
-				substituted := SubstituteAuthFunctions(p.CheckExpr, ctx)
+				substituted := substituteAllFunctions(p.CheckExpr, ctx)
 				conditions = append(conditions, "("+substituted+")")
 			}
 		}
@@ -91,7 +98,7 @@ func (e *Enforcer) GetUpdateConditions(tableName string, ctx *AuthContext) (stri
 	for _, p := range policies {
 		if p.Command == "UPDATE" || p.Command == "ALL" {
 			if p.UsingExpr != "" {
-				substituted := SubstituteAuthFunctions(p.UsingExpr, ctx)
+				substituted := substituteAllFunctions(p.UsingExpr, ctx)
 				conditions = append(conditions, "("+substituted+")")
 			}
 		}
@@ -120,7 +127,7 @@ func (e *Enforcer) GetDeleteConditions(tableName string, ctx *AuthContext) (stri
 	for _, p := range policies {
 		if p.Command == "DELETE" || p.Command == "ALL" {
 			if p.UsingExpr != "" {
-				substituted := SubstituteAuthFunctions(p.UsingExpr, ctx)
+				substituted := substituteAllFunctions(p.UsingExpr, ctx)
 				conditions = append(conditions, "("+substituted+")")
 			}
 		}

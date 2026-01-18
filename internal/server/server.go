@@ -123,6 +123,8 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 	if err == nil {
 		s.storageService = storageService
 		s.storageHandler = storage.NewHandler(storageService)
+		// Pass RLS service and enforcer to storage handler for RLS policy enforcement
+		s.storageHandler.SetRLSEnforcer(rlsService, rlsEnforcer)
 	} else {
 		log.Warn("failed to initialize storage service", "error", err.Error())
 	}
