@@ -392,6 +392,7 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 
 ### Implemented
 - Email/password authentication
+- Anonymous sign-in with conversion support
 - OAuth authentication (Google, GitHub)
 - JWT sessions with refresh tokens
 - REST API CRUD operations
