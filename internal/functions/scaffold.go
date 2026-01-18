@@ -48,32 +48,25 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 serve(async (req: Request) => {
   try {
     // Create Supabase client using auto-injected env vars
+    const authHeader = req.headers.get('Authorization')
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
       {
         global: {
-          headers: { Authorization: req.headers.get('Authorization')! },
+          headers: authHeader ? { Authorization: authHeader } : {},
         },
       }
     )
 
-    // Get authenticated user (if any)
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    // Example: Query data from a table
+    // const { data, error } = await supabase.from('your_table').select()
 
-    if (authError) {
-      return new Response(
-        JSON.stringify({ error: authError.message }),
-        {
-          status: 401,
-          headers: { "Content-Type": "application/json" }
-        },
-      )
-    }
+    // Example: Get authenticated user (requires valid JWT in Authorization header)
+    // const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     const data = {
       message: %s,
-      user_id: user?.id,
     }
 
     return new Response(
