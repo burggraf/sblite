@@ -21,6 +21,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/markb/sblite/internal/fts"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -35,6 +36,7 @@ type Handler struct {
 	store           *Store
 	auth            *Auth
 	sessions        *SessionManager
+	fts             *fts.Manager
 	migrationsDir   string
 	startTime       time.Time
 	serverConfig    *ServerConfig
@@ -61,6 +63,7 @@ func NewHandler(db *sql.DB, migrationsDir string) *Handler {
 		store:         store,
 		auth:          NewAuth(store),
 		sessions:      NewSessionManager(store),
+		fts:           fts.NewManager(db),
 		migrationsDir: migrationsDir,
 		startTime:     time.Now(),
 		serverConfig:  &ServerConfig{Version: "0.1.0"},
@@ -139,6 +142,17 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Use(h.requireAuth)
 			r.Get("/", h.handleGetTableRLS)
 			r.Patch("/", h.handleSetTableRLS)
+		})
+
+		// FTS index management routes (nested under tables)
+		r.Route("/tables/{name}/fts", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/", h.handleListFTSIndexes)
+			r.Post("/", h.handleCreateFTSIndex)
+			r.Post("/test", h.handleTestFTSSearch)
+			r.Get("/{index}", h.handleGetFTSIndex)
+			r.Delete("/{index}", h.handleDeleteFTSIndex)
+			r.Post("/{index}/rebuild", h.handleRebuildFTSIndex)
 		})
 
 		// Settings API routes (require auth)
@@ -2996,4 +3010,289 @@ func (h *Handler) generateAPIKey(role string) (string, error) {
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(h.jwtSecret))
+}
+
+// ============================================================================
+// FTS Index Management Handlers
+// ============================================================================
+
+func (h *Handler) handleListFTSIndexes(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	if tableName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
+		return
+	}
+
+	indexes, err := h.fts.ListIndexes(tableName)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"indexes": indexes})
+}
+
+func (h *Handler) handleCreateFTSIndex(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	if tableName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
+		return
+	}
+
+	var req struct {
+		Name      string   `json:"name"`
+		Columns   []string `json:"columns"`
+		Tokenizer string   `json:"tokenizer"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if req.Name == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Index name is required"})
+		return
+	}
+
+	if len(req.Columns) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "At least one column is required"})
+		return
+	}
+
+	err := h.fts.CreateIndex(tableName, req.Name, req.Columns, req.Tokenizer)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Fetch the created index to return
+	index, err := h.fts.GetIndex(tableName, req.Name)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Index created but failed to fetch details"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(index)
+}
+
+func (h *Handler) handleGetFTSIndex(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	indexName := chi.URLParam(r, "index")
+
+	if tableName == "" || indexName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name and index name required"})
+		return
+	}
+
+	index, err := h.fts.GetIndex(tableName, indexName)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(index)
+}
+
+func (h *Handler) handleDeleteFTSIndex(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	indexName := chi.URLParam(r, "index")
+
+	if tableName == "" || indexName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name and index name required"})
+		return
+	}
+
+	err := h.fts.DropIndex(tableName, indexName)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleRebuildFTSIndex(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	indexName := chi.URLParam(r, "index")
+
+	if tableName == "" || indexName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name and index name required"})
+		return
+	}
+
+	err := h.fts.RebuildIndex(tableName, indexName)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Index rebuilt successfully",
+	})
+}
+
+func (h *Handler) handleTestFTSSearch(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	if tableName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
+		return
+	}
+
+	var req struct {
+		IndexName string `json:"index_name"`
+		Query     string `json:"query"`
+		QueryType string `json:"query_type"` // plain, phrase, websearch, fts
+		Limit     int    `json:"limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if req.Query == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Query is required"})
+		return
+	}
+
+	if req.Limit <= 0 {
+		req.Limit = 10
+	}
+	if req.Limit > 100 {
+		req.Limit = 100
+	}
+
+	// Get the index to find the FTS table name
+	index, err := h.fts.GetIndex(tableName, req.IndexName)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Convert query based on type
+	ftsQuery := req.Query
+	if req.QueryType == "" {
+		req.QueryType = "plain"
+	}
+	ftsQuery, err = fts.ConvertQuery(req.Query, req.QueryType)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid query: " + err.Error()})
+		return
+	}
+
+	// Build and execute the search query
+	ftsTableName := fts.GetFTSTableName(tableName, req.IndexName)
+
+	// Get primary key column for the table
+	var pkColumn string
+	err = h.db.QueryRow(`SELECT name FROM pragma_table_info(?) WHERE pk = 1`, tableName).Scan(&pkColumn)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to get primary key"})
+		return
+	}
+
+	// Query joining source table with FTS for ranking
+	query := fmt.Sprintf(`
+		SELECT t.*, fts.rank
+		FROM %q t
+		JOIN %q fts ON t.%q = fts.rowid
+		WHERE %q MATCH ?
+		ORDER BY fts.rank
+		LIMIT ?
+	`, tableName, ftsTableName, pkColumn, ftsTableName)
+
+	rows, err := h.db.Query(query, ftsQuery, req.Limit)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":      false,
+			"error":        err.Error(),
+			"executed_sql": query,
+			"fts_query":    ftsQuery,
+		})
+		return
+	}
+	defer rows.Close()
+
+	columns, _ := rows.Columns()
+	var results []map[string]interface{}
+
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			continue
+		}
+
+		row := make(map[string]interface{})
+		for i, col := range columns {
+			switch v := values[i].(type) {
+			case []byte:
+				row[col] = string(v)
+			default:
+				row[col] = v
+			}
+		}
+		results = append(results, row)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     true,
+		"results":     results,
+		"count":       len(results),
+		"index":       index,
+		"fts_query":   ftsQuery,
+		"query_type":  req.QueryType,
+	})
 }
