@@ -5666,8 +5666,8 @@ const App = {
                                 ${this.renderFunctionTestConsole ? this.renderFunctionTestConsole() : '<div class="p-2">Test console</div>'}
                             </div>
                         </div>
-                        <button class="btn btn-secondary btn-sm" onclick="App.toggleEditorExpand()" title="Toggle expand">
-                            ${isExpanded ? '⛶' : '⛶'}
+                        <button class="btn btn-secondary btn-sm" onclick="App.toggleEditorExpand()" title="${isExpanded ? 'Exit fullscreen' : 'Fullscreen'}">
+                            ${isExpanded ? '⤢' : '⤡'}
                         </button>
                         <button class="btn btn-danger btn-sm" onclick="App.deleteFunction('${selected}')">Delete</button>
                     </div>

@@ -101,7 +101,9 @@ func (rm *RuntimeManager) Start(ctx context.Context) error {
 		"port", rm.config.Port,
 	)
 
-	rm.process = exec.CommandContext(ctx, rm.binaryPath, args...)
+	// Use background context for the process - the runtime should outlive any single request.
+	// The passed ctx is only used for waiting on startup, not for the process lifetime.
+	rm.process = exec.Command(rm.binaryPath, args...)
 
 	// Set environment variables
 	rm.process.Env = rm.buildEnv()

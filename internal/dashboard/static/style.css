@@ -2342,6 +2342,19 @@ small.text-muted {
     min-height: calc(100vh - 200px);
 }
 
+/* When editor is expanded, hide list and make detail full width */
+.functions-layout:has(.function-detail.expanded) {
+    grid-template-columns: 1fr;
+}
+
+.functions-layout:has(.function-detail.expanded) .functions-list-panel {
+    display: none;
+}
+
+.functions-layout:has(.function-detail.expanded) .functions-detail-panel {
+    padding: 0.5rem;
+}
+
 .functions-list-panel {
     background: var(--card-bg);
     border: 1px solid var(--border);
@@ -2714,12 +2727,32 @@ small.text-muted {
    Function Editor Layout
    ===================== */
 
+.function-detail.expanded {
+    /* Remove padding in expanded mode for more space */
+    margin: 0;
+}
+
+.function-detail.expanded .function-detail-header {
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.5rem;
+}
+
 .function-detail.expanded .editor-container {
-    display: block;
+    /* Take up as much vertical space as possible */
+    height: calc(100vh - 180px);
 }
 
 .function-detail.expanded .file-tree-panel {
     display: none;
+}
+
+.function-detail.expanded .editor-panel {
+    width: 100%;
+}
+
+.function-detail.expanded .editor-content {
+    /* In expanded mode, fill available height minus header */
+    height: calc(100% - 45px);
 }
 
 .editor-container {
