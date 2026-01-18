@@ -543,3 +543,37 @@ func TestLogoutInvalidScope(t *testing.T) {
 		t.Errorf("expected status 400 for invalid scope, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestSettingsShowsEnabledOAuthProviders(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Enable Google, disable GitHub
+	srv.configureOAuthProvider("google", "id", "secret", true)
+	srv.configureOAuthProvider("github", "id", "secret", false)
+
+	req := httptest.NewRequest("GET", "/auth/v1/settings", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		External map[string]bool `json:"external"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if !resp.External["google"] {
+		t.Error("expected google to be enabled")
+	}
+	if resp.External["github"] {
+		t.Error("expected github to be disabled")
+	}
+	if !resp.External["email"] {
+		t.Error("expected email to always be enabled")
+	}
+}
