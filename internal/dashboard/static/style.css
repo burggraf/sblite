@@ -1024,6 +1024,40 @@ small.text-muted {
     border-radius: 4px;
 }
 
+/* API Keys Section */
+.api-key-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.api-key-item label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.api-key-value {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.api-key-value .form-input {
+    flex: 1;
+    font-size: 0.8rem;
+}
+
+.api-key-value .form-input.mono {
+    font-family: monospace;
+}
+
+.api-key-item small {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
 .section-actions {
     margin-top: 1rem;
     padding-top: 1rem;

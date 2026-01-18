@@ -47,12 +47,13 @@ const App = {
             auth: null,
             templates: [],
             loading: false,
-            expandedSections: { server: true, auth: false, oauth: false, templates: false, export: false },
+            expandedSections: { server: true, apiKeys: false, auth: false, oauth: false, templates: false, export: false },
             editingTemplate: null,
             oauth: {
                 providers: {},
                 redirectUrls: [],
             },
+            apiKeys: null,
         },
         logs: {
             config: null,
@@ -2305,12 +2306,13 @@ const App = {
         this.render();
 
         try {
-            const [serverRes, authRes, templatesRes, oauthRes, redirectUrlsRes] = await Promise.all([
+            const [serverRes, authRes, templatesRes, oauthRes, redirectUrlsRes, apiKeysRes] = await Promise.all([
                 fetch('/_/api/settings/server'),
                 fetch('/_/api/settings/auth'),
                 fetch('/_/api/settings/templates'),
                 fetch('/_/api/settings/oauth'),
-                fetch('/_/api/settings/oauth/redirect-urls')
+                fetch('/_/api/settings/oauth/redirect-urls'),
+                fetch('/_/api/apikeys')
             ]);
 
             if (serverRes.ok) {
@@ -2328,6 +2330,9 @@ const App = {
             if (redirectUrlsRes.ok) {
                 const data = await redirectUrlsRes.json();
                 this.state.settings.oauth.redirectUrls = data.urls || [];
+            }
+            if (apiKeysRes.ok) {
+                this.state.settings.apiKeys = await apiKeysRes.json();
             }
         } catch (e) {
             this.state.error = 'Failed to load settings';
@@ -2498,7 +2503,7 @@ const App = {
     },
 
     renderSettingsView() {
-        const { server, auth, templates, loading, expandedSections, editingTemplate, oauth } = this.state.settings;
+        const { server, auth, templates, loading, expandedSections, editingTemplate, oauth, apiKeys } = this.state.settings;
 
         if (loading) {
             return '<div class="loading">Loading settings...</div>';
@@ -2508,6 +2513,7 @@ const App = {
             <div class="card-title">Settings</div>
             <div class="settings-view">
                 ${this.renderServerInfoSection(server, expandedSections.server)}
+                ${this.renderApiKeysSection(apiKeys, expandedSections.apiKeys)}
                 ${this.renderAuthSection(auth, expandedSections.auth)}
                 ${this.renderOAuthSection(oauth, expandedSections.oauth)}
                 ${this.renderTemplatesSection(templates, expandedSections.templates, editingTemplate)}
@@ -2563,6 +2569,65 @@ const App = {
                 ` : ''}
             </div>
         `;
+    },
+
+    renderApiKeysSection(apiKeys, expanded) {
+        return `
+            <div class="settings-section">
+                <div class="section-header" onclick="App.toggleSettingsSection('apiKeys')">
+                    <span class="section-toggle">${expanded ? '▼' : '▶'}</span>
+                    <h3>API Keys</h3>
+                </div>
+                ${expanded ? `
+                    <div class="section-content">
+                        <p class="text-muted" style="margin-bottom: 1rem;">
+                            Use these keys to connect with <code>@supabase/supabase-js</code> or make API requests.
+                        </p>
+                        <div class="api-key-item">
+                            <label>anon (public) key</label>
+                            <div class="api-key-value">
+                                <input type="text" class="form-input mono" readonly
+                                    value="${apiKeys?.anon_key || ''}"
+                                    onclick="this.select()">
+                                <button class="btn btn-secondary btn-sm" onclick="App.copyApiKey('anon')">Copy</button>
+                            </div>
+                            <small class="text-muted">Safe to use in browsers. Subject to Row Level Security policies.</small>
+                        </div>
+                        <div class="api-key-item" style="margin-top: 1rem;">
+                            <label>service_role (secret) key</label>
+                            <div class="api-key-value">
+                                <input type="password" class="form-input mono" readonly
+                                    id="service-role-key-input"
+                                    value="${apiKeys?.service_role_key || ''}"
+                                    onclick="this.select()">
+                                <button class="btn btn-secondary btn-sm" onclick="App.toggleServiceRoleKey()">Show</button>
+                                <button class="btn btn-secondary btn-sm" onclick="App.copyApiKey('service_role')">Copy</button>
+                            </div>
+                            <small class="text-muted">Keep secret! Bypasses Row Level Security. Never expose in browsers.</small>
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    copyApiKey(keyType) {
+        const apiKeys = this.state.settings.apiKeys;
+        const key = keyType === 'service_role' ? apiKeys?.service_role_key : apiKeys?.anon_key;
+        if (key) {
+            navigator.clipboard.writeText(key).then(() => {
+                alert('API key copied to clipboard');
+            }).catch(() => {
+                alert('Failed to copy to clipboard');
+            });
+        }
+    },
+
+    toggleServiceRoleKey() {
+        const input = document.getElementById('service-role-key-input');
+        if (input) {
+            input.type = input.type === 'password' ? 'text' : 'password';
+        }
     },
 
     renderAuthSection(auth, expanded) {

@@ -32,7 +32,7 @@ sqlite3 shoplite.db < test_apps/shoplite/seed.sql
 ### 3. Get API keys
 
 Visit `http://localhost:8080/_` to access the dashboard (first-time setup required).
-Navigate to API Settings to get your `anon` key.
+Go to **Settings** and expand the **API Keys** section to get your `anon` key.
 
 ### 4. Configure environment
 
