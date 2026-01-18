@@ -46,7 +46,7 @@ supabase.storage.from('avatars').getPublicUrl('path/file.png')
 
 ---
 
-### Full-Text Search
+### ~~Full-Text Search~~ ✅ COMPLETE
 Text search using SQLite FTS5 extension.
 
 ```javascript
@@ -54,30 +54,31 @@ Text search using SQLite FTS5 extension.
 supabase.from('posts').select().textSearch('content', 'search query')
 ```
 
-**Implementation approach:**
-- Create FTS5 virtual tables mirroring user tables
-- Implement `textSearch()` filter translating to FTS5 MATCH
-- Auto-sync FTS index on INSERT/UPDATE/DELETE
-- Consider: manual FTS table creation vs automatic
+**Implemented:**
+- FTS5 virtual tables with external content (no data duplication)
+- `textSearch()` filter with plain, phrase, websearch, and fts query types
+- Auto-sync via triggers on INSERT/UPDATE/DELETE
+- Relevance ordering via BM25 ranking
+- Dashboard UI for index management
+- PostgreSQL DDL export with GIN indexes
 
-**Complexity:** Medium
-**Priority:** Low
+See `docs/full-text-search.md` for documentation.
 
 ---
 
 ## Auth API Gaps
 
-### OAuth Providers
-Social login with Google, GitHub, Apple, etc.
+### ~~OAuth Providers~~ ✅ COMPLETE
+Social login with Google, GitHub.
 
-**Implementation approach:**
-- Add OAuth endpoints (`/auth/v1/authorize`, `/auth/v1/callback`)
-- Store provider configs in settings
-- Handle OAuth flow, create/link users
-- Requires: redirect URLs, client secrets management
+**Implemented:**
+- OAuth endpoints (`/auth/v1/authorize`, `/auth/v1/callback`)
+- Google and GitHub providers
+- PKCE flow support
+- Identity linking/unlinking
+- Dashboard UI for provider configuration
 
-**Complexity:** Large (per provider)
-**Priority:** Low (email auth covers most use cases)
+See `docs/oauth.md` for documentation.
 
 ---
 
@@ -127,18 +128,18 @@ TOTP-based second factor.
 
 ## Priority Summary
 
-| Feature | Priority | Effort | Notes |
-|---------|----------|--------|-------|
-| Realtime subscriptions | Medium | Large | Major feature |
-| File storage | Medium | Large | Major feature |
-| Full-text search | Low | Medium | SQLite FTS5 |
-| OAuth providers | Low | Large | Per-provider work |
-| Anonymous sign-in | Low | Small | Nice to have |
-| Phone auth | Low | Medium | Requires SMS provider |
-| MFA | Low | Medium | Enterprise feature |
+| Feature | Priority | Effort | Status |
+|---------|----------|--------|--------|
+| Realtime subscriptions | Medium | Large | Pending |
+| File storage | Medium | Large | Pending |
+| Full-text search | Low | Medium | ✅ Complete |
+| OAuth providers | Low | Large | ✅ Complete (Google, GitHub) |
+| Anonymous sign-in | Low | Small | Pending |
+| Phone auth | Low | Medium | Pending |
+| MFA | Low | Medium | Pending |
 
 ## Notes
 
-- sblite is fully functional for typical use cases (CRUD + auth + RLS)
+- sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth)
 - Realtime and Storage are the biggest gaps vs full Supabase
-- All auth gaps are for enterprise/advanced use cases
+- Remaining auth gaps are for enterprise/advanced use cases
