@@ -27,6 +27,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | Configurable logging (console/file/database) | :white_check_mark: |
 | Row Level Security | :white_check_mark: |
 | Web Dashboard | :white_check_mark: |
+| Full-text search (FTS5) | :white_check_mark: |
 | Realtime subscriptions | :construction: Planned |
 | File storage | :construction: Planned |
 
@@ -222,6 +223,7 @@ See [Email System Documentation](docs/EMAIL.md) for detailed configuration and u
 - [OAuth Authentication](docs/OAUTH.md) - Google and GitHub OAuth setup, API reference, and troubleshooting
 - [Email System](docs/EMAIL.md) - Complete guide to email modes, configuration, and authentication flows
 - [Logging System](docs/LOGGING.md) - Logging modes, rotation, database queries, and configuration
+- [Full-Text Search](docs/full-text-search.md) - FTS5 indexing, query types, and Supabase textSearch compatibility
 
 ### Design & Implementation
 - [Design Document](docs/plans/2026-01-16-supabase-lite-design.md) - Architecture, schema design, and roadmap

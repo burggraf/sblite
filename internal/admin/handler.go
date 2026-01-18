@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/fts"
 	"github.com/markb/sblite/internal/schema"
 	"github.com/markb/sblite/internal/types"
 )
@@ -58,10 +59,27 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
+// CreateFTSIndexRequest is the request body for creating an FTS index.
+type CreateFTSIndexRequest struct {
+	Name      string   `json:"name"`
+	Columns   []string `json:"columns"`
+	Tokenizer string   `json:"tokenizer,omitempty"`
+}
+
+// FTSIndexInfo represents FTS index information in responses.
+type FTSIndexInfo struct {
+	TableName string   `json:"table_name"`
+	IndexName string   `json:"index_name"`
+	Columns   []string `json:"columns"`
+	Tokenizer string   `json:"tokenizer"`
+	CreatedAt string   `json:"created_at,omitempty"`
+}
+
 // Handler handles admin API requests.
 type Handler struct {
 	db     *db.DB
 	schema *schema.Schema
+	fts    *fts.Manager
 }
 
 // NewHandler creates a new admin Handler.
@@ -69,7 +87,13 @@ func NewHandler(database *db.DB, sch *schema.Schema) *Handler {
 	return &Handler{
 		db:     database,
 		schema: sch,
+		fts:    fts.NewManager(database.DB),
 	}
+}
+
+// GetFTSManager returns the FTS manager for use by other handlers.
+func (h *Handler) GetFTSManager() *fts.Manager {
+	return h.fts
 }
 
 // isReservedTableName checks if a table name is reserved or uses a reserved prefix.
@@ -404,4 +428,155 @@ func sanitizeIdentifier(name string) string {
 	// Remove any existing quotes and double-quote for safety
 	name = strings.ReplaceAll(name, "\"", "")
 	return "\"" + name + "\""
+}
+
+// CreateFTSIndex handles POST /admin/v1/tables/{name}/fts.
+// It creates a new FTS index on the specified columns.
+func (h *Handler) CreateFTSIndex(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	if tableName == "" {
+		h.writeError(w, http.StatusBadRequest, "validation_failed", "Table name is required")
+		return
+	}
+
+	var req CreateFTSIndexRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	// Validate index name
+	if req.Name == "" {
+		h.writeError(w, http.StatusBadRequest, "validation_failed", "Index name is required")
+		return
+	}
+
+	// Validate columns
+	if len(req.Columns) == 0 {
+		h.writeError(w, http.StatusBadRequest, "validation_failed", "At least one column is required")
+		return
+	}
+
+	// Create the FTS index
+	if err := h.fts.CreateIndex(tableName, req.Name, req.Columns, req.Tokenizer); err != nil {
+		h.writeError(w, http.StatusBadRequest, "fts_error", err.Error())
+		return
+	}
+
+	// Get the created index for response
+	idx, err := h.fts.GetIndex(tableName, req.Name)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "server_error", "Index created but failed to retrieve details")
+		return
+	}
+
+	response := FTSIndexInfo{
+		TableName: idx.TableName,
+		IndexName: idx.IndexName,
+		Columns:   idx.Columns,
+		Tokenizer: idx.Tokenizer,
+		CreatedAt: idx.CreatedAt,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(response)
+}
+
+// ListFTSIndexes handles GET /admin/v1/tables/{name}/fts.
+// It returns all FTS indexes for a table.
+func (h *Handler) ListFTSIndexes(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	if tableName == "" {
+		h.writeError(w, http.StatusBadRequest, "validation_failed", "Table name is required")
+		return
+	}
+
+	indexes, err := h.fts.ListIndexes(tableName)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
+
+	response := make([]FTSIndexInfo, len(indexes))
+	for i, idx := range indexes {
+		response[i] = FTSIndexInfo{
+			TableName: idx.TableName,
+			IndexName: idx.IndexName,
+			Columns:   idx.Columns,
+			Tokenizer: idx.Tokenizer,
+			CreatedAt: idx.CreatedAt,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// GetFTSIndex handles GET /admin/v1/tables/{name}/fts/{index}.
+// It returns a single FTS index.
+func (h *Handler) GetFTSIndex(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	indexName := chi.URLParam(r, "index")
+
+	if tableName == "" || indexName == "" {
+		h.writeError(w, http.StatusBadRequest, "validation_failed", "Table name and index name are required")
+		return
+	}
+
+	idx, err := h.fts.GetIndex(tableName, indexName)
+	if err != nil {
+		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+
+	response := FTSIndexInfo{
+		TableName: idx.TableName,
+		IndexName: idx.IndexName,
+		Columns:   idx.Columns,
+		Tokenizer: idx.Tokenizer,
+		CreatedAt: idx.CreatedAt,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// DeleteFTSIndex handles DELETE /admin/v1/tables/{name}/fts/{index}.
+// It removes an FTS index and its triggers.
+func (h *Handler) DeleteFTSIndex(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	indexName := chi.URLParam(r, "index")
+
+	if tableName == "" || indexName == "" {
+		h.writeError(w, http.StatusBadRequest, "validation_failed", "Table name and index name are required")
+		return
+	}
+
+	if err := h.fts.DropIndex(tableName, indexName); err != nil {
+		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RebuildFTSIndex handles POST /admin/v1/tables/{name}/fts/{index}/rebuild.
+// It rebuilds an FTS index from scratch.
+func (h *Handler) RebuildFTSIndex(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	indexName := chi.URLParam(r, "index")
+
+	if tableName == "" || indexName == "" {
+		h.writeError(w, http.StatusBadRequest, "validation_failed", "Table name and index name are required")
+		return
+	}
+
+	if err := h.fts.RebuildIndex(tableName, indexName); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "rebuild_error", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "rebuilt"})
 }

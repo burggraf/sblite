@@ -174,6 +174,13 @@ func (s *Server) setupRoutes() {
 		r.Get("/tables", s.adminHandler.ListTables)
 		r.Get("/tables/{name}", s.adminHandler.GetTable)
 		r.Delete("/tables/{name}", s.adminHandler.DeleteTable)
+
+		// FTS index management
+		r.Post("/tables/{name}/fts", s.adminHandler.CreateFTSIndex)
+		r.Get("/tables/{name}/fts", s.adminHandler.ListFTSIndexes)
+		r.Get("/tables/{name}/fts/{index}", s.adminHandler.GetFTSIndex)
+		r.Delete("/tables/{name}/fts/{index}", s.adminHandler.DeleteFTSIndex)
+		r.Post("/tables/{name}/fts/{index}/rebuild", s.adminHandler.RebuildFTSIndex)
 	})
 
 	// Mail viewer routes (only in catch mode)

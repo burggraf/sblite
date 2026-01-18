@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/markb/sblite/internal/fts"
 )
 
 // SQL reserved words that require quoting when used as identifiers
@@ -150,6 +152,48 @@ func (lf LogicalFilter) ToSQL() (string, []any) {
 	return "(" + strings.Join(conditions, joiner) + ")", args
 }
 
+// FTSConditionBuilder handles FTS condition building with index lookup
+type FTSConditionBuilder struct {
+	ftsManager *fts.Manager
+}
+
+// NewFTSConditionBuilder creates a new FTS condition builder
+func NewFTSConditionBuilder(manager *fts.Manager) *FTSConditionBuilder {
+	return &FTSConditionBuilder{ftsManager: manager}
+}
+
+// BuildFTSCondition builds a SQL condition for an FTS filter
+// Returns the SQL condition, arguments, and any error
+func (b *FTSConditionBuilder) BuildFTSCondition(tableName string, filter FTSFilter) (string, []any, error) {
+	if b.ftsManager == nil {
+		return "", nil, fmt.Errorf("FTS not available")
+	}
+
+	// The filter.Column is the FTS index name or we need to find an index that includes this column
+	idx, err := b.ftsManager.GetIndex(tableName, filter.Column)
+	if err != nil {
+		// Try to find an index that includes this column
+		idx, err = b.ftsManager.FindIndexForColumn(tableName, filter.Column)
+		if err != nil || idx == nil {
+			return "", nil, fmt.Errorf("no FTS index found for column %q on table %q", filter.Column, tableName)
+		}
+	}
+
+	// Convert the query to FTS5 syntax based on operator type
+	ftsQuery := fts.ToFTS5Query(fts.QueryType(filter.Operator), filter.Query)
+	if ftsQuery == "" {
+		return "", nil, fmt.Errorf("empty FTS query")
+	}
+
+	// Build the FTS table name
+	ftsTable := fts.GetFTSTableName(tableName, idx.IndexName)
+
+	// Build the condition using a subquery
+	condition := fmt.Sprintf(`rowid IN (SELECT rowid FROM %q WHERE %q MATCH ?)`, ftsTable, ftsTable)
+
+	return condition, []any{ftsQuery}, nil
+}
+
 func BuildSelectQuery(q Query) (string, []any) {
 	var args []any
 	var sb strings.Builder
@@ -202,8 +246,23 @@ func BuildSelectQuery(q Query) (string, []any) {
 			sb.WriteString(" AND ")
 		} else {
 			sb.WriteString(" WHERE ")
+			hasConditions = true
 		}
 		sb.WriteString(q.RLSCondition)
+	}
+
+	// FTS conditions (added after RLS conditions, before ORDER BY)
+	for _, ftsCond := range q.FTSConditions {
+		if ftsCond.SQL != "" {
+			if hasConditions {
+				sb.WriteString(" AND ")
+			} else {
+				sb.WriteString(" WHERE ")
+				hasConditions = true
+			}
+			sb.WriteString(ftsCond.SQL)
+			args = append(args, ftsCond.Args...)
+		}
 	}
 
 	// ORDER BY clause
@@ -374,13 +433,29 @@ func BuildSelectQueryWithRelations(q Query, relCache *RelationshipCache) (string
 	}
 
 	// RLS condition
+	hasConditions := len(conditions) > 0
 	if q.RLSCondition != "" {
-		if len(conditions) > 0 {
+		if hasConditions {
 			sb.WriteString(" AND ")
 		} else {
 			sb.WriteString(" WHERE ")
+			hasConditions = true
 		}
 		sb.WriteString(q.RLSCondition)
+	}
+
+	// FTS conditions (added after RLS, before ORDER BY)
+	for _, ftsCond := range q.FTSConditions {
+		if ftsCond.SQL != "" {
+			if hasConditions {
+				sb.WriteString(" AND ")
+			} else {
+				sb.WriteString(" WHERE ")
+				hasConditions = true
+			}
+			sb.WriteString(ftsCond.SQL)
+			args = append(args, ftsCond.Args...)
+		}
 	}
 
 	// ORDER BY clause

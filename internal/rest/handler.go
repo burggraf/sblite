@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/markb/sblite/internal/db"
+	"github.com/markb/sblite/internal/fts"
 	"github.com/markb/sblite/internal/rls"
 	"github.com/markb/sblite/internal/schema"
 	"github.com/markb/sblite/internal/types"
@@ -24,6 +25,7 @@ type Handler struct {
 	relCache *RelationshipCache
 	relExec  *RelationQueryExecutor
 	schema   *schema.Schema
+	fts      *fts.Manager
 }
 
 func NewHandler(database *db.DB, enforcer *rls.Enforcer, s *schema.Schema) *Handler {
@@ -37,6 +39,7 @@ func NewHandler(database *db.DB, enforcer *rls.Enforcer, s *schema.Schema) *Hand
 		relCache: relCache,
 		relExec:  relExec,
 		schema:   s,
+		fts:      fts.NewManager(database.DB),
 	}
 }
 
@@ -231,7 +234,8 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 					// It will be parsed as a related filter (RelatedTable set).
 					for _, value := range values {
 						filterStr := fmt.Sprintf("%s=%s", key, value)
-						if filter, err := ParseFilter(filterStr); err == nil {
+						filter, err := ParseFilter(filterStr)
+						if err == nil {
 							q.Filters = append(q.Filters, filter)
 						}
 					}
@@ -240,9 +244,17 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 			}
 		}
 
-		// Regular filter on main table
+		// Regular filter on main table - check for FTS operators first
 		for _, value := range values {
 			filterStr := fmt.Sprintf("%s=%s", key, value)
+
+			// Try parsing as FTS filter first
+			if ftsFilter, err := ParseFTSFilter(filterStr); err == nil && ftsFilter != nil {
+				q.FTSFilters = append(q.FTSFilters, *ftsFilter)
+				continue
+			}
+
+			// Try parsing as regular filter
 			if filter, err := ParseFilter(filterStr); err == nil {
 				q.Filters = append(q.Filters, filter)
 			}
@@ -288,6 +300,19 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 			q.Offset = start
 			q.Limit = end - start + 1
 			rangeApplied = true
+		}
+	}
+
+	// Build FTS conditions if there are FTS filters and add to query
+	if len(q.FTSFilters) > 0 {
+		ftsBuilder := NewFTSConditionBuilder(h.fts)
+		for _, ftsFilter := range q.FTSFilters {
+			cond, args, err := ftsBuilder.BuildFTSCondition(q.Table, ftsFilter)
+			if err != nil {
+				h.writeError(w, http.StatusBadRequest, "fts_error", err.Error())
+				return
+			}
+			q.FTSConditions = append(q.FTSConditions, FTSCondition{SQL: cond, Args: args})
 		}
 	}
 

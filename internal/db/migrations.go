@@ -180,6 +180,20 @@ CREATE TABLE IF NOT EXISTS auth_flow_state (
 );
 `
 
+// FTS: _fts_indexes table tracks full-text search indexes
+const ftsSchema = `
+CREATE TABLE IF NOT EXISTS _fts_indexes (
+    table_name    TEXT NOT NULL,
+    index_name    TEXT NOT NULL,
+    columns       TEXT NOT NULL,
+    tokenizer     TEXT DEFAULT 'unicode61',
+    created_at    TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (table_name, index_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fts_indexes_table ON _fts_indexes(table_name);
+`
+
 const defaultTemplates = `
 INSERT OR IGNORE INTO auth_email_templates (id, type, subject, body_html, body_text, updated_at) VALUES
 ('tpl-confirmation', 'confirmation', 'Confirm your email',
@@ -277,6 +291,11 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(oauthFlowStateSchema)
 	if err != nil {
 		return fmt.Errorf("failed to run OAuth flow state schema migration: %w", err)
+	}
+
+	_, err = db.Exec(ftsSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run FTS schema migration: %w", err)
 	}
 
 	return nil

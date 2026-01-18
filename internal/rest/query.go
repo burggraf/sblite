@@ -18,6 +18,13 @@ type Filter struct {
 	JSONText      bool   // True if ->> (text extraction), false if -> (JSON)
 }
 
+// FTSFilter represents a full-text search filter
+type FTSFilter struct {
+	Column   string // The FTS index name or column to search
+	Operator string // fts, plfts, phfts, or wfts
+	Query    string // The search query
+}
+
 // LogicalFilter groups multiple filters with OR or AND logic
 type LogicalFilter struct {
 	Operator string   // "or", "and"
@@ -33,10 +40,18 @@ type RelationModifiers struct {
 	LogicalFilters []LogicalFilter // OR/AND filters to apply to the relation
 }
 
+// FTSCondition represents a pre-built FTS condition with its SQL and arguments
+type FTSCondition struct {
+	SQL  string
+	Args []any
+}
+
 type Query struct {
 	Table             string
 	Select            []string
 	Filters           []Filter
+	FTSFilters        []FTSFilter                  // Full-text search filters (parsed)
+	FTSConditions     []FTSCondition               // Pre-built FTS conditions (SQL + args)
 	LogicalFilters    []LogicalFilter
 	Order             []OrderBy
 	Limit             int
@@ -66,6 +81,19 @@ var validOperators = map[string]string{
 	"not":   "NOT", // not is a modifier, actual SQL depends on inner operator
 }
 
+// FTS operators for full-text search
+var ftsOperators = map[string]bool{
+	"fts":   true, // default FTS (to_tsquery equivalent)
+	"plfts": true, // plain text search (plainto_tsquery equivalent)
+	"phfts": true, // phrase search (phraseto_tsquery equivalent)
+	"wfts":  true, // websearch (websearch_to_tsquery equivalent)
+}
+
+// IsFTSOperator checks if the operator is a full-text search operator
+func IsFTSOperator(op string) bool {
+	return ftsOperators[op]
+}
+
 func ParseFilter(input string) (Filter, error) {
 	parts := strings.SplitN(input, "=", 2)
 	if len(parts) != 2 {
@@ -82,6 +110,11 @@ func ParseFilter(input string) (Filter, error) {
 
 	operator := opParts[0]
 	value := opParts[1]
+
+	// Check for FTS operators - these are handled separately
+	if IsFTSOperator(operator) {
+		return Filter{}, fmt.Errorf("fts_operator:%s:%s:%s", column, operator, value)
+	}
 
 	if _, ok := validOperators[operator]; !ok {
 		return Filter{}, fmt.Errorf("unknown operator: %s", operator)
@@ -116,6 +149,36 @@ func ParseFilter(input string) (Filter, error) {
 		Column:   column,
 		Operator: operator,
 		Value:    value,
+	}, nil
+}
+
+// ParseFTSFilter parses a full-text search filter string.
+// Returns an FTSFilter if the operator is an FTS operator, nil otherwise.
+func ParseFTSFilter(input string) (*FTSFilter, error) {
+	parts := strings.SplitN(input, "=", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid filter format: %s", input)
+	}
+
+	column := parts[0]
+	opValue := parts[1]
+
+	opParts := strings.SplitN(opValue, ".", 2)
+	if len(opParts) != 2 {
+		return nil, fmt.Errorf("invalid operator format: %s", opValue)
+	}
+
+	operator := opParts[0]
+	query := opParts[1]
+
+	if !IsFTSOperator(operator) {
+		return nil, nil // Not an FTS filter
+	}
+
+	return &FTSFilter{
+		Column:   column,
+		Operator: operator,
+		Query:    query,
 	}, nil
 }
 
