@@ -5602,7 +5602,10 @@ const App = {
         return `
             <div class="file-browser">
                 ${this.renderFileBrowserToolbar()}
-                <div class="file-browser-content ${viewMode}">
+                <div class="file-browser-content ${viewMode}"
+                     ondragover="App.handleDragOver(event)"
+                     ondragleave="App.handleDragLeave(event)"
+                     ondrop="App.handleDrop(event)">
                     ${loading ? '<div class="loading">Loading...</div>' : ''}
                     ${!loading && allItems.length === 0 ? `
                         <div class="file-browser-empty">
@@ -5612,6 +5615,7 @@ const App = {
                     ` : ''}
                     ${viewMode === 'grid' ? this.renderFileGrid(allItems) : this.renderFileList(allItems)}
                 </div>
+                ${this.renderUploadProgress()}
             </div>
         `;
     },
@@ -5876,12 +5880,126 @@ const App = {
     },
 
     handleFileSelect(event) {
-        // Will be implemented in Task 6 (Upload)
-        const files = event.target.files;
+        const files = Array.from(event.target.files);
         if (files.length > 0) {
-            this.showToast('Upload functionality coming in next task', 'info');
+            this.uploadFiles(files);
         }
         event.target.value = '';
+    },
+
+    async uploadFiles(files) {
+        const { selectedBucket, currentPath } = this.state.storage;
+        if (!selectedBucket) return;
+
+        for (const file of files) {
+            const uploadItem = {
+                name: file.name,
+                size: file.size,
+                progress: 0,
+                status: 'uploading'
+            };
+            this.state.storage.uploading.push(uploadItem);
+            this.render();
+
+            try {
+                const formData = new FormData();
+                formData.append('bucket', selectedBucket.name);
+                formData.append('path', currentPath);
+                formData.append('file', file);
+
+                await this.uploadWithProgress(formData, uploadItem);
+                uploadItem.status = 'complete';
+                uploadItem.progress = 100;
+            } catch (err) {
+                uploadItem.status = 'error';
+                uploadItem.error = err.message;
+            }
+            this.render();
+        }
+
+        await this.loadObjects();
+        setTimeout(() => {
+            this.state.storage.uploading = this.state.storage.uploading.filter(u => u.status === 'uploading');
+            this.render();
+        }, 3000);
+    },
+
+    uploadWithProgress(formData, uploadItem) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    uploadItem.progress = Math.round((e.loaded / e.total) * 100);
+                    this.render();
+                }
+            });
+            xhr.addEventListener('load', () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try {
+                        resolve(JSON.parse(xhr.responseText));
+                    } catch {
+                        resolve({});
+                    }
+                } else {
+                    reject(new Error('Upload failed'));
+                }
+            });
+            xhr.addEventListener('error', () => reject(new Error('Upload failed')));
+            xhr.open('POST', '/_/api/storage/objects/upload');
+            xhr.send(formData);
+        });
+    },
+
+    renderUploadProgress() {
+        const { uploading } = this.state.storage;
+        if (uploading.length === 0) return '';
+
+        return `
+            <div class="upload-progress-panel">
+                <div class="upload-progress-header">
+                    <span>Uploading ${uploading.length} file${uploading.length > 1 ? 's' : ''}</span>
+                    <button class="btn-icon" onclick="App.clearCompletedUploads()">&#10005;</button>
+                </div>
+                <div class="upload-progress-list">
+                    ${uploading.map(item => `
+                        <div class="upload-item ${item.status}">
+                            <span class="upload-name">${this.escapeHtml(item.name)}</span>
+                            <div class="upload-bar">
+                                <div class="upload-bar-fill" style="width: ${item.progress}%"></div>
+                            </div>
+                            <span class="upload-status">
+                                ${item.status === 'uploading' ? item.progress + '%' : ''}
+                                ${item.status === 'complete' ? '&#10003;' : ''}
+                                ${item.status === 'error' ? '&#10007;' : ''}
+                            </span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    },
+
+    clearCompletedUploads() {
+        this.state.storage.uploading = this.state.storage.uploading.filter(u => u.status === 'uploading');
+        this.render();
+    },
+
+    handleDragOver(event) {
+        event.preventDefault();
+        event.currentTarget.classList.add('drag-over');
+    },
+
+    handleDragLeave(event) {
+        event.currentTarget.classList.remove('drag-over');
+    },
+
+    handleDrop(event) {
+        event.preventDefault();
+        event.currentTarget.classList.remove('drag-over');
+        const files = Array.from(event.dataTransfer.files);
+        if (files.length > 0) {
+            this.uploadFiles(files);
+        }
     },
 
     async downloadFile(filename) {
