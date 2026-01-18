@@ -5658,6 +5658,80 @@ const App = {
         `;
     },
 
+    // File tree rendering
+    renderFileTree(node, path = '') {
+        const currentPath = path ? `${path}/${node.name}` : node.name;
+        const isRoot = path === '';
+        const isExpanded = isRoot || this.state.functions.editor.expandedFolders[currentPath];
+
+        if (node.type === 'file') {
+            const isActive = this.state.functions.editor.currentFile === currentPath;
+            const isDirty = isActive && this.state.functions.editor.isDirty;
+            return `
+                <div class="file-tree-item file ${isActive ? 'active' : ''}"
+                     onclick="App.openFunctionFile('${currentPath}')"
+                     oncontextmenu="App.showFileContextMenu(event, '${currentPath}', 'file')">
+                    <span class="file-icon">${this.getFileIcon(node.name)}</span>
+                    <span class="file-name">${this.escapeHtml(node.name)}${isDirty ? ' ●' : ''}</span>
+                </div>
+            `;
+        }
+
+        // Directory
+        const children = node.children || [];
+        return `
+            <div class="file-tree-item dir ${isRoot ? 'root' : ''}">
+                <div class="dir-header" onclick="App.toggleFolder('${currentPath}')"
+                     oncontextmenu="App.showFileContextMenu(event, '${currentPath}', 'dir')">
+                    <span class="expand-icon">${isExpanded ? '▼' : '▶'}</span>
+                    <span class="dir-name">${this.escapeHtml(node.name)}</span>
+                </div>
+                ${isExpanded ? `
+                    <div class="dir-children">
+                        ${children.map(child => this.renderFileTree(child, isRoot ? '' : currentPath)).join('')}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    getFileIcon(filename) {
+        const ext = filename.split('.').pop();
+        const icons = {
+            'ts': '📘', 'tsx': '📘',
+            'js': '📙', 'jsx': '📙', 'mjs': '📙',
+            'json': '📋',
+            'html': '🌐',
+            'css': '🎨',
+            'md': '📝',
+            'txt': '📄'
+        };
+        return icons[ext] || '📄';
+    },
+
+    showFileContextMenu(event, path, type) {
+        event.preventDefault();
+        // Store for context menu actions
+        this._contextMenuPath = path;
+        this._contextMenuType = type;
+
+        const menu = document.getElementById('file-context-menu');
+        if (menu) {
+            menu.style.display = 'block';
+            menu.style.left = event.pageX + 'px';
+            menu.style.top = event.pageY + 'px';
+
+            // Show/hide options based on type
+            menu.querySelector('.ctx-new-file').style.display = type === 'dir' ? 'block' : 'none';
+            menu.querySelector('.ctx-new-folder').style.display = type === 'dir' ? 'block' : 'none';
+        }
+    },
+
+    hideContextMenu() {
+        const menu = document.getElementById('file-context-menu');
+        if (menu) menu.style.display = 'none';
+    },
+
     copyToClipboard(text) {
         navigator.clipboard.writeText(text).then(() => {
             // Could show a toast notification here
