@@ -4925,6 +4925,19 @@ const App = {
     async selectFunction(name) {
         this.state.functions.selected = name;
         this.state.functions.config = null;
+        this.state.functions.editor = {
+            currentFile: null,
+            content: '',
+            originalContent: '',
+            isDirty: false,
+            tree: null,
+            expandedFolders: {},
+            isExpanded: false,
+            monacoEditor: null,
+            loading: true
+        };
+
+        this.render();
 
         // Load function config
         try {
@@ -4932,16 +4945,32 @@ const App = {
             if (res.ok) {
                 this.state.functions.config = await res.json();
             }
-        } catch (e) {
-            // Ignore
+        } catch (err) {
+            console.error('Failed to load function config:', err);
         }
 
-        this.render();
+        // Load file tree
+        await this.loadFunctionFiles(name);
+
+        // Initialize Monaco after render
+        setTimeout(() => this.initMonacoEditor(), 100);
     },
 
     deselectFunction() {
+        this.destroyMonacoEditor();
         this.state.functions.selected = null;
         this.state.functions.config = null;
+        this.state.functions.editor = {
+            currentFile: null,
+            content: '',
+            originalContent: '',
+            isDirty: false,
+            tree: null,
+            expandedFolders: {},
+            isExpanded: false,
+            monacoEditor: null,
+            loading: false
+        };
         this.render();
     },
 
@@ -5331,6 +5360,80 @@ const App = {
 
         const language = languageMap[ext] || 'plaintext';
         monaco.editor.setModelLanguage(editor.getModel(), language);
+    },
+
+    initMonacoEditor() {
+        const container = document.getElementById('monaco-editor-container');
+        if (!container || this.state.functions.editor.monacoEditor) return;
+
+        // Wait for Monaco to load
+        if (typeof monaco === 'undefined') {
+            require(['vs/editor/editor.main'], () => this.initMonacoEditor());
+            return;
+        }
+
+        const isDark = document.body.classList.contains('dark-theme');
+
+        const editor = monaco.editor.create(container, {
+            value: this.state.functions.editor.content || '// Select a file to edit',
+            language: 'typescript',
+            theme: isDark ? 'vs-dark' : 'vs',
+            automaticLayout: true,
+            minimap: { enabled: true },
+            fontSize: 14,
+            tabSize: 2,
+            scrollBeyondLastLine: false,
+            wordWrap: 'on'
+        });
+
+        this.state.functions.editor.monacoEditor = editor;
+
+        // Track changes for dirty state
+        editor.onDidChangeModelContent(() => {
+            const current = editor.getValue();
+            const original = this.state.functions.editor.originalContent;
+            const wasDirty = this.state.functions.editor.isDirty;
+            const isDirty = current !== original;
+
+            if (wasDirty !== isDirty) {
+                this.state.functions.editor.isDirty = isDirty;
+                this.state.functions.editor.content = current;
+                // Update just the header, not full render
+                this.updateEditorHeader();
+            }
+        });
+
+        // Keyboard shortcut for save
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+            this.saveFunctionFile();
+        });
+    },
+
+    updateEditorHeader() {
+        const { currentFile, isDirty } = this.state.functions.editor;
+        const fileSpan = document.querySelector('.editor-header .current-file');
+        const saveBtn = document.querySelector('.editor-header .btn-primary');
+
+        if (fileSpan) {
+            fileSpan.textContent = currentFile ? `${currentFile}${isDirty ? ' \u25cf' : ''}` : 'No file selected';
+        }
+        if (saveBtn) {
+            saveBtn.disabled = !currentFile || !isDirty;
+        }
+
+        // Update file tree item
+        const activeItem = document.querySelector('.file-tree-item.file.active .file-name');
+        if (activeItem && currentFile) {
+            const filename = currentFile.split('/').pop();
+            activeItem.textContent = `${filename}${isDirty ? ' \u25cf' : ''}`;
+        }
+    },
+
+    destroyMonacoEditor() {
+        if (this.state.functions.editor.monacoEditor) {
+            this.state.functions.editor.monacoEditor.dispose();
+            this.state.functions.editor.monacoEditor = null;
+        }
     },
 
     toggleEditorExpand() {
