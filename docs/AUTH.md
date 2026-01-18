@@ -129,12 +129,99 @@ curl -X POST http://localhost:8080/auth/v1/verify \
 
 ### Resending Confirmation Email
 
-To resend a confirmation email:
+If a user didn't receive their confirmation email or the link expired, they can request a new one.
 
+**Using the Supabase JS client:**
+```javascript
+const { data, error } = await supabase.auth.resend({
+  type: 'signup',
+  email: 'user@example.com'
+})
+```
+
+**Using curl:**
 ```bash
 curl -X POST http://localhost:8080/auth/v1/resend \
   -H "Content-Type: application/json" \
-  -d '{"type": "confirmation", "email": "user@example.com"}'
+  -d '{"type": "signup", "email": "user@example.com"}'
+```
+
+The `type` parameter can be:
+- `signup` - Resend the signup confirmation email
+- `email_change` - Resend email change confirmation (when user updates their email)
+
+**Success response:**
+```json
+{
+  "message_id": "..."
+}
+```
+
+**Error responses:**
+
+If the email is already confirmed:
+```json
+{
+  "error": "bad_request",
+  "message": "Email already confirmed"
+}
+```
+
+If the user doesn't exist:
+```json
+{
+  "error": "not_found",
+  "message": "User not found"
+}
+```
+
+### Handling Unconfirmed Users in Your App
+
+When a user tries to log in without confirming their email, you'll receive a `403` error with `email_not_confirmed`. Here's how to handle this in a React application:
+
+```javascript
+// In your auth context or provider
+const authValue = {
+  signIn: async (email, password) => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    })
+    return { data, error }
+  },
+  resendConfirmation: async (email) => {
+    const { data, error } = await supabase.auth.resend({
+      type: 'signup',
+      email
+    })
+    return { data, error }
+  }
+}
+
+// In your login component
+async function handleSubmit(e) {
+  e.preventDefault()
+  const { error } = await signIn(email, password)
+
+  if (error) {
+    if (error.message?.toLowerCase().includes('not confirmed') ||
+        error.message?.toLowerCase().includes('email_not_confirmed')) {
+      setNeedsConfirmation(true)
+      setError('Please check your inbox for a confirmation link.')
+    } else {
+      setError(error.message)
+    }
+  }
+}
+
+async function handleResendConfirmation() {
+  const { error } = await resendConfirmation(email)
+  if (error) {
+    setError(`Failed to resend: ${error.message}`)
+  } else {
+    setMessage('Confirmation email sent! Please check your inbox.')
+  }
+}
 ```
 
 ## OAuth Authentication
