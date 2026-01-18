@@ -46,6 +46,30 @@ supabase.storage.from('avatars').getPublicUrl('path/file.png')
 
 ---
 
+### Edge Functions
+Serverless TypeScript/JavaScript functions using Deno runtime. Enables custom backend logic.
+
+```javascript
+// Client usage
+supabase.functions.invoke('hello-world', { body: { name: 'World' } })
+```
+
+**Implementation approach:**
+- Use Supabase's open-source Edge Runtime (separate binary, auto-downloaded)
+- sblite proxies `/functions/v1/*` to edge-runtime process
+- Process management (start/stop/health checks) handled by sblite
+- Secrets stored encrypted in SQLite, injected as env vars
+- Dashboard UI for function management and testing
+
+**Key benefit:** Functions migrate to Supabase without modification (same runtime).
+
+**Complexity:** Large
+**Priority:** Medium
+
+See `docs/plans/2026-01-18-edge-functions-design.md` for full design.
+
+---
+
 ### ~~Full-Text Search~~ ✅ COMPLETE
 Text search using SQLite FTS5 extension.
 
@@ -132,6 +156,7 @@ TOTP-based second factor.
 |---------|----------|--------|--------|
 | Realtime subscriptions | Medium | Large | Pending |
 | File storage | Medium | Large | Pending |
+| Edge functions | Medium | Large | Pending |
 | Full-text search | Low | Medium | ✅ Complete |
 | OAuth providers | Low | Large | ✅ Complete (Google, GitHub) |
 | Anonymous sign-in | Low | Small | Pending |
@@ -141,5 +166,6 @@ TOTP-based second factor.
 ## Notes
 
 - sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth)
-- Realtime and Storage are the biggest gaps vs full Supabase
+- Realtime, Storage, and Edge Functions are the biggest gaps vs full Supabase
+- Edge Functions achievable via embedding Supabase's open-source Edge Runtime
 - Remaining auth gaps are for enterprise/advanced use cases
