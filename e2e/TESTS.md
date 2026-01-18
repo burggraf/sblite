@@ -38,7 +38,10 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Relations | 10 | 10 | 0 | 0 |
 | RLS | 9 | 9 | 0 | 0 |
 | API Key | 12 | 12 | 0 | 0 |
-| **TOTAL** | **322** | **260** | **0** | **61** |
+| Edge Functions | 17 | 14 | 0 | 3 |
+| Edge Functions - Config | 8 | 8 | 0 | 0 |
+| Edge Functions - Dashboard | 9 | 6 | 0 | 3 |
+| **TOTAL** | **356** | **288** | **0** | **67** |
 
 *Last tested: 2026-01-18*
 
@@ -702,6 +705,88 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 
 ---
 
+## Edge Functions Tests
+
+### `tests/functions/functions.test.ts`
+
+*Note: These tests require the server to run with `--functions` flag.*
+
+**Basic Invocation**
+- ✅ should invoke a function with POST method (default)
+- ✅ should invoke a function with empty body
+- ✅ should invoke a function with GET method
+- ✅ should return timestamp in response
+
+**Custom Headers**
+- ✅ should pass custom headers to the function
+
+**Environment Variables**
+- ✅ should have SUPABASE_URL injected
+- ✅ should have API keys injected
+
+**Error Handling**
+- ✅ should return 404 for non-existent function
+- ✅ should handle function that throws error
+
+**HTTP Methods**
+- ✅ should support GET method
+- ✅ should support POST method
+- ✅ should support PUT method
+- ✅ should support PATCH method
+- ✅ should support DELETE method
+
+**Response Types**
+- ✅ should return JSON response
+
+**Concurrent Invocations**
+- ✅ should handle multiple concurrent invocations
+
+---
+
+### `tests/functions/functions-config.test.ts`
+
+**JWT Verification**
+- ✅ should reject requests without JWT when verification is enabled (default)
+- ✅ should accept requests with valid JWT when verification is enabled
+- ✅ should reject requests with invalid JWT
+
+**Function Metadata**
+- ✅ should include verifyJWT in function list response
+
+**Secrets (Unit)**
+- ✅ should have SUPABASE_URL environment variable injected
+- ✅ should have API keys injected
+
+---
+
+### `tests/functions/functions-dashboard.test.ts`
+
+**Functions List API**
+- ✅ should list functions from /_/api/functions
+- ✅ should get functions status from /_/api/functions/status
+
+**Function Details API**
+- ✅ should get function config from /_/api/functions/{name}/config
+- ✅ should return 404 for non-existent function config
+
+**Function Config Update API**
+- ✅ should update function JWT verification setting
+
+**Secrets List API**
+- ✅ should list secrets from /_/api/secrets
+
+**Secrets Management API**
+- ✅ should create a new secret
+- ✅ should list secrets including the created one
+- ✅ should delete a secret
+
+**Function Creation API**
+- ⏭️ should create a new function (requires functions directory write access)
+- ⏭️ should reject invalid function names
+- ⏭️ should delete a function
+
+---
+
 ## Known Issues Summary
 
 ### Fixed Issues (as of 2026-01-16)
@@ -752,3 +837,6 @@ Each test maps to examples from the Supabase JavaScript documentation:
 | email-flows.test.ts | https://supabase.com/docs/reference/javascript/auth-resetpasswordforemail |
 | verification.test.ts | https://supabase.com/docs/reference/javascript/auth-verifyotp |
 | smtp.test.ts | (sblite-specific SMTP mode testing) |
+| functions.test.ts | https://supabase.com/docs/reference/javascript/functions-invoke |
+| functions-config.test.ts | (sblite-specific per-function configuration) |
+| functions-dashboard.test.ts | (sblite-specific dashboard API for functions) |

@@ -97,6 +97,23 @@ const App = {
             showTablePicker: false,
             tables: [],
         },
+        functions: {
+            list: [],
+            selected: null,
+            status: null,  // Edge runtime status
+            loading: false,
+            config: null,  // Selected function config
+            secrets: [],
+            secretsLoading: false,
+            showSecrets: false,
+            testConsole: {
+                method: 'POST',
+                body: '{}',
+                headers: [],
+                response: null,
+                loading: false,
+            },
+        },
     },
 
     async init() {
@@ -341,6 +358,8 @@ const App = {
             this.initApiConsole();
         } else if (view === 'sqlBrowser') {
             this.initSqlBrowser();
+        } else if (view === 'functions') {
+            this.loadFunctions();
         } else {
             this.render();
         }
@@ -446,6 +465,12 @@ const App = {
                         </div>
 
                         <div class="nav-section">
+                            <div class="nav-section-title">Edge Functions</div>
+                            <a class="nav-item ${this.state.currentView === 'functions' ? 'active' : ''}"
+                               onclick="App.navigate('functions')">Functions</a>
+                        </div>
+
+                        <div class="nav-section">
                             <div class="nav-section-title">System</div>
                             <a class="nav-item ${this.state.currentView === 'settings' ? 'active' : ''}"
                                onclick="App.navigate('settings')">Settings</a>
@@ -487,6 +512,8 @@ const App = {
                 return this.renderApiConsoleView();
             case 'sqlBrowser':
                 return this.renderSqlBrowserView();
+            case 'functions':
+                return this.renderFunctionsView();
             default:
                 return '<div class="card">Select a section from the sidebar</div>';
         }
@@ -917,6 +944,12 @@ const App = {
                 break;
             case 'ftsSearch':
                 content = this.renderFTSSearchModal();
+                break;
+            case 'createFunction':
+                content = this.renderCreateFunctionModal();
+                break;
+            case 'addSecret':
+                content = this.renderAddSecretModal();
                 break;
         }
 
@@ -4721,6 +4754,651 @@ const App = {
                 </button>
             </div>
         `;
+    },
+
+    // =====================
+    // Edge Functions Methods
+    // =====================
+
+    async loadFunctions() {
+        this.state.functions.loading = true;
+        this.render();
+
+        try {
+            // Load functions list, status, and API keys in parallel
+            const requests = [
+                fetch('/_/api/functions'),
+                fetch('/_/api/functions/status')
+            ];
+
+            // Also load API keys if not already loaded (for test console)
+            if (!this.state.apiConsole.apiKeys) {
+                requests.push(fetch('/_/api/apikeys'));
+            }
+
+            const responses = await Promise.all(requests);
+            const [functionsRes, statusRes] = responses;
+
+            if (functionsRes.ok) {
+                this.state.functions.list = await functionsRes.json();
+            } else if (functionsRes.status === 404) {
+                // Functions not enabled
+                this.state.functions.list = [];
+            }
+
+            if (statusRes.ok) {
+                this.state.functions.status = await statusRes.json();
+            } else if (statusRes.status === 404) {
+                this.state.functions.status = { enabled: false };
+            }
+
+            // Handle API keys response
+            if (responses.length > 2 && responses[2].ok) {
+                this.state.apiConsole.apiKeys = await responses[2].json();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load functions';
+        }
+
+        this.state.functions.loading = false;
+        this.render();
+    },
+
+    async loadFunctionsSecrets() {
+        this.state.functions.secretsLoading = true;
+        this.render();
+
+        try {
+            const res = await fetch('/_/api/secrets');
+            if (res.ok) {
+                this.state.functions.secrets = await res.json();
+            } else {
+                this.state.functions.secrets = [];
+            }
+        } catch (e) {
+            this.state.functions.secrets = [];
+        }
+
+        this.state.functions.secretsLoading = false;
+        this.render();
+    },
+
+    async selectFunction(name) {
+        this.state.functions.selected = name;
+        this.state.functions.config = null;
+
+        // Load function config
+        try {
+            const res = await fetch(`/_/api/functions/${name}/config`);
+            if (res.ok) {
+                this.state.functions.config = await res.json();
+            }
+        } catch (e) {
+            // Ignore
+        }
+
+        this.render();
+    },
+
+    deselectFunction() {
+        this.state.functions.selected = null;
+        this.state.functions.config = null;
+        this.render();
+    },
+
+    showCreateFunctionModal() {
+        this.state.modal = {
+            type: 'createFunction',
+            data: { name: '', template: 'default', error: null }
+        };
+        this.render();
+    },
+
+    async createFunction() {
+        const { name, template } = this.state.modal.data;
+
+        if (!name || !name.match(/^[a-z][a-z0-9-]*$/)) {
+            this.state.modal.data.error = 'Function name must start with a letter and contain only lowercase letters, numbers, and hyphens';
+            this.render();
+            return;
+        }
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ template })
+            });
+
+            if (res.ok) {
+                this.closeModal();
+                await this.loadFunctions();
+                this.selectFunction(name);
+            } else {
+                const err = await res.json();
+                this.state.modal.data.error = err.error || err.message || 'Failed to create function';
+                this.render();
+            }
+        } catch (e) {
+            this.state.modal.data.error = 'Failed to create function';
+            this.render();
+        }
+    },
+
+    async deleteFunction(name) {
+        if (!confirm(`Delete function "${name}"? This cannot be undone.`)) return;
+
+        try {
+            const res = await fetch(`/_/api/functions/${name}`, { method: 'DELETE' });
+            if (res.ok) {
+                if (this.state.functions.selected === name) {
+                    this.state.functions.selected = null;
+                    this.state.functions.config = null;
+                }
+                await this.loadFunctions();
+            } else {
+                this.state.error = 'Failed to delete function';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to delete function';
+            this.render();
+        }
+    },
+
+    async toggleFunctionJWT(name, enabled) {
+        try {
+            const res = await fetch(`/_/api/functions/${name}/config`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ verify_jwt: enabled })
+            });
+
+            if (res.ok) {
+                this.state.functions.config = await res.json();
+                // Also update in list
+                const fn = this.state.functions.list.find(f => f.name === name);
+                if (fn) fn.verify_jwt = enabled;
+                this.render();
+            } else {
+                this.state.error = 'Failed to update function config';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to update function config';
+            this.render();
+        }
+    },
+
+    showAddSecretModal() {
+        this.state.modal = {
+            type: 'addSecret',
+            data: { name: '', value: '', error: null }
+        };
+        this.render();
+    },
+
+    async addSecret() {
+        const { name, value } = this.state.modal.data;
+
+        if (!name || !name.match(/^[A-Z][A-Z0-9_]*$/)) {
+            this.state.modal.data.error = 'Secret name must be uppercase and start with a letter (e.g., API_KEY)';
+            this.render();
+            return;
+        }
+
+        if (!value) {
+            this.state.modal.data.error = 'Secret value is required';
+            this.render();
+            return;
+        }
+
+        try {
+            const res = await fetch('/_/api/secrets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, value })
+            });
+
+            if (res.ok) {
+                this.closeModal();
+                await this.loadFunctionsSecrets();
+            } else {
+                const err = await res.json();
+                this.state.modal.data.error = err.error || err.message || 'Failed to add secret';
+                this.render();
+            }
+        } catch (e) {
+            this.state.modal.data.error = 'Failed to add secret';
+            this.render();
+        }
+    },
+
+    async deleteSecret(name) {
+        if (!confirm(`Delete secret "${name}"? This cannot be undone.`)) return;
+
+        try {
+            const res = await fetch(`/_/api/secrets/${name}`, { method: 'DELETE' });
+            if (res.ok) {
+                await this.loadFunctionsSecrets();
+            } else {
+                this.state.error = 'Failed to delete secret';
+                this.render();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to delete secret';
+            this.render();
+        }
+    },
+
+    // Function test console methods
+    updateFunctionTestMethod(method) {
+        this.state.functions.testConsole.method = method;
+        this.render();
+    },
+
+    updateFunctionTestBody(body) {
+        this.state.functions.testConsole.body = body;
+    },
+
+    addFunctionTestHeader() {
+        this.state.functions.testConsole.headers.push({ key: '', value: '' });
+        this.render();
+    },
+
+    updateFunctionTestHeader(index, field, value) {
+        this.state.functions.testConsole.headers[index][field] = value;
+    },
+
+    removeFunctionTestHeader(index) {
+        this.state.functions.testConsole.headers.splice(index, 1);
+        this.render();
+    },
+
+    async invokeFunctionTest() {
+        const { selected } = this.state.functions;
+        const { method, body, headers } = this.state.functions.testConsole;
+
+        if (!selected) return;
+
+        this.state.functions.testConsole.loading = true;
+        this.state.functions.testConsole.response = null;
+        this.render();
+
+        try {
+            // Build headers
+            const reqHeaders = {
+                'Content-Type': 'application/json'
+            };
+
+            // Add API key (get from apiConsole state if available)
+            if (this.state.apiConsole.apiKeys?.anon_key) {
+                reqHeaders['apikey'] = this.state.apiConsole.apiKeys.anon_key;
+                reqHeaders['Authorization'] = `Bearer ${this.state.apiConsole.apiKeys.anon_key}`;
+            }
+
+            // Add custom headers
+            headers.forEach(h => {
+                if (h.key && h.value) {
+                    reqHeaders[h.key] = h.value;
+                }
+            });
+
+            const startTime = Date.now();
+            const fetchOptions = {
+                method,
+                headers: reqHeaders
+            };
+
+            if (method !== 'GET' && method !== 'HEAD' && body) {
+                fetchOptions.body = body;
+            }
+
+            const res = await fetch(`/functions/v1/${selected}`, fetchOptions);
+            const elapsed = Date.now() - startTime;
+
+            let responseBody;
+            const contentType = res.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                responseBody = await res.json();
+            } else {
+                responseBody = await res.text();
+            }
+
+            this.state.functions.testConsole.response = {
+                status: res.status,
+                statusText: res.statusText,
+                headers: Object.fromEntries(res.headers.entries()),
+                body: responseBody,
+                elapsed
+            };
+        } catch (e) {
+            this.state.functions.testConsole.response = {
+                error: e.message || 'Request failed',
+                status: 0,
+                statusText: 'Error'
+            };
+        }
+
+        this.state.functions.testConsole.loading = false;
+        this.render();
+    },
+
+    // Functions view rendering
+    renderFunctionsView() {
+        const { loading, status, list, selected, config, secrets, secretsLoading } = this.state.functions;
+
+        if (loading) {
+            return '<div class="loading">Loading...</div>';
+        }
+
+        // Check if functions are enabled
+        if (!status || !status.enabled) {
+            return this.renderFunctionsDisabledView();
+        }
+
+        // Two-column layout like tables view
+        return `
+            <div class="card-title">Edge Functions</div>
+            <div class="functions-layout">
+                <div class="functions-list-panel">
+                    ${this.renderFunctionsList()}
+                </div>
+                <div class="functions-detail-panel">
+                    ${selected ? this.renderFunctionDetail() : this.renderFunctionsEmptyState()}
+                </div>
+            </div>
+        `;
+    },
+
+    renderFunctionsDisabledView() {
+        return `
+            <div class="card-title">Edge Functions</div>
+            <div class="card">
+                <div class="empty-state">
+                    <div class="empty-icon">⚡</div>
+                    <h3>Edge Functions Not Enabled</h3>
+                    <p>Edge functions are not currently enabled on this server.</p>
+                    <p>To enable edge functions, start the server with:</p>
+                    <pre class="code-block">sblite serve --functions</pre>
+                    <p class="text-muted">Edge functions allow you to run serverless TypeScript/JavaScript code.</p>
+                </div>
+            </div>
+        `;
+    },
+
+    renderFunctionsList() {
+        const { list, selected, status } = this.state.functions;
+
+        return `
+            <div class="panel-header">
+                <span class="panel-title">Functions</span>
+                <button class="btn btn-primary btn-sm" onclick="App.showCreateFunctionModal()">+ New</button>
+            </div>
+            <div class="runtime-status ${status?.running ? 'status-running' : 'status-stopped'}">
+                <span class="status-indicator"></span>
+                <span>Runtime: ${status?.running ? 'Running' : 'Stopped'}</span>
+            </div>
+            <div class="functions-items">
+                ${list.length === 0 ? `
+                    <div class="empty-list">No functions yet. Create one to get started.</div>
+                ` : list.map(fn => `
+                    <div class="function-item ${selected === fn.name ? 'active' : ''}"
+                         onclick="App.selectFunction('${fn.name}')">
+                        <span class="function-name">${this.escapeHtml(fn.name)}</span>
+                        <span class="function-badges">
+                            ${fn.verify_jwt === false ? '<span class="badge badge-warning">No JWT</span>' : ''}
+                        </span>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="panel-section">
+                <div class="panel-section-header" onclick="App.toggleSecretsPanel()">
+                    <span>Secrets</span>
+                    <span class="section-toggle">${this.state.functions.showSecrets ? '−' : '+'}</span>
+                </div>
+                ${this.state.functions.showSecrets ? this.renderSecretsPanel() : ''}
+            </div>
+        `;
+    },
+
+    toggleSecretsPanel() {
+        this.state.functions.showSecrets = !this.state.functions.showSecrets;
+        if (this.state.functions.showSecrets && this.state.functions.secrets.length === 0) {
+            this.loadFunctionsSecrets();
+        }
+        this.render();
+    },
+
+    renderSecretsPanel() {
+        const { secrets, secretsLoading } = this.state.functions;
+
+        if (secretsLoading) {
+            return '<div class="panel-loading">Loading secrets...</div>';
+        }
+
+        return `
+            <div class="secrets-panel">
+                <div class="secrets-list">
+                    ${secrets.length === 0 ? `
+                        <div class="empty-list">No secrets configured</div>
+                    ` : secrets.map(s => `
+                        <div class="secret-item">
+                            <span class="secret-name">${this.escapeHtml(s.name)}</span>
+                            <button class="btn btn-danger btn-xs" onclick="event.stopPropagation(); App.deleteSecret('${s.name}')" title="Delete">×</button>
+                        </div>
+                    `).join('')}
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="App.showAddSecretModal()" style="margin-top: 8px; width: 100%">
+                    + Add Secret
+                </button>
+            </div>
+        `;
+    },
+
+    renderFunctionsEmptyState() {
+        return `
+            <div class="empty-state">
+                <div class="empty-icon">👈</div>
+                <h3>Select a Function</h3>
+                <p>Choose a function from the list to view details and test it.</p>
+            </div>
+        `;
+    },
+
+    renderFunctionDetail() {
+        const { selected, config } = this.state.functions;
+        const fn = this.state.functions.list.find(f => f.name === selected);
+
+        if (!fn) return '';
+
+        return `
+            <div class="function-detail">
+                <div class="function-detail-header">
+                    <h2>${this.escapeHtml(selected)}</h2>
+                    <div class="function-actions">
+                        <button class="btn btn-danger btn-sm" onclick="App.deleteFunction('${selected}')">Delete</button>
+                    </div>
+                </div>
+
+                <div class="function-section">
+                    <h3>Endpoint</h3>
+                    <div class="endpoint-info">
+                        <code>/functions/v1/${this.escapeHtml(selected)}</code>
+                        <button class="btn btn-secondary btn-xs" onclick="App.copyToClipboard('/functions/v1/${this.escapeHtml(selected)}')" title="Copy">Copy</button>
+                    </div>
+                </div>
+
+                <div class="function-section">
+                    <h3>Configuration</h3>
+                    <div class="config-item">
+                        <label>
+                            <input type="checkbox" ${fn.verify_jwt !== false ? 'checked' : ''}
+                                onchange="App.toggleFunctionJWT('${selected}', this.checked)">
+                            Require JWT Verification
+                        </label>
+                        <p class="config-help">When enabled, requests must include a valid Authorization header.</p>
+                    </div>
+                </div>
+
+                <div class="function-section">
+                    <h3>Test Function</h3>
+                    ${this.renderFunctionTestConsole()}
+                </div>
+            </div>
+        `;
+    },
+
+    renderFunctionTestConsole() {
+        const { selected } = this.state.functions;
+        const { method, body, headers, response, loading } = this.state.functions.testConsole;
+
+        return `
+            <div class="function-test-console">
+                <div class="test-controls">
+                    <select class="form-input method-select" value="${method}"
+                            onchange="App.updateFunctionTestMethod(this.value)">
+                        <option value="GET" ${method === 'GET' ? 'selected' : ''}>GET</option>
+                        <option value="POST" ${method === 'POST' ? 'selected' : ''}>POST</option>
+                        <option value="PUT" ${method === 'PUT' ? 'selected' : ''}>PUT</option>
+                        <option value="PATCH" ${method === 'PATCH' ? 'selected' : ''}>PATCH</option>
+                        <option value="DELETE" ${method === 'DELETE' ? 'selected' : ''}>DELETE</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="App.invokeFunctionTest()" ${loading ? 'disabled' : ''}>
+                        ${loading ? 'Invoking...' : 'Invoke'}
+                    </button>
+                </div>
+
+                <div class="test-headers">
+                    <label>Headers</label>
+                    ${headers.map((h, i) => `
+                        <div class="header-row">
+                            <input type="text" class="form-input" placeholder="Key" value="${this.escapeHtml(h.key)}"
+                                onchange="App.updateFunctionTestHeader(${i}, 'key', this.value)">
+                            <input type="text" class="form-input" placeholder="Value" value="${this.escapeHtml(h.value)}"
+                                onchange="App.updateFunctionTestHeader(${i}, 'value', this.value)">
+                            <button class="btn btn-danger btn-xs" onclick="App.removeFunctionTestHeader(${i})">×</button>
+                        </div>
+                    `).join('')}
+                    <button class="btn btn-secondary btn-xs" onclick="App.addFunctionTestHeader()">+ Add Header</button>
+                </div>
+
+                ${method !== 'GET' && method !== 'HEAD' ? `
+                    <div class="test-body">
+                        <label>Request Body (JSON)</label>
+                        <textarea class="form-input code-textarea" rows="4"
+                            onchange="App.updateFunctionTestBody(this.value)">${this.escapeHtml(body)}</textarea>
+                    </div>
+                ` : ''}
+
+                ${response ? this.renderFunctionTestResponse() : ''}
+            </div>
+        `;
+    },
+
+    renderFunctionTestResponse() {
+        const { response } = this.state.functions.testConsole;
+
+        if (response.error) {
+            return `
+                <div class="test-response error">
+                    <div class="response-header">
+                        <span class="status-badge error">Error</span>
+                    </div>
+                    <pre class="response-body">${this.escapeHtml(response.error)}</pre>
+                </div>
+            `;
+        }
+
+        const isSuccess = response.status >= 200 && response.status < 300;
+        const bodyStr = typeof response.body === 'object'
+            ? JSON.stringify(response.body, null, 2)
+            : String(response.body);
+
+        return `
+            <div class="test-response">
+                <div class="response-header">
+                    <span class="status-badge ${isSuccess ? 'success' : 'error'}">${response.status} ${response.statusText}</span>
+                    <span class="response-time">${response.elapsed}ms</span>
+                </div>
+                <pre class="response-body">${this.escapeHtml(bodyStr)}</pre>
+            </div>
+        `;
+    },
+
+    renderCreateFunctionModal() {
+        const { name, template, error } = this.state.modal.data;
+
+        return `
+            <div class="modal-header">
+                <h3>Create Function</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                ${error ? `<div class="message message-error">${this.escapeHtml(error)}</div>` : ''}
+                <div class="form-group">
+                    <label class="form-label">Function Name</label>
+                    <input type="text" class="form-input" placeholder="my-function"
+                        value="${this.escapeHtml(name || '')}"
+                        oninput="App.state.modal.data.name = this.value"
+                        pattern="[a-z][a-z0-9-]*">
+                    <small class="text-muted">Lowercase letters, numbers, and hyphens only. Must start with a letter.</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Template</label>
+                    <select class="form-input" onchange="App.state.modal.data.template = this.value">
+                        <option value="default" ${template === 'default' ? 'selected' : ''}>Default - Basic JSON response</option>
+                        <option value="supabase" ${template === 'supabase' ? 'selected' : ''}>Supabase - With Supabase client</option>
+                        <option value="cors" ${template === 'cors' ? 'selected' : ''}>CORS - With CORS headers</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="App.createFunction()">Create</button>
+            </div>
+        `;
+    },
+
+    renderAddSecretModal() {
+        const { name, value, error } = this.state.modal.data;
+
+        return `
+            <div class="modal-header">
+                <h3>Add Secret</h3>
+                <button class="btn-icon" onclick="App.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                ${error ? `<div class="message message-error">${this.escapeHtml(error)}</div>` : ''}
+                <div class="form-group">
+                    <label class="form-label">Secret Name</label>
+                    <input type="text" class="form-input" placeholder="API_KEY"
+                        value="${this.escapeHtml(name || '')}"
+                        oninput="App.state.modal.data.name = this.value.toUpperCase()"
+                        style="text-transform: uppercase">
+                    <small class="text-muted">Uppercase letters, numbers, and underscores only.</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Secret Value</label>
+                    <input type="password" class="form-input" placeholder="Enter secret value"
+                        value="${this.escapeHtml(value || '')}"
+                        oninput="App.state.modal.data.value = this.value">
+                    <small class="text-muted">The value will be encrypted at rest. Requires server restart to take effect.</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="App.addSecret()">Add Secret</button>
+            </div>
+        `;
+    },
+
+    copyToClipboard(text) {
+        navigator.clipboard.writeText(text).then(() => {
+            // Could show a toast notification here
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+        });
     },
 
     escapeHtml(str) {
