@@ -4,11 +4,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/dashboard"
@@ -96,6 +98,9 @@ var serveCmd = &cobra.Command{
 
 		// Enable edge functions if requested
 		functionsEnabled, _ := cmd.Flags().GetBool("functions")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
 		if functionsEnabled {
 			functionsDir, _ := cmd.Flags().GetString("functions-dir")
 			functionsPort, _ := cmd.Flags().GetInt("functions-port")
@@ -120,9 +125,6 @@ var serveCmd = &cobra.Command{
 			}
 
 			// Start edge runtime
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
 			if err := srv.StartFunctions(ctx); err != nil {
 				log.Warn("failed to start edge runtime", "error", err)
 				log.Info("functions API will return errors until runtime is available")
@@ -132,19 +134,37 @@ var serveCmd = &cobra.Command{
 					"functions_dir", functionsDir,
 				)
 			}
-
-			// Handle graceful shutdown
-			go func() {
-				sigCh := make(chan os.Signal, 1)
-				signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-				<-sigCh
-				log.Info("shutting down...")
-				srv.StopFunctions()
-				cancel()
-			}()
 		}
 
-		return srv.ListenAndServe(addr)
+		// Handle graceful shutdown for all modes
+		go func() {
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+			<-sigCh
+			log.Info("shutting down...")
+
+			// Create a timeout context for shutdown
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer shutdownCancel()
+
+			// Stop functions first if enabled
+			if functionsEnabled {
+				srv.StopFunctions()
+			}
+
+			// Shutdown HTTP server
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				log.Warn("HTTP server shutdown error", "error", err)
+			}
+
+			cancel()
+		}()
+
+		// Start HTTP server (blocks until shutdown)
+		if err := srv.ListenAndServe(addr); err != nil && err != http.ErrServerClosed {
+			return err
+		}
+		return nil
 	},
 }
 

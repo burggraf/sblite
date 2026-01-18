@@ -54,6 +54,9 @@ type Server struct {
 	functionsService *functions.Service
 	functionsHandler *functions.Handler
 	functionsEnabled bool
+
+	// HTTP server for graceful shutdown
+	httpServer *http.Server
 }
 
 // ServerConfig holds server configuration.
@@ -285,7 +288,19 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ListenAndServe(addr string) error {
-	return http.ListenAndServe(addr, s.router)
+	s.httpServer = &http.Server{
+		Addr:    addr,
+		Handler: s.router,
+	}
+	return s.httpServer.ListenAndServe()
+}
+
+// Shutdown gracefully shuts down the HTTP server.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpServer == nil {
+		return nil
+	}
+	return s.httpServer.Shutdown(ctx)
 }
 
 // handleOpenAPI generates and returns the OpenAPI 3.0 specification for the REST API.
