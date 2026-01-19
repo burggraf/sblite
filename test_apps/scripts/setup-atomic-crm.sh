@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS deals (
     archived_at TEXT,
     expected_closing_date TEXT,
     sales_id INTEGER REFERENCES sales(id),
-    index INTEGER DEFAULT 0
+    "index" INTEGER DEFAULT 0
 );
 
 -- Create dealNotes table
