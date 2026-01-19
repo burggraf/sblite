@@ -39,6 +39,13 @@ VITE_SUPABASE_ANON_KEY=$ANON_KEY
 EOF
 log_success "Created $APP_DIR/.env"
 
+# Create .npmrc for pnpm compatibility (this project has many peer dependencies)
+log_info "Creating .npmrc for pnpm compatibility..."
+cat > "$APP_DIR/.npmrc" << EOF
+shamefully-hoist=true
+EOF
+log_success "Created $APP_DIR/.npmrc"
+
 # Install dependencies
 install_deps "$APP_DIR"
 
