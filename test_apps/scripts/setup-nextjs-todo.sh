@@ -34,9 +34,13 @@ create_nextjs_env "$APP_DIR"
 # Install dependencies
 install_deps "$APP_DIR"
 
-# Initialize database
+# Initialize database if it doesn't exist
 DB_PATH="$APP_DIR/data.db"
-init_database "$DB_PATH"
+if [[ ! -f "$DB_PATH" ]]; then
+    init_database "$DB_PATH"
+else
+    log_info "Database already exists, skipping init"
+fi
 
 # Create the todos table schema (adapted for SQLite)
 log_info "Creating todos table..."

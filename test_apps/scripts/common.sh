@@ -219,31 +219,39 @@ install_deps() {
 # Create a startup script for an app
 create_startup_script() {
     local app_name="$1"
-    local app_dir="$2"
+    local app_dir_name="$2"  # Just the directory name, not full path
     local db_name="$3"
     local dev_command="${4:-npm run dev}"
     local needs_functions="${5:-false}"
 
     local script_path="$SCRIPTS_DIR/start-${app_name}.sh"
-    local db_path="$app_dir/${db_name}.db"
 
     local functions_flag=""
     if [[ "$needs_functions" == "true" ]]; then
         functions_flag=" --functions"
     fi
 
-    cat > "$script_path" << EOF
+    cat > "$script_path" << 'SCRIPT_START'
 #!/bin/bash
-# Start script for $app_name
+# Start script for APP_NAME_PLACEHOLDER
 # This script starts sblite and the app together
 
 set -e
 
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-source "\$SCRIPT_DIR/common.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
 
-APP_DIR="$app_dir"
-DB_PATH="$db_path"
+APP_DIR="$TEST_APPS_DIR/APP_DIR_PLACEHOLDER"
+DB_PATH="$APP_DIR/DB_NAME_PLACEHOLDER.db"
+SCRIPT_START
+
+    # Replace placeholders
+    sed -i.bak "s/APP_NAME_PLACEHOLDER/$app_name/g" "$script_path"
+    sed -i.bak "s/APP_DIR_PLACEHOLDER/$app_name/g" "$script_path"
+    sed -i.bak "s/DB_NAME_PLACEHOLDER/$db_name/g" "$script_path"
+    rm -f "$script_path.bak"
+
+    cat >> "$script_path" << EOF
 
 # Ensure sblite is built
 ensure_sblite

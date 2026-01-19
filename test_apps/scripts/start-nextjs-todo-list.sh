@@ -7,8 +7,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
-APP_DIR="/Users/markb/dev/sblite/test_apps/nextjs-todo-list"
-DB_PATH="/Users/markb/dev/sblite/test_apps/nextjs-todo-list/data.db"
+APP_DIR="$TEST_APPS_DIR/nextjs-todo-list"
+DB_PATH="$APP_DIR/data.db"
 
 # Ensure sblite is built
 ensure_sblite
