@@ -168,11 +168,18 @@ func defaultRules() []Rule {
 		},
 
 		// PostgreSQL functions that don't exist in SQLite
-		// gen_random_uuid() -> (remove, SQLite doesn't have built-in UUID generation)
-		// Note: This is a limitation - users would need to generate UUIDs in application code
+		// gen_random_uuid() -> Generate RFC 4122 compliant UUID v4
+		// UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+		// where 4 is the version and y is one of 8, 9, a, or b (variant bits)
 		&RegexRule{
-			pattern:     regexp.MustCompile(`(?i)gen_random_uuid\s*\(\s*\)`),
-			replacement: "(SELECT lower(hex(randomblob(16))))", // Simple hex-based UUID-like
+			pattern: regexp.MustCompile(`(?i)gen_random_uuid\s*\(\s*\)`),
+			replacement: `(SELECT lower(
+    substr(h, 1, 8) || '-' ||
+    substr(h, 9, 4) || '-' ||
+    '4' || substr(h, 14, 3) || '-' ||
+    substr('89ab', (abs(random()) % 4) + 1, 1) || substr(h, 18, 3) || '-' ||
+    substr(h, 21, 12)
+  ) FROM (SELECT hex(randomblob(16)) as h))`,
 		},
 
 		// INTERVAL (approximate translation)

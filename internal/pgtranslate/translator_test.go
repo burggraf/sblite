@@ -1,6 +1,7 @@
 package pgtranslate
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -218,22 +219,47 @@ func TestTranslator_SpecialFunctions(t *testing.T) {
 	tr := NewTranslator()
 
 	tests := []struct {
-		name     string
-		input    string
-		expected string
+		name           string
+		input          string
+		expectedPrefix string
+		checkUUIDv4    bool
 	}{
 		{
-			name:     "gen_random_uuid()",
-			input:    "INSERT INTO users (id) VALUES (gen_random_uuid())",
-			expected: "INSERT INTO users (id) VALUES ((SELECT lower(hex(randomblob(16)))))",
+			name:           "gen_random_uuid()",
+			input:          "INSERT INTO users (id) VALUES (gen_random_uuid())",
+			expectedPrefix: "INSERT INTO users (id) VALUES ((SELECT lower(",
+			checkUUIDv4:    true,
+		},
+		{
+			name:           "gen_random_uuid() in CREATE TABLE",
+			input:          "CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid())",
+			expectedPrefix: "CREATE TABLE users (id TEXT PRIMARY KEY DEFAULT (SELECT lower(",
+			checkUUIDv4:    true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tr.Translate(tt.input)
-			if result != tt.expected {
-				t.Errorf("Translate() = %q, want %q", result, tt.expected)
+			if !strings.HasPrefix(result, tt.expectedPrefix) {
+				t.Errorf("Translate() = %q, expected to start with %q", result, tt.expectedPrefix)
+			}
+
+			if tt.checkUUIDv4 {
+				// Verify the UUID v4 generation structure is correct
+				if !strings.Contains(result, "'4' || substr(h, 14, 3)") {
+					t.Error("UUID generation should set version 4")
+				}
+				if !strings.Contains(result, "substr('89ab', (abs(random()) % 4) + 1, 1)") {
+					t.Error("UUID generation should set variant bits (8, 9, a, or b)")
+				}
+				// Check for proper UUID format structure (8-4-4-4-12)
+				if !strings.Contains(result, "substr(h, 1, 8) || '-' ||") {
+					t.Error("UUID should have 8 hex digits in first section")
+				}
+				if !strings.Contains(result, "substr(h, 21, 12)") {
+					t.Error("UUID should have 12 hex digits in last section")
+				}
 			}
 		})
 	}
@@ -288,12 +314,13 @@ func TestTranslator_ComplexQueries(t *testing.T) {
 	tr := NewTranslator()
 
 	tests := []struct {
-		name     string
-		input    string
-		expected string
+		name           string
+		input          string
+		expected       string
+		skipExactMatch bool // For tests with random components
 	}{
 		{
-			name: "CREATE TABLE with multiple PostgreSQL types",
+			name: "CREATE TABLE with multiple PostgreSQL types (no gen_random_uuid)",
 			input: `CREATE TABLE users (
 				id UUID PRIMARY KEY,
 				email TEXT NOT NULL,

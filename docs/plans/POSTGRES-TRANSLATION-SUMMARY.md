@@ -48,7 +48,7 @@ Created in this session:
 - Type cast removal (::uuid, ::timestamptz, etc.)
 - Data type mapping (UUID→TEXT, BOOLEAN→INTEGER, etc.)
 - Boolean literals (TRUE→1, FALSE→0)
-- Special functions (gen_random_uuid)
+- **RFC 4122 UUID v4 generation** (gen_random_uuid → proper UUID format)
 
 **Architecture:**
 - Rule-based system (easy to extend)
@@ -108,8 +108,15 @@ CREATE TABLE users (
 );
 
 -- Output (SQLite)
+-- Generates RFC 4122 compliant UUID v4: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
 CREATE TABLE users (
-  id TEXT PRIMARY KEY DEFAULT (SELECT lower(hex(randomblob(16)))),
+  id TEXT PRIMARY KEY DEFAULT (SELECT lower(
+    substr(h, 1, 8) || '-' ||
+    substr(h, 9, 4) || '-' ||
+    '4' || substr(h, 14, 3) || '-' ||
+    substr('89ab', (abs(random()) % 4) + 1, 1) || substr(h, 18, 3) || '-' ||
+    substr(h, 21, 12)
+  ) FROM (SELECT hex(randomblob(16)) as h)),
   active INTEGER DEFAULT 1,
   metadata TEXT,
   created_at TEXT DEFAULT datetime('now')
