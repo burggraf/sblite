@@ -89,6 +89,7 @@ sblite/
 │   │   └── types.go          # Type definitions
 │   ├── log/                  # Logging system
 │   │   ├── logger.go         # Config, initialization
+│   │   ├── buffer.go         # In-memory ring buffer handler
 │   │   ├── console.go        # Console handler
 │   │   ├── file.go           # File handler with rotation
 │   │   ├── database.go       # SQLite handler
@@ -173,6 +174,7 @@ npm test         # Run all tests (server must be running)
 | `--log-max-age` | `SBLITE_LOG_MAX_AGE` | `7` | Retention days |
 | `--log-max-backups` | `SBLITE_LOG_MAX_BACKUPS` | `3` | Backup files to keep |
 | `--log-fields` | `SBLITE_LOG_FIELDS` | `` | DB fields (comma-separated) |
+| `--log-buffer-lines` | `SBLITE_LOG_BUFFER_LINES` | `500` | In-memory log buffer size (0 to disable) |
 
 **Example usage:**
 ```bash
@@ -302,6 +304,7 @@ Web dashboard accessible at `http://localhost:8080/_`
 | `/_/api/logs/config` | GET | Get log configuration |
 | `/_/api/logs` | GET | Query database logs |
 | `/_/api/logs/tail` | GET | Tail file logs |
+| `/_/api/logs/buffer` | GET | Get buffered console logs |
 | `/_/api/apikeys` | GET | Get API keys (anon, service_role) |
 | `/_/api/sql` | POST | Execute SQL query |
 | `/_/api/settings/oauth` | GET | Get OAuth provider configuration |
