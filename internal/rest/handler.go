@@ -518,7 +518,9 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
 	selectCols := ParseSelect(r.URL.Query().Get("select"))
 	prefer := r.Header.Get("Prefer")
+	accept := r.Header.Get("Accept")
 	returnRepresentation := strings.Contains(prefer, "return=representation")
+	wantSingle := strings.Contains(accept, "application/vnd.pgrst.object+json")
 	isUpsert := strings.Contains(prefer, "resolution=merge-duplicates") || strings.Contains(prefer, "resolution=ignore-duplicates")
 
 	// Parse upsert options (on-conflict columns and ignore-duplicates flag)
@@ -544,6 +546,20 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		records = []map[string]any{single}
+	}
+
+	// Auto-inject user_id for authenticated users if not provided
+	// This matches Supabase behavior where auth.uid() can be used as a default
+	authCtx := GetAuthContextFromRequest(r)
+	if authCtx != nil && authCtx.UserID != "" {
+		// Check if table has a user_id column
+		if h.tableHasColumn(table, "user_id") {
+			for i := range records {
+				if _, hasUserID := records[i]["user_id"]; !hasUserID {
+					records[i]["user_id"] = authCtx.UserID
+				}
+			}
+		}
 	}
 
 	// Validate all records against schema before inserting
@@ -593,6 +609,22 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 	// Return representation if requested
 	if returnRepresentation && len(insertedIDs) > 0 {
 		results := h.selectByIDs(table, selectCols, insertedIDs)
+
+		// Handle single object response for maybeSingle()/single()
+		if wantSingle {
+			if len(results) == 0 {
+				json.NewEncoder(w).Encode(nil)
+				return
+			}
+			if len(results) == 1 {
+				json.NewEncoder(w).Encode(results[0])
+				return
+			}
+			// Multiple rows with single() is an error, but maybeSingle() should just return first
+			json.NewEncoder(w).Encode(results[0])
+			return
+		}
+
 		json.NewEncoder(w).Encode(results)
 		return
 	}
@@ -780,6 +812,30 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, code, message st
 		"error":   code,
 		"message": message,
 	})
+}
+
+// tableHasColumn checks if a table has a specific column
+func (h *Handler) tableHasColumn(table, column string) bool {
+	query := fmt.Sprintf("PRAGMA table_info(\"%s\")", table)
+	rows, err := h.db.Query(query)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dfltValue sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+			continue
+		}
+		if name == column {
+			return true
+		}
+	}
+	return false
 }
 
 // selectByIDs retrieves rows by their IDs
