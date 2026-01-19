@@ -709,7 +709,7 @@ const App = {
 
     renderDataRow(row, columns, primaryKey) {
         const rowId = row[primaryKey];
-        const isSelected = this.state.tables.selectedRows.has(rowId);
+        const isSelected = this.state.tables.selectedRows.has(String(rowId));
         const { editingCell } = this.state.tables;
 
         return `
@@ -719,7 +719,7 @@ const App = {
                         onchange="App.toggleRow('${rowId}', this.checked)">
                 </td>
                 ${columns.map(col => {
-                    const isEditing = editingCell?.rowId === rowId && editingCell?.column === col.name;
+                    const isEditing = String(editingCell?.rowId) === String(rowId) && editingCell?.column === col.name;
                     const value = row[col.name];
 
                     if (isEditing) {
@@ -768,7 +768,7 @@ const App = {
         const primaryKey = schema.columns.find(c => c.primary)?.name || schema.columns[0]?.name;
 
         if (checked) {
-            data.forEach(row => this.state.tables.selectedRows.add(row[primaryKey]));
+            data.forEach(row => this.state.tables.selectedRows.add(String(row[primaryKey])));
         } else {
             this.state.tables.selectedRows.clear();
         }
@@ -1070,7 +1070,7 @@ const App = {
     showEditRowModal(rowId) {
         const { data, schema } = this.state.tables;
         const primaryKey = schema.columns.find(c => c.primary)?.name || schema.columns[0]?.name;
-        const row = data.find(r => r[primaryKey] === rowId);
+        const row = data.find(r => String(r[primaryKey]) === String(rowId));
 
         if (row) {
             this.state.modal = { type: 'editRow', data: { ...row, _rowId: rowId } };
