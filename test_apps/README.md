@@ -38,7 +38,6 @@ test_apps/
 
 | App | Setup Script | Description |
 |-----|-------------|-------------|
-| [Atomic CRM](https://github.com/marmelab/atomic-crm) | `setup-atomic-crm.sh` | Full-featured CRM with contacts, companies, deals, tasks, and notes |
 | [FinOpenPOS](https://github.com/JoaoHenriqueBarbosa/FinOpenPOS) | `setup-finopenpos.sh` | Open-source Point of Sale system with products, customers, orders, and transactions |
 
 ## Quick Start
