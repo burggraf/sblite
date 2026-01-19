@@ -196,8 +196,10 @@ create_nextjs_env() {
 # sblite configuration
 NEXT_PUBLIC_SUPABASE_URL=$SBLITE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY=$ANON_KEY
+# Some examples use PUBLISHABLE_KEY instead of ANON_KEY
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$ANON_KEY
 
-# Optional: service role key for server-side operations
+# Service role key for server-side operations
 SUPABASE_SERVICE_ROLE_KEY=$SERVICE_KEY
 EOF
 
