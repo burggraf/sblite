@@ -3145,6 +3145,21 @@ const App = {
                 ${expanded ? `
                     <div class="section-content">
                         <div class="setting-group">
+                            <label class="form-label">Site URL</label>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <input type="text" class="form-input" style="flex: 1;"
+                                       value="${authConfig.site_url || ''}"
+                                       placeholder="http://localhost:8080"
+                                       id="site-url-input">
+                                <button class="btn btn-primary btn-sm" onclick="App.saveSiteURL()">Save</button>
+                            </div>
+                            <p class="text-muted" style="margin-top: 4px;">
+                                Base URL for authentication email links (verification, password reset, magic links).
+                                This should be your API server URL.
+                            </p>
+                        </div>
+                        <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border-color);">
+                        <div class="setting-group">
                             <label class="setting-toggle">
                                 <input type="checkbox"
                                        ${authConfig.require_email_confirmation ? 'checked' : ''}
@@ -3332,6 +3347,26 @@ const App = {
             this.showToast(err.message, 'error');
             // Revert checkbox on error
             this.render();
+        }
+    },
+
+    async saveSiteURL() {
+        const input = document.getElementById('site-url-input');
+        const siteURL = input?.value?.trim() || '';
+
+        try {
+            const res = await fetch('/_/api/settings/auth-config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ site_url: siteURL })
+            });
+
+            if (!res.ok) throw new Error('Failed to save Site URL');
+
+            this.state.settings.authConfig.site_url = siteURL;
+            this.showToast('Site URL saved', 'success');
+        } catch (err) {
+            this.showToast(err.message, 'error');
         }
     },
 

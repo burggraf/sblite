@@ -120,6 +120,14 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 	s.dashboardHandler.SetJWTSecret(cfg.JWTSecret)
 	s.dashboardStore = s.dashboardHandler.GetStore()
 
+	// Apply persisted settings from dashboard (e.g., SiteURL)
+	s.applyPersistedSettings()
+
+	// Set up callback to update mail config when SiteURL changes via dashboard
+	s.dashboardHandler.SetOnSiteURLChange(func(siteURL string) {
+		s.mailConfig.SiteURL = siteURL
+	})
+
 	// Initialize storage service
 	var storageCfg storage.Config
 	if cfg.StorageConfig != nil {
@@ -156,6 +164,15 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 // SetDashboardConfig sets the dashboard server configuration for display in settings.
 func (s *Server) SetDashboardConfig(cfg *dashboard.ServerConfig) {
 	s.dashboardHandler.SetServerConfig(cfg)
+}
+
+// applyPersistedSettings applies settings persisted in the dashboard to the server config.
+// This is called after the dashboard handler is initialized.
+func (s *Server) applyPersistedSettings() {
+	// Apply persisted SiteURL if configured
+	if siteURL := s.dashboardHandler.GetSiteURL(); siteURL != "" {
+		s.mailConfig.SiteURL = siteURL
+	}
 }
 
 // initMail initializes the mail services based on configuration.

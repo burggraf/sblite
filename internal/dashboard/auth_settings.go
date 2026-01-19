@@ -7,9 +7,10 @@ import (
 
 // AuthConfig holds authentication configuration settings.
 type AuthConfig struct {
-	RequireEmailConfirmation bool `json:"require_email_confirmation"`
-	AllowAnonymous           bool `json:"allow_anonymous"`
-	AnonymousUserCount       int  `json:"anonymous_user_count,omitempty"`
+	RequireEmailConfirmation bool   `json:"require_email_confirmation"`
+	AllowAnonymous           bool   `json:"allow_anonymous"`
+	AnonymousUserCount       int    `json:"anonymous_user_count,omitempty"`
+	SiteURL                  string `json:"site_url"`
 }
 
 // handleGetAuthConfig returns authentication configuration settings.
@@ -27,6 +28,7 @@ func (h *Handler) handleGetAuthConfig(w http.ResponseWriter, r *http.Request) {
 		RequireEmailConfirmation: h.GetRequireEmailConfirmation(),
 		AllowAnonymous:           h.GetAllowAnonymous(),
 		AnonymousUserCount:       anonymousCount,
+		SiteURL:                  h.GetSiteURL(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -34,10 +36,11 @@ func (h *Handler) handleGetAuthConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // authConfigUpdate holds partial updates for authentication configuration.
-// We use pointers to distinguish between "not provided" and "false".
+// We use pointers to distinguish between "not provided" and "false"/"empty".
 type authConfigUpdate struct {
-	RequireEmailConfirmation *bool `json:"require_email_confirmation"`
-	AllowAnonymous           *bool `json:"allow_anonymous"`
+	RequireEmailConfirmation *bool   `json:"require_email_confirmation"`
+	AllowAnonymous           *bool   `json:"allow_anonymous"`
+	SiteURL                  *string `json:"site_url"`
 }
 
 // handlePatchAuthConfig updates authentication configuration settings.
@@ -55,6 +58,13 @@ func (h *Handler) handlePatchAuthConfig(w http.ResponseWriter, r *http.Request) 
 	}
 	if updates.AllowAnonymous != nil {
 		h.store.Set("auth_allow_anonymous", boolToString(*updates.AllowAnonymous))
+	}
+	if updates.SiteURL != nil {
+		h.store.Set("site_url", *updates.SiteURL)
+		// Notify server to update mail config
+		if h.onSiteURLChange != nil {
+			h.onSiteURLChange(*updates.SiteURL)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -75,4 +85,16 @@ func (h *Handler) GetAllowAnonymous() bool {
 	val, _ := h.store.Get("auth_allow_anonymous")
 	// Default to true if not set
 	return val != "false"
+}
+
+// GetSiteURL returns the configured site URL for email links.
+// Returns empty string if not configured (will use default from mail config).
+func (h *Handler) GetSiteURL() string {
+	val, _ := h.store.Get("site_url")
+	return val
+}
+
+// SetOnSiteURLChange sets a callback that is called when SiteURL is updated.
+func (h *Handler) SetOnSiteURLChange(callback func(string)) {
+	h.onSiteURLChange = callback
 }

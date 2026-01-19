@@ -3,6 +3,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -547,13 +548,15 @@ type VerifyRequest struct {
 }
 
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
-	var token, tokenHash, verifyType, password string
+	var token, tokenHash, verifyType, password, redirectTo string
+	isGetRequest := r.Method == "GET"
 
-	if r.Method == "GET" {
+	if isGetRequest {
 		token = r.URL.Query().Get("token")
 		tokenHash = r.URL.Query().Get("token_hash")
 		verifyType = r.URL.Query().Get("type")
 		password = r.URL.Query().Get("password")
+		redirectTo = r.URL.Query().Get("redirect_to")
 	} else {
 		var req VerifyRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -594,17 +597,32 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		// Update last sign in
 		s.authService.UpdateLastSignIn(user.ID)
 
-		// Build user response
+		// For GET requests (clicking magic link in email), redirect to app with tokens in URL fragment
+		if isGetRequest {
+			// Use redirect_to from query param, or fall back to site URL from mail config
+			if redirectTo == "" {
+				redirectTo = s.mailConfig.SiteURL
+			}
+			// Build redirect URL with tokens in fragment (hash)
+			// Format: redirect_to#access_token=...&token_type=bearer&expires_in=3600&refresh_token=...&type=magiclink
+			fragment := fmt.Sprintf("access_token=%s&token_type=bearer&expires_in=3600&refresh_token=%s&type=magiclink",
+				accessToken, refreshToken)
+			redirectURL := redirectTo + "#" + fragment
+			http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+			return
+		}
+
+		// For POST requests, return JSON response
 		userResponse := map[string]any{
-			"id":                user.ID,
-			"email":             user.Email,
-			"role":              user.Role,
-			"is_anonymous":      user.IsAnonymous,
+			"id":                 user.ID,
+			"email":              user.Email,
+			"role":               user.Role,
+			"is_anonymous":       user.IsAnonymous,
 			"email_confirmed_at": user.EmailConfirmedAt,
-			"created_at":        user.CreatedAt,
-			"updated_at":        user.UpdatedAt,
-			"app_metadata":      user.AppMetadata,
-			"user_metadata":     user.UserMetadata,
+			"created_at":         user.CreatedAt,
+			"updated_at":         user.UpdatedAt,
+			"app_metadata":       user.AppMetadata,
+			"user_metadata":      user.UserMetadata,
 		}
 		if user.LastSignInAt != nil {
 			userResponse["last_sign_in_at"] = user.LastSignInAt
@@ -712,8 +730,8 @@ func (s *Server) handleMagicLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send magic link email
-	if err := s.emailService.SendMagicLink(r.Context(), req.Email, token); err != nil {
+	// Send magic link email (legacy endpoint doesn't support redirect)
+	if err := s.emailService.SendMagicLink(r.Context(), req.Email, token, ""); err != nil {
 		// Log error but don't expose to user
 		slog.Error("failed to send magic link email", "error", err)
 	}
@@ -809,8 +827,14 @@ func (s *Server) handleOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get redirect URL from options
+	redirectTo := ""
+	if req.Options != nil && req.Options.EmailRedirectTo != "" {
+		redirectTo = req.Options.EmailRedirectTo
+	}
+
 	// Send magic link email
-	if err := s.emailService.SendMagicLink(r.Context(), email, token); err != nil {
+	if err := s.emailService.SendMagicLink(r.Context(), email, token, redirectTo); err != nil {
 		slog.Error("failed to send magic link email", "error", err)
 	}
 

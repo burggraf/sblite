@@ -84,8 +84,12 @@ func (s *EmailService) SendRecovery(ctx context.Context, userID, email, token st
 }
 
 // SendMagicLink sends a magic link email.
-func (s *EmailService) SendMagicLink(ctx context.Context, email, token string) error {
+// If redirectTo is provided, it will be included in the magic link URL for post-verification redirect.
+func (s *EmailService) SendMagicLink(ctx context.Context, email, token, redirectTo string) error {
 	confirmURL := fmt.Sprintf("%s/auth/v1/verify?token=%s&type=magiclink", s.config.SiteURL, url.QueryEscape(token))
+	if redirectTo != "" {
+		confirmURL += "&redirect_to=" + url.QueryEscape(redirectTo)
+	}
 
 	data := TemplateData{
 		SiteURL:         s.config.SiteURL,

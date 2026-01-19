@@ -48,6 +48,7 @@ type Handler struct {
 	serverConfig     *ServerConfig
 	jwtSecret        string
 	oauthReloadFunc  func()
+	onSiteURLChange  func(string)
 }
 
 // ServerConfig holds server configuration for display in settings.
