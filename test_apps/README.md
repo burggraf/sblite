@@ -39,6 +39,7 @@ test_apps/
 | App | Setup Script | Description |
 |-----|-------------|-------------|
 | [FinOpenPOS](https://github.com/JoaoHenriqueBarbosa/FinOpenPOS) | `setup-finopenpos.sh` | Open-source Point of Sale system with products, customers, orders, and transactions |
+| [Svelte Kanban](https://github.com/supabase-community/svelte-kanban) | `setup-svelte-kanban.sh` | Trello clone with boards, lists, and cards |
 
 ## Quick Start
 
