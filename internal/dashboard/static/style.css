@@ -3461,3 +3461,89 @@ small.text-muted {
 .load-more-container .btn {
     min-width: 150px;
 }
+
+/* Logs tabs */
+.logs-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.tab-btn {
+    padding: 0.5rem 1rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.tab-btn:hover:not(:disabled) {
+    color: var(--text);
+}
+
+.tab-btn.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+
+.tab-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Console output */
+.console-output {
+    background: var(--bg-dark, #1a1a2e);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1rem;
+    max-height: 500px;
+    overflow: auto;
+}
+
+.console-output pre {
+    margin: 0;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--text-light, #e0e0e0);
+}
+
+/* Auto-refresh label */
+.auto-refresh-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.auto-refresh-label input {
+    cursor: pointer;
+}
+
+/* Logs toolbar improvements */
+.logs-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.logs-info {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.logs-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
