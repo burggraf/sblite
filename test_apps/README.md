@@ -34,6 +34,12 @@ test_apps/
 | Svelte User Management | `setup-svelte-user-management.sh` | Svelte version |
 | SvelteKit User Management | `setup-sveltekit-user-management.sh` | SvelteKit with SSR |
 
+### Third-Party Apps
+
+| App | Setup Script | Description |
+|-----|-------------|-------------|
+| [FinOpenPOS](https://github.com/JoaoHenriqueBarbosa/FinOpenPOS) | `setup-finopenpos.sh` | Open-source Point of Sale system with products, customers, orders, and transactions |
+
 ## Quick Start
 
 ### 1. Setup an App
