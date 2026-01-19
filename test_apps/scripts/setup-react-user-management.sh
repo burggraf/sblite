@@ -31,7 +31,11 @@ install_deps "$APP_DIR"
 
 # Initialize database
 DB_PATH="$APP_DIR/data.db"
-init_database "$DB_PATH"
+if [[ ! -f "$DB_PATH" ]]; then
+    init_database "$DB_PATH"
+else
+    log_info "Database already exists, skipping init"
+fi
 
 # Create the profiles table and storage schema
 log_info "Creating profiles table and storage..."
