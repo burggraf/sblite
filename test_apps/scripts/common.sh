@@ -261,12 +261,12 @@ EOF
     log_success "Created $env_file"
 }
 
-# Install npm dependencies
+# Install dependencies with pnpm
 install_deps() {
     local app_dir="$1"
     log_info "Installing dependencies in $app_dir..."
     cd "$app_dir"
-    npm install
+    pnpm install
     log_success "Dependencies installed"
 }
 
@@ -275,7 +275,7 @@ create_startup_script() {
     local app_name="$1"
     local app_dir_name="$2"  # Just the directory name, not full path
     local db_name="$3"
-    local dev_command="${4:-npm run dev}"
+    local dev_command="${4:-pnpm run dev}"
     local needs_functions="${5:-false}"
 
     local script_path="$SCRIPTS_DIR/start-${app_name}.sh"
@@ -398,7 +398,7 @@ command_exists() {
 check_requirements() {
     local missing=()
 
-    for cmd in git node npm go sqlite3; do
+    for cmd in git node pnpm go sqlite3; do
         if ! command_exists "$cmd"; then
             missing+=("$cmd")
         fi

@@ -76,7 +76,7 @@ EOF
 log_success "Database schema created"
 
 # Create startup script
-create_startup_script "$APP_NAME" "$APP_DIR" "data" "npm run dev"
+create_startup_script "$APP_NAME" "$APP_DIR" "data" "pnpm run dev"
 
 log_success "Setup complete!"
 echo ""
