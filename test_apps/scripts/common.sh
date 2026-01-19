@@ -85,7 +85,55 @@ generate_keys() {
     export SERVICE_KEY
 }
 
-# Check if a local template exists, otherwise download from GitHub
+# Download a directory from GitHub using the API (downloads only the specific folder)
+download_github_dir() {
+    local owner="$1"
+    local repo="$2"
+    local path="$3"
+    local target="$4"
+    local branch="${5:-master}"
+
+    mkdir -p "$target"
+
+    # Get directory contents from GitHub API
+    local api_url="https://api.github.com/repos/$owner/$repo/contents/$path?ref=$branch"
+    local response=$(curl -sL "$api_url")
+
+    # Check for API errors
+    if echo "$response" | grep -q '"message"'; then
+        local msg=$(echo "$response" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
+        log_error "GitHub API error: $msg"
+        return 1
+    fi
+
+    # Parse JSON and download each item
+    echo "$response" | python3 -c "
+import json
+import sys
+import os
+import urllib.request
+
+data = json.load(sys.stdin)
+target = '$target'
+owner = '$owner'
+repo = '$repo'
+branch = '$branch'
+
+for item in data:
+    name = item['name']
+    item_type = item['type']
+
+    if item_type == 'file':
+        filepath = os.path.join(target, name)
+        print(f'  Downloading {name}', file=sys.stderr)
+        urllib.request.urlretrieve(item['download_url'], filepath)
+    elif item_type == 'dir':
+        # Print directory for recursive handling
+        print(item['path'])
+"
+}
+
+# Clone a Supabase example - downloads only the specific folder
 clone_supabase_example() {
     local example_path="$1"  # e.g., "examples/todo-list/nextjs-todo-list"
     local target_dir="$2"    # e.g., "nextjs-todo-list"
@@ -106,30 +154,36 @@ clone_supabase_example() {
         return 0
     fi
 
-    log_info "Downloading $example_path to $target_dir..."
-    mkdir -p "$TEST_APPS_DIR"
+    log_info "Downloading $example_path (only this folder, not entire repo)..."
+    mkdir -p "$full_target"
 
-    # Download zipball (can be slow for large repos)
-    local temp_dir=$(mktemp -d)
-    cd "$temp_dir"
+    # Recursive function to download directory
+    download_dir_recursive() {
+        local path="$1"
+        local target="$2"
 
-    log_info "Downloading from GitHub (zipball)..."
-    curl -sL -o repo.zip "https://github.com/supabase/supabase/archive/refs/heads/master.zip"
+        local subdirs=$(download_github_dir "supabase" "supabase" "$path" "$target" "master")
 
-    log_info "Extracting $example_path..."
-    unzip -q repo.zip "supabase-master/$example_path/*"
+        # Recursively download subdirectories
+        while IFS= read -r subdir; do
+            if [[ -n "$subdir" ]]; then
+                local subdir_name=$(basename "$subdir")
+                local subdir_target="$target/$subdir_name"
+                mkdir -p "$subdir_target"
+                log_info "  Entering $subdir_name/"
+                download_dir_recursive "$subdir" "$subdir_target"
+            fi
+        done <<< "$subdirs"
+    }
 
-    if [[ -d "supabase-master/$example_path" ]]; then
-        mv "supabase-master/$example_path" "$full_target"
-    else
-        log_error "Example path not found: $example_path"
-        cd "$SBLITE_ROOT"
-        rm -rf "$temp_dir"
+    download_dir_recursive "$example_path" "$full_target"
+
+    if [[ -z "$(ls -A "$full_target" 2>/dev/null)" ]]; then
+        log_error "Failed to download $example_path"
+        rm -rf "$full_target"
         return 1
     fi
 
-    cd "$SBLITE_ROOT"
-    rm -rf "$temp_dir"
     log_success "Downloaded to $full_target"
 }
 
