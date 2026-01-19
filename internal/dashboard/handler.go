@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markb/sblite/internal/fts"
 	"github.com/markb/sblite/internal/functions"
+	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -209,6 +210,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/", h.handleQueryLogs)
 			r.Get("/config", h.handleGetLogConfig)
 			r.Get("/tail", h.handleTailLogs)
+			r.Get("/buffer", h.handleBufferLogs)
 		})
 
 		// SQL Browser route (require auth)
@@ -2910,6 +2912,39 @@ func (h *Handler) handleTailLogs(w http.ResponseWriter, r *http.Request) {
 		"total":     len(lines),
 		"showing":   len(lines) - start,
 		"file_path": cfg.LogFile,
+	})
+}
+
+func (h *Handler) handleBufferLogs(w http.ResponseWriter, r *http.Request) {
+	linesStr := r.URL.Query().Get("lines")
+	numLines := 100
+	if n, err := strconv.Atoi(linesStr); err == nil && n > 0 {
+		numLines = n
+	}
+
+	lines := log.GetBufferedLogs(numLines)
+	total, capacity, ok := log.GetBufferStats()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if !ok {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"lines":       []string{},
+			"total":       0,
+			"showing":     0,
+			"buffer_size": 0,
+			"enabled":     false,
+			"message":     "Log buffer is disabled. Start server with --log-buffer-lines=500",
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"lines":       lines,
+		"total":       total,
+		"showing":     len(lines),
+		"buffer_size": capacity,
+		"enabled":     true,
 	})
 }
 
