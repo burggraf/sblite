@@ -141,6 +141,66 @@ sqlite3 /var/log/sblite-logs.db \
 - Deletes entries older than `--log-max-age` days
 - Uses the `timestamp` column for age calculation
 
+## In-Memory Log Buffer
+
+sblite maintains an in-memory ring buffer that captures all log output, regardless of the configured log mode. This allows you to view recent console logs from the dashboard even when running in the background.
+
+**Configuration:**
+```bash
+# Default: 500 lines
+./sblite serve
+
+# Custom buffer size
+./sblite serve --log-buffer-lines=1000
+
+# Disable buffer (minimal memory footprint)
+./sblite serve --log-buffer-lines=0
+```
+
+**Viewing logs in the dashboard:**
+1. Open the dashboard at `http://localhost:8080/_`
+2. Navigate to **Logs** in the sidebar
+3. The **Console** tab shows buffered log output
+4. Use **Auto-refresh (5s)** to automatically poll for new logs
+5. Click **Refresh** for manual updates
+
+**API endpoint:**
+```bash
+# Get last 100 lines (default)
+curl http://localhost:8080/_/api/logs/buffer
+
+# Get last 500 lines
+curl http://localhost:8080/_/api/logs/buffer?lines=500
+```
+
+**Response format:**
+```json
+{
+  "lines": ["time=... level=INFO msg=\"starting server\"", "..."],
+  "total": 342,
+  "showing": 100,
+  "buffer_size": 500,
+  "enabled": true
+}
+```
+
+**When disabled:**
+```json
+{
+  "lines": [],
+  "total": 0,
+  "showing": 0,
+  "buffer_size": 0,
+  "enabled": false,
+  "message": "Log buffer is disabled. Start server with --log-buffer-lines=500"
+}
+```
+
+**Notes:**
+- The buffer works alongside all log modes (console, file, database)
+- Buffer clears on server restart
+- Typical memory usage: ~100KB for 500 lines
+
 ## Log Levels
 
 | Level | Value | Use Case |
@@ -192,6 +252,7 @@ level=ERROR msg="http request" method=GET path=/rest/v1/users status=500 duratio
 | `SBLITE_LOG_MAX_AGE` | `7` | Days to retain old logs |
 | `SBLITE_LOG_MAX_BACKUPS` | `3` | Backup files to keep (file mode) |
 | `SBLITE_LOG_FIELDS` | `` | Database fields (comma-separated) |
+| `SBLITE_LOG_BUFFER_LINES` | `500` | In-memory buffer size (0 to disable) |
 
 ### CLI Flags
 
@@ -272,6 +333,13 @@ SBLITE_LOG_LEVEL=debug ./sblite serve
 │         Level filtering applied             │
 └──────────────────┬──────────────────────────┘
                    │
+                   ▼
+┌─────────────────────────────────────────────┐
+│          Buffer Handler (optional)          │
+│  Stores formatted lines in ring buffer      │
+│  Exposes via /_/api/logs/buffer             │
+└──────────────────┬──────────────────────────┘
+                   │
         ┌──────────┼──────────┐
         ▼          ▼          ▼
 ┌──────────┐ ┌──────────┐ ┌──────────┐
@@ -283,4 +351,4 @@ SBLITE_LOG_LEVEL=debug ./sblite serve
 └──────────┘ └──────────┘ └──────────┘
 ```
 
-The logging system uses Go's `log/slog` package with custom handlers for each mode. Only one handler is active at a time based on `--log-mode`.
+The logging system uses Go's `log/slog` package with custom handlers. The Buffer Handler wraps the primary handler (based on `--log-mode`) and captures all output in memory for dashboard viewing.
