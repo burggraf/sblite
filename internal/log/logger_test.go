@@ -16,6 +16,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Format != "text" {
 		t.Errorf("expected format 'text', got %q", cfg.Format)
 	}
+	if cfg.BufferLines != 500 {
+		t.Errorf("expected BufferLines 500, got %d", cfg.BufferLines)
+	}
 }
 
 func TestParseLevel(t *testing.T) {
@@ -34,5 +37,41 @@ func TestParseLevel(t *testing.T) {
 		if int(got) != tt.want {
 			t.Errorf("ParseLevel(%q) = %d, want %d", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestInit_CreatesBuffer(t *testing.T) {
+	cfg := &Config{
+		Mode:        "console",
+		Level:       "info",
+		BufferLines: 100,
+	}
+	if err := Init(cfg); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Log something
+	Info("test buffer message")
+
+	// Check buffer has content
+	lines := GetBufferedLogs(10)
+	if len(lines) == 0 {
+		t.Error("expected buffered logs, got none")
+	}
+}
+
+func TestInit_BufferDisabled(t *testing.T) {
+	cfg := &Config{
+		Mode:        "console",
+		Level:       "info",
+		BufferLines: 0, // disabled
+	}
+	if err := Init(cfg); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	lines := GetBufferedLogs(10)
+	if lines != nil {
+		t.Error("expected nil when buffer disabled")
 	}
 }

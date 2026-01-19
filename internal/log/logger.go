@@ -25,6 +25,9 @@ type Config struct {
 	DBPath        string   // Path to log.db
 	RetentionDays int      // Delete entries older than this
 	Fields        []string // Optional fields: "source", "request_id", "user_id", "extra"
+
+	// Buffer-specific
+	BufferLines int // In-memory buffer size (0 to disable)
 }
 
 // DefaultConfig returns the default logging configuration.
@@ -40,6 +43,7 @@ func DefaultConfig() *Config {
 		DBPath:        "log.db",
 		RetentionDays: 7,
 		Fields:        []string{},
+		BufferLines:   500,
 	}
 }
 
@@ -61,6 +65,7 @@ func ParseLevel(level string) slog.Level {
 
 var (
 	defaultLogger *slog.Logger
+	logBuffer     *RingBuffer
 	mu            sync.RWMutex
 )
 
@@ -87,6 +92,14 @@ func Init(cfg *Config) error {
 		handler = h
 	default:
 		handler = NewConsoleHandler(os.Stdout, cfg, level)
+	}
+
+	// Wrap with buffer handler if enabled
+	if cfg.BufferLines > 0 {
+		logBuffer = NewRingBuffer(cfg.BufferLines)
+		handler = NewBufferHandler(handler, logBuffer)
+	} else {
+		logBuffer = nil
 	}
 
 	defaultLogger = slog.New(handler)
@@ -132,4 +145,26 @@ func With(args ...any) *slog.Logger {
 // Log logs at the given level.
 func Log(ctx context.Context, level slog.Level, msg string, args ...any) {
 	Logger().Log(ctx, level, msg, args...)
+}
+
+// GetBufferedLogs returns the last n lines from the log buffer.
+// Returns nil if buffer is disabled.
+func GetBufferedLogs(n int) []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	if logBuffer == nil {
+		return nil
+	}
+	return logBuffer.Lines(n)
+}
+
+// GetBufferStats returns buffer statistics.
+// Returns (total, capacity, ok). ok is false if buffer disabled.
+func GetBufferStats() (total int, capacity int, ok bool) {
+	mu.RLock()
+	defer mu.RUnlock()
+	if logBuffer == nil {
+		return 0, 0, false
+	}
+	return logBuffer.Total(), logBuffer.Capacity(), true
 }
