@@ -125,6 +125,13 @@ func (s *Service) GenerateMagicLinkToken(email string) (string, error) {
 	return s.CreateVerificationToken(user.ID, TokenTypeMagicLink, email, 1*time.Hour)
 }
 
+// GenerateMagicLinkTokenForUser creates a magic link token for a specific user.
+// This is used when we already have the user (e.g., after creating a new user for OTP).
+func (s *Service) GenerateMagicLinkTokenForUser(userID, email string) (string, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	return s.CreateVerificationToken(userID, TokenTypeMagicLink, email, 1*time.Hour)
+}
+
 // GenerateInviteToken creates an invite token for a new user.
 func (s *Service) GenerateInviteToken(email string) (string, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
@@ -173,6 +180,11 @@ func (s *Service) VerifyMagicLink(token string) (*User, *Session, string, error)
 		now := time.Now().UTC().Format(time.RFC3339)
 		if _, err := s.db.Exec("UPDATE auth_users SET email_confirmed_at = ? WHERE id = ?", now, user.ID); err != nil {
 			return nil, nil, "", fmt.Errorf("failed to confirm email: %w", err)
+		}
+		// Refetch user to get updated email_confirmed_at
+		user, err = s.GetUserByID(vt.UserID)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("failed to refetch user: %w", err)
 		}
 	}
 

@@ -208,6 +208,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/verify", s.handleVerify)
 		r.Get("/settings", s.handleSettings)
 		r.Post("/magiclink", s.handleMagicLink)
+		r.Post("/otp", s.handleOTP) // Supabase signInWithOtp endpoint
 		r.Post("/resend", s.handleResend)
 
 		// OAuth routes

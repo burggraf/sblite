@@ -491,6 +491,51 @@ func (s *Service) ConvertAnonymousUser(userID, email, password string) error {
 	return nil
 }
 
+// CreateMagicLinkUser creates a new user for magic link authentication (no password).
+// The user is created without email confirmation - they will be confirmed when they click the magic link.
+func (s *Service) CreateMagicLinkUser(email string, userMetadata map[string]any) (*User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+
+	id := generateID()
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Marshal user metadata to JSON
+	userMetaJSON := "{}"
+	if userMetadata != nil {
+		metaBytes, err := json.Marshal(userMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal user metadata: %w", err)
+		}
+		userMetaJSON = string(metaBytes)
+	}
+
+	// Create app_metadata with magiclink provider
+	appMetadata := map[string]interface{}{
+		"provider":  "email",
+		"providers": []string{"email"},
+	}
+	appMetaJSON, err := json.Marshal(appMetadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal app metadata: %w", err)
+	}
+
+	// Magic link users are created without password and without email confirmation
+	// Email will be confirmed when they click the magic link
+	_, err = s.db.Exec(`
+		INSERT INTO auth_users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+		VALUES (?, ?, '', NULL, ?, ?, ?, ?)
+	`, id, email, string(appMetaJSON), userMetaJSON, now, now)
+
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return nil, fmt.Errorf("user with email %s already exists", email)
+		}
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	return s.GetUserByID(id)
+}
+
 // ConvertAnonymousUserViaOAuth converts an anonymous user to a regular user via OAuth.
 // Unlike email/password conversion, this doesn't set a password and uses the OAuth provider.
 func (s *Service) ConvertAnonymousUserViaOAuth(userID, email, provider string) error {

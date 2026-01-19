@@ -539,16 +539,19 @@ func (s *Server) handleRecover(w http.ResponseWriter, r *http.Request) {
 }
 
 type VerifyRequest struct {
-	Type     string `json:"type"`     // "signup" or "recovery"
-	Token    string `json:"token"`
-	Password string `json:"password"` // Required for recovery type
+	Type      string `json:"type"`       // "signup", "recovery", "magiclink", "email"
+	Token     string `json:"token"`      // OTP code or token
+	TokenHash string `json:"token_hash"` // PKCE token hash (alternative to token)
+	Email     string `json:"email"`      // Required for OTP verification
+	Password  string `json:"password"`   // Required for recovery type
 }
 
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
-	var token, verifyType, password string
+	var token, tokenHash, verifyType, password string
 
 	if r.Method == "GET" {
 		token = r.URL.Query().Get("token")
+		tokenHash = r.URL.Query().Get("token_hash")
 		verifyType = r.URL.Query().Get("type")
 		password = r.URL.Query().Get("password")
 	} else {
@@ -558,8 +561,14 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		token = req.Token
+		tokenHash = req.TokenHash
 		verifyType = req.Type
 		password = req.Password
+	}
+
+	// Use token_hash if token is not provided (PKCE flow)
+	if token == "" && tokenHash != "" {
+		token = tokenHash
 	}
 
 	if token == "" {
@@ -568,7 +577,51 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch verifyType {
-	case "signup", "email", "":
+	case "magiclink", "email":
+		// Magic link verification - creates a session and returns tokens
+		user, session, refreshToken, err := s.authService.VerifyMagicLink(token)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid_token", "Invalid or expired token")
+			return
+		}
+
+		accessToken, err := s.authService.GenerateAccessToken(user, session.ID)
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, "server_error", "Failed to generate token")
+			return
+		}
+
+		// Update last sign in
+		s.authService.UpdateLastSignIn(user.ID)
+
+		// Build user response
+		userResponse := map[string]any{
+			"id":                user.ID,
+			"email":             user.Email,
+			"role":              user.Role,
+			"is_anonymous":      user.IsAnonymous,
+			"email_confirmed_at": user.EmailConfirmedAt,
+			"created_at":        user.CreatedAt,
+			"updated_at":        user.UpdatedAt,
+			"app_metadata":      user.AppMetadata,
+			"user_metadata":     user.UserMetadata,
+		}
+		if user.LastSignInAt != nil {
+			userResponse["last_sign_in_at"] = user.LastSignInAt
+		}
+
+		response := TokenResponse{
+			AccessToken:  accessToken,
+			TokenType:    "bearer",
+			ExpiresIn:    3600,
+			RefreshToken: refreshToken,
+			User:         userResponse,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+
+	case "signup", "":
 		user, err := s.authService.VerifyEmail(token)
 		if err != nil {
 			s.writeError(w, http.StatusBadRequest, "invalid_token", "Invalid or expired token")
@@ -579,6 +632,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 			"message": "Email verified successfully",
 			"user":    user,
 		})
+
 	case "recovery":
 		if password == "" {
 			s.writeError(w, http.StatusBadRequest, "validation_failed", "Password is required")
@@ -598,6 +652,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 			"message": "Password reset successfully",
 			"user":    user,
 		})
+
 	default:
 		s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid verification type")
 	}
@@ -667,6 +722,101 @@ func (s *Server) handleMagicLink(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "If the email exists, a magic link has been sent",
 	})
+}
+
+// OTPRequest matches the Supabase signInWithOtp request format.
+type OTPRequest struct {
+	Email      string         `json:"email"`
+	Phone      string         `json:"phone,omitempty"` // Not supported yet
+	CreateUser *bool          `json:"create_user,omitempty"`
+	Data       map[string]any `json:"data,omitempty"`
+	Options    *OTPOptions    `json:"options,omitempty"`
+}
+
+type OTPOptions struct {
+	EmailRedirectTo  string `json:"emailRedirectTo,omitempty"`
+	ShouldCreateUser *bool  `json:"shouldCreateUser,omitempty"`
+	Data             map[string]any `json:"data,omitempty"`
+}
+
+// handleOTP handles the /auth/v1/otp endpoint (Supabase signInWithOtp).
+// This endpoint sends a magic link to the user's email.
+// If the user doesn't exist and create_user is true (default), a new user is created.
+func (s *Server) handleOTP(w http.ResponseWriter, r *http.Request) {
+	var req OTPRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	// Phone OTP not supported yet
+	if req.Phone != "" {
+		s.writeError(w, http.StatusBadRequest, "unsupported", "Phone OTP is not supported")
+		return
+	}
+
+	if req.Email == "" {
+		s.writeError(w, http.StatusBadRequest, "validation_failed", "Email is required")
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+
+	// Determine if we should create user if they don't exist
+	// Default is true, matching Supabase behavior
+	shouldCreateUser := true
+	if req.CreateUser != nil {
+		shouldCreateUser = *req.CreateUser
+	}
+	if req.Options != nil && req.Options.ShouldCreateUser != nil {
+		shouldCreateUser = *req.Options.ShouldCreateUser
+	}
+
+	// Get user metadata from request
+	userMetadata := req.Data
+	if req.Options != nil && req.Options.Data != nil {
+		userMetadata = req.Options.Data
+	}
+
+	// Check if user exists
+	user, err := s.authService.GetUserByEmail(email)
+	if err != nil {
+		// User doesn't exist
+		if !shouldCreateUser {
+			// Don't create user, but don't reveal they don't exist
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+
+		// Create a new user without password (magic link user)
+		user, err = s.authService.CreateMagicLinkUser(email, userMetadata)
+		if err != nil {
+			slog.Error("failed to create magic link user", "error", err)
+			// Don't reveal the error
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+	}
+
+	// Generate magic link token
+	token, err := s.authService.GenerateMagicLinkTokenForUser(user.ID, email)
+	if err != nil {
+		slog.Error("failed to generate magic link token", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{})
+		return
+	}
+
+	// Send magic link email
+	if err := s.emailService.SendMagicLink(r.Context(), email, token); err != nil {
+		slog.Error("failed to send magic link email", "error", err)
+	}
+
+	// Return empty response on success (Supabase behavior)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{})
 }
 
 type InviteRequest struct {

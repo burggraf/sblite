@@ -201,6 +201,8 @@ npm test         # Run all tests (server must be running)
 | `/auth/v1/logout` | POST | Sign out (requires auth) |
 | `/auth/v1/user` | GET | Get current user (requires auth) |
 | `/auth/v1/user` | PUT | Update current user (requires auth) |
+| `/auth/v1/otp` | POST | Send magic link/OTP email (signInWithOtp) |
+| `/auth/v1/verify` | GET/POST | Verify OTP/magic link token |
 | `/auth/v1/authorize` | GET | Initiate OAuth flow (redirect to provider) |
 | `/auth/v1/callback` | GET | OAuth provider callback handler |
 | `/auth/v1/user/identities` | GET | List linked OAuth identities (requires auth) |
