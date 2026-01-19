@@ -827,9 +827,10 @@ func (s *Server) handleOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get redirect URL from options
-	redirectTo := ""
-	if req.Options != nil && req.Options.EmailRedirectTo != "" {
+	// Get redirect URL from query parameter (Supabase JS client sends it this way)
+	// or from options in the request body
+	redirectTo := r.URL.Query().Get("redirect_to")
+	if redirectTo == "" && req.Options != nil && req.Options.EmailRedirectTo != "" {
 		redirectTo = req.Options.EmailRedirectTo
 	}
 
