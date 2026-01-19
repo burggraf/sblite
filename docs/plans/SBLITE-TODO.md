@@ -33,6 +33,33 @@ See `docs/plans/2026-01-18-vector-search-design.md` for full design.
 
 ---
 
+### PostgreSQL Functions (RPC)
+Supabase RPC compatibility for calling server-side functions via `/rpc/v1/{name}`.
+
+```javascript
+// Client usage
+const { data } = await supabase.rpc('get_user_orders', { user_id: '...' })
+```
+
+**Implementation approach (phased):**
+- **Phase C:** SQL-language functions only (2-4 weeks, ~40% compatibility)
+- **Phase D:** PL/pgSQL → TypeScript transpilation (4-6 weeks, ~70-80% compatibility)
+- **Phase A:** Full PL/pgSQL interpreter (3-6 months, ~95% compatibility)
+
+**Key components:**
+- Function metadata schema (`_functions`, `_function_args` tables)
+- RPC HTTP handler at `/rpc/v1/{name}`
+- SQL dialect translator (PostgreSQL → SQLite)
+- Admin API and Dashboard integration
+- Optional: PL/pgSQL lexer, parser, and interpreter/transpiler
+
+**Complexity:** Medium (Phase C) to Very Large (Phase A)
+**Priority:** Medium (enables stored procedure migration from Supabase)
+
+See `docs/plans/2025-01-19-postgresql-functions-design.md` for full phased design.
+
+---
+
 ### Realtime Subscriptions
 WebSocket-based real-time updates when data changes. Core Supabase feature for reactive apps.
 
@@ -187,6 +214,7 @@ TOTP-based second factor.
 
 | Feature | Priority | Effort | Status |
 |---------|----------|--------|--------|
+| PostgreSQL functions (RPC) | Medium | Medium-Very Large | Pending (phased) |
 | Vector search | Medium | Medium-Large | Pending |
 | Realtime subscriptions | Medium | Large | Pending |
 | File storage | Medium | Large | ✅ Complete |
