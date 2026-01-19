@@ -251,6 +251,11 @@ func buildLogConfig(cmd *cobra.Command) *log.Config {
 	if fields := os.Getenv("SBLITE_LOG_FIELDS"); fields != "" {
 		cfg.Fields = strings.Split(fields, ",")
 	}
+	if bufferLines := os.Getenv("SBLITE_LOG_BUFFER_LINES"); bufferLines != "" {
+		if v, err := strconv.Atoi(bufferLines); err == nil {
+			cfg.BufferLines = v
+		}
+	}
 
 	// CLI flags override environment variables
 	if mode, _ := cmd.Flags().GetString("log-mode"); mode != "" {
@@ -279,6 +284,9 @@ func buildLogConfig(cmd *cobra.Command) *log.Config {
 	}
 	if fields, _ := cmd.Flags().GetStringSlice("log-fields"); len(fields) > 0 {
 		cfg.Fields = fields
+	}
+	if bufferLines, _ := cmd.Flags().GetInt("log-buffer-lines"); cmd.Flags().Changed("log-buffer-lines") {
+		cfg.BufferLines = bufferLines
 	}
 
 	return cfg
@@ -379,6 +387,7 @@ func init() {
 	serveCmd.Flags().Int("log-max-age", 0, "Max age of logs in days (default: 7)")
 	serveCmd.Flags().Int("log-max-backups", 0, "Max backup files to keep (default: 3)")
 	serveCmd.Flags().StringSlice("log-fields", nil, "DB log fields: source,request_id,user_id,extra")
+	serveCmd.Flags().Int("log-buffer-lines", 500, "Number of log lines to keep in memory buffer (0 to disable)")
 
 	// Edge functions flags
 	serveCmd.Flags().Bool("functions", false, "Enable edge functions support")
