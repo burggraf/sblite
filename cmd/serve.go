@@ -76,7 +76,7 @@ var serveCmd = &cobra.Command{
 
 		// Set dashboard config for settings display
 		srv.SetDashboardConfig(&dashboard.ServerConfig{
-			Version: "0.1.0",
+			Version: "0.1.1",
 			Host:    host,
 			Port:    port,
 			DBPath:  dbPath,

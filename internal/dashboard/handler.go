@@ -72,7 +72,7 @@ func NewHandler(db *sql.DB, migrationsDir string) *Handler {
 		fts:           fts.NewManager(db),
 		migrationsDir: migrationsDir,
 		startTime:     time.Now(),
-		serverConfig:  &ServerConfig{Version: "0.1.0"},
+		serverConfig:  &ServerConfig{Version: "0.1.1"},
 	}
 }
 
@@ -2152,7 +2152,7 @@ func (h *Handler) handleGetServerInfo(w http.ResponseWriter, r *http.Request) {
 
 	cfg := h.serverConfig
 	if cfg == nil {
-		cfg = &ServerConfig{Version: "0.1.0"}
+		cfg = &ServerConfig{Version: "0.1.1"}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
