@@ -8,3 +8,9 @@ e2e/package-lock.json
 migrations/
 node_modules/
 shoplite.db
+
+# Test apps (cloned repos) - keep scripts, shoplite, and README
+test_apps/*
+!test_apps/scripts/
+!test_apps/shoplite/
+!test_apps/README.md
