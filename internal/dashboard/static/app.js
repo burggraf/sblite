@@ -67,9 +67,17 @@ const App = {
             page: 1,
             pageSize: 50,
             filters: { level: 'all', since: '', until: '', search: '', user_id: '', request_id: '' },
-            loading: false,
-            tailLines: [],
             expandedLog: null,
+            tailLines: [],
+            loading: false,
+            // New console buffer state
+            activeTab: 'console',  // 'console', 'database', 'file'
+            consoleLines: [],
+            consoleTotal: 0,
+            consoleBufferSize: 0,
+            consoleEnabled: false,
+            autoRefresh: false,
+            autoRefreshInterval: null,
         },
         apiConsole: {
             method: 'GET',
@@ -3568,10 +3576,13 @@ const App = {
                 this.state.logs.config = await configRes.json();
             }
 
-            // Load logs based on mode
-            if (this.state.logs.config?.mode === 'database') {
+            // Always load console buffer
+            await this.loadConsoleBuffer();
+
+            // Load mode-specific logs
+            if (this.state.logs.activeTab === 'database' && this.state.logs.config?.mode === 'database') {
                 await this.queryLogs();
-            } else if (this.state.logs.config?.mode === 'file') {
+            } else if (this.state.logs.activeTab === 'file' && this.state.logs.config?.mode === 'file') {
                 await this.tailLogs();
             }
         } catch (e) {
@@ -3580,6 +3591,52 @@ const App = {
 
         this.state.logs.loading = false;
         this.render();
+    },
+
+    async loadConsoleBuffer() {
+        try {
+            const res = await fetch('/_/api/logs/buffer?lines=500');
+            if (res.ok) {
+                const data = await res.json();
+                this.state.logs.consoleLines = data.lines || [];
+                this.state.logs.consoleTotal = data.total || 0;
+                this.state.logs.consoleBufferSize = data.buffer_size || 0;
+                this.state.logs.consoleEnabled = data.enabled !== false;
+            }
+        } catch (e) {
+            this.state.logs.consoleLines = [];
+            this.state.logs.consoleEnabled = false;
+        }
+    },
+
+    setLogsTab(tab) {
+        this.state.logs.activeTab = tab;
+        this.stopAutoRefresh();
+        this.loadLogs();
+    },
+
+    toggleAutoRefresh() {
+        if (this.state.logs.autoRefresh) {
+            this.stopAutoRefresh();
+        } else {
+            this.startAutoRefresh();
+        }
+        this.render();
+    },
+
+    startAutoRefresh() {
+        this.state.logs.autoRefresh = true;
+        this.state.logs.autoRefreshInterval = setInterval(() => {
+            this.loadConsoleBuffer().then(() => this.render());
+        }, 5000);
+    },
+
+    stopAutoRefresh() {
+        this.state.logs.autoRefresh = false;
+        if (this.state.logs.autoRefreshInterval) {
+            clearInterval(this.state.logs.autoRefreshInterval);
+            this.state.logs.autoRefreshInterval = null;
+        }
     },
 
     async queryLogs() {
@@ -3657,16 +3714,29 @@ const App = {
     },
 
     renderLogsView() {
-        const { config, loading } = this.state.logs;
+        const { config, loading, activeTab } = this.state.logs;
 
         if (loading) {
             return '<div class="loading">Loading logs...</div>';
         }
 
+        const dbEnabled = config?.mode === 'database';
+        const fileEnabled = config?.mode === 'file';
+
         return `
             <div class="card-title">Logs</div>
             <div class="logs-view">
-                ${config?.mode === 'database' ? this.renderDatabaseLogs() : this.renderNonDatabaseLogs()}
+                <div class="logs-tabs">
+                    <button class="tab-btn ${activeTab === 'console' ? 'active' : ''}"
+                            onclick="App.setLogsTab('console')">Console</button>
+                    <button class="tab-btn ${activeTab === 'database' ? 'active' : ''} ${!dbEnabled ? 'disabled' : ''}"
+                            onclick="App.setLogsTab('database')" ${!dbEnabled ? 'disabled' : ''}>Database</button>
+                    <button class="tab-btn ${activeTab === 'file' ? 'active' : ''} ${!fileEnabled ? 'disabled' : ''}"
+                            onclick="App.setLogsTab('file')" ${!fileEnabled ? 'disabled' : ''}>File</button>
+                </div>
+                ${activeTab === 'console' ? this.renderConsoleLogs() :
+                  activeTab === 'database' ? this.renderDatabaseLogs() :
+                  this.renderFileLogs()}
             </div>
         `;
     },
@@ -3753,28 +3823,65 @@ const App = {
         `;
     },
 
-    renderNonDatabaseLogs() {
-        const { config, tailLines } = this.state.logs;
+    renderConsoleLogs() {
+        const { consoleLines, consoleTotal, consoleBufferSize, consoleEnabled, autoRefresh } = this.state.logs;
+
+        if (!consoleEnabled) {
+            return `
+                <div class="message message-info">
+                    <p>Console log buffer is disabled.</p>
+                    <p>Start server with <code>--log-buffer-lines=500</code> to enable.</p>
+                </div>
+            `;
+        }
 
         return `
-            <div class="logs-message">
-                <div class="message message-info">
-                    <p>Logs are being written to: <strong>${config?.mode === 'file' ? config.file_path : 'console'}</strong></p>
-                    <p>For full log filtering, start the server with <code>--log-mode=database</code></p>
+            <div class="logs-toolbar">
+                <div class="logs-info">
+                    Showing ${consoleLines.length} of ${consoleTotal} lines (buffer: ${consoleBufferSize})
                 </div>
+                <div class="logs-actions">
+                    <label class="auto-refresh-label">
+                        <input type="checkbox" ${autoRefresh ? 'checked' : ''}
+                               onchange="App.toggleAutoRefresh()">
+                        Auto-refresh (5s)
+                    </label>
+                    <button class="btn btn-secondary btn-sm" onclick="App.loadConsoleBuffer().then(() => App.render())">
+                        Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="console-output">
+                <pre>${consoleLines.map(l => this.escapeHtml(l)).join('')}</pre>
+            </div>
+        `;
+    },
 
-                ${config?.mode === 'file' ? `
-                    <div class="logs-toolbar">
-                        <button class="btn btn-secondary" onclick="App.tailLogs().then(() => App.render())">
-                            Tail Recent Logs
-                        </button>
-                    </div>
-                    ${tailLines.length > 0 ? `
-                        <div class="tail-output">
-                            <pre>${tailLines.map(l => this.escapeHtml(l)).join('\n')}</pre>
-                        </div>
-                    ` : ''}
-                ` : ''}
+    renderFileLogs() {
+        const { config, tailLines } = this.state.logs;
+
+        if (config?.mode !== 'file') {
+            return `
+                <div class="message message-info">
+                    <p>File logging is not enabled.</p>
+                    <p>Start server with <code>--log-mode=file</code> to enable.</p>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="logs-toolbar">
+                <div class="logs-info">
+                    Log file: ${config.file_path}
+                </div>
+                <div class="logs-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="App.tailLogs().then(() => App.render())">
+                        Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="console-output">
+                <pre>${tailLines.map(l => this.escapeHtml(l)).join('\n')}</pre>
             </div>
         `;
     },
