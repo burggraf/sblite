@@ -105,6 +105,9 @@ func (s *Store) Get(name string) (*FunctionDef, error) {
 		}
 		def.Args = append(def.Args, arg)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate args: %w", err)
+	}
 
 	return &def, nil
 }
@@ -128,6 +131,9 @@ func (s *Store) List() ([]*FunctionDef, error) {
 		names = append(names, name)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate functions: %w", err)
+	}
 
 	var funcs []*FunctionDef
 	for _, name := range names {
