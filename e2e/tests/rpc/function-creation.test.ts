@@ -28,6 +28,11 @@ describe('RPC - Function Creation', () => {
       DROP FUNCTION IF EXISTS test_replace_func;
       DROP FUNCTION IF EXISTS test_drop_func;
       DROP FUNCTION IF EXISTS get_current_time;
+      DROP FUNCTION IF EXISTS get_multi_col;
+      DROP FUNCTION IF EXISTS get_ids;
+      DROP FUNCTION IF EXISTS test_quote_tags;
+      DROP FUNCTION IF EXISTS test_quotes;
+      DROP FUNCTION IF EXISTS plpgsql_func;
     `)
   })
 
@@ -107,6 +112,45 @@ describe('RPC - Function Creation', () => {
         CREATE OR REPLACE FUNCTION get_current_time() RETURNS text LANGUAGE sql AS $$ SELECT NOW() $$;
       `)
 
+      expect(result.error).toBeUndefined()
+    })
+  })
+
+  describe('RETURNS TABLE and SETOF', () => {
+    it('should parse complex RETURNS TABLE definitions', async () => {
+      const result = await executeSql(`
+        CREATE OR REPLACE FUNCTION get_multi_col()
+        RETURNS TABLE(id text, name text, score integer)
+        LANGUAGE sql AS $$ SELECT 'a', 'test', 100 $$;
+      `)
+      expect(result.error).toBeUndefined()
+      expect(result.rows[0][0]).toContain('CREATE FUNCTION')
+    })
+
+    it('should parse RETURNS SETOF type', async () => {
+      const result = await executeSql(`
+        CREATE OR REPLACE FUNCTION get_ids()
+        RETURNS SETOF text LANGUAGE sql AS $$ SELECT 'a' UNION SELECT 'b' $$;
+      `)
+      expect(result.error).toBeUndefined()
+      expect(result.rows[0][0]).toContain('CREATE FUNCTION')
+    })
+  })
+
+  describe('Dollar-quoted bodies', () => {
+    it('should handle different dollar-quote tags', async () => {
+      const result = await executeSql(`
+        CREATE OR REPLACE FUNCTION test_quote_tags()
+        RETURNS text LANGUAGE sql AS $body$ SELECT 'test' $body$;
+      `)
+      expect(result.error).toBeUndefined()
+    })
+
+    it('should handle bodies with single quotes', async () => {
+      const result = await executeSql(`
+        CREATE OR REPLACE FUNCTION test_quotes()
+        RETURNS text LANGUAGE sql AS $$ SELECT 'hello''world' $$;
+      `)
       expect(result.error).toBeUndefined()
     })
   })
