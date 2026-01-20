@@ -3612,3 +3612,320 @@ small.text-muted {
     align-items: center;
     gap: 1rem;
 }
+
+/* ==================== API Docs Styles ==================== */
+
+.api-docs-layout {
+    display: flex;
+    gap: 0;
+    height: 100%;
+    min-height: calc(100vh - 60px);
+}
+
+.api-docs-sidebar {
+    width: 250px;
+    min-width: 250px;
+    background: var(--sidebar);
+    border-right: 1px solid var(--border);
+    padding: 1rem 0;
+    overflow-y: auto;
+    max-height: calc(100vh - 60px);
+}
+
+.api-docs-sidebar-section {
+    margin-bottom: 1.5rem;
+}
+
+.api-docs-sidebar-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 0.5rem 1rem;
+    letter-spacing: 0.05em;
+}
+
+.api-docs-nav-item {
+    display: block;
+    padding: 0.5rem 1rem;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.api-docs-nav-item:hover {
+    background: var(--hover);
+}
+
+.api-docs-nav-item.active {
+    background: var(--accent-bg);
+    color: var(--accent);
+    border-left: 3px solid var(--accent);
+}
+
+.api-docs-nav-sub {
+    padding-left: 1.5rem;
+    font-size: 0.85rem;
+}
+
+.api-docs-content {
+    flex: 1;
+    padding: 2rem;
+    overflow-y: auto;
+    max-height: calc(100vh - 60px);
+}
+
+.api-docs-page {
+    max-width: 900px;
+}
+
+.api-docs-page h1 {
+    font-size: 2rem;
+    margin-bottom: 1rem;
+    color: var(--text);
+}
+
+.api-docs-page h2 {
+    font-size: 1.4rem;
+    margin-top: 2rem;
+    margin-bottom: 0.75rem;
+    color: var(--text);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5rem;
+}
+
+.api-docs-page h3 {
+    font-size: 1.1rem;
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: var(--text);
+}
+
+.api-docs-page p {
+    line-height: 1.6;
+    margin-bottom: 1rem;
+    color: var(--text-secondary);
+}
+
+.api-docs-page ul {
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+}
+
+.api-docs-page li {
+    margin-bottom: 0.5rem;
+    color: var(--text-secondary);
+}
+
+.api-docs-page code {
+    background: var(--code-bg);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.9em;
+}
+
+/* Language tabs */
+.api-docs-lang-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    float: right;
+}
+
+.api-docs-lang-tab {
+    padding: 0.4rem 1rem;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.85rem;
+    border-radius: 4px;
+    transition: all 0.15s;
+}
+
+.api-docs-lang-tab:hover {
+    background: var(--hover);
+    color: var(--text);
+}
+
+.api-docs-lang-tab.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+
+/* Code blocks */
+.api-docs-code-block {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 1rem;
+    overflow: hidden;
+}
+
+.api-docs-code-block pre {
+    margin: 0;
+    padding: 1rem;
+    overflow-x: auto;
+}
+
+.api-docs-code-block code {
+    background: transparent;
+    padding: 0;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    white-space: pre;
+}
+
+.api-docs-code-title {
+    background: var(--bg-secondary);
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Badges */
+.api-docs-badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-right: 0.5rem;
+}
+
+.api-docs-badge.required {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+.api-docs-badge.optional {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+}
+
+.api-docs-badge.type {
+    background: rgba(59, 130, 246, 0.15);
+    color: #3b82f6;
+}
+
+.api-docs-badge.format {
+    background: rgba(168, 85, 247, 0.15);
+    color: #a855f7;
+}
+
+/* Column sections */
+.api-docs-column-section {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px dashed var(--border);
+}
+
+.api-docs-column-meta {
+    margin-bottom: 0.75rem;
+}
+
+/* Editable descriptions */
+.api-docs-editable {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+}
+
+.api-docs-desc-input {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.9rem;
+    resize: vertical;
+}
+
+.api-docs-desc-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.api-docs-desc-input-inline {
+    flex: 1;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85rem;
+}
+
+.api-docs-desc-input-inline:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* Warning box */
+.api-docs-warning {
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-left: 4px solid #f59e0b;
+    padding: 1rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+    color: var(--text);
+}
+
+/* Sections */
+.api-docs-section {
+    margin-bottom: 2rem;
+}
+
+/* Function arguments */
+.api-docs-arg {
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 0.75rem;
+}
+
+.api-docs-arg-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.api-docs-arg-name {
+    font-weight: 600;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.95rem;
+}
+
+/* Light theme adjustments */
+[data-theme="light"] .api-docs-sidebar {
+    background: #f8fafc;
+}
+
+[data-theme="light"] .api-docs-code-block {
+    background: #f1f5f9;
+}
+
+[data-theme="light"] .api-docs-code-title {
+    background: #e2e8f0;
+}
+
+[data-theme="light"] .api-docs-arg {
+    background: #f8fafc;
+}

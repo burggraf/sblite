@@ -335,6 +335,13 @@ Web dashboard accessible at `http://localhost:8080/_`
 | `/_/api/storage/objects/upload` | POST | Upload file (multipart) |
 | `/_/api/storage/objects/download` | GET | Download file |
 | `/_/api/storage/objects` | DELETE | Delete objects (bulk) |
+| `/_/api/apidocs/tables` | GET | List all tables with column metadata |
+| `/_/api/apidocs/tables/{name}` | GET | Get detailed schema for a table |
+| `/_/api/apidocs/tables/{name}/description` | PATCH | Update table description |
+| `/_/api/apidocs/tables/{name}/columns/{col}/description` | PATCH | Update column description |
+| `/_/api/apidocs/functions` | GET | List all RPC functions with metadata |
+| `/_/api/apidocs/functions/{name}` | GET | Get function details |
+| `/_/api/apidocs/functions/{name}/description` | PATCH | Update function description |
 
 ### Query Operators
 

@@ -148,6 +148,17 @@ const App = {
             hasMore: false,
             pageSize: 100
         },
+        apiDocs: {
+            page: 'intro',          // 'intro', 'auth', 'users-management', 'tables-intro', 'rpc-intro'
+            resource: null,         // table name when viewing table docs
+            rpc: null,              // function name when viewing RPC docs
+            language: 'javascript', // 'javascript' or 'bash'
+            tables: [],             // cached table list with schemas
+            functions: [],          // cached RPC function list
+            loading: false,
+            selectedTable: null,    // detailed table info
+            selectedFunction: null, // detailed function info
+        },
     },
 
     async init() {
@@ -404,6 +415,8 @@ const App = {
             this.loadFunctions();
         } else if (view === 'storage') {
             this.loadBuckets();
+        } else if (view === 'apiDocs') {
+            this.initApiDocs();
         } else {
             this.render();
         }
@@ -521,6 +534,12 @@ const App = {
                         </div>
 
                         <div class="nav-section">
+                            <div class="nav-section-title">Documentation</div>
+                            <a class="nav-item ${this.state.currentView === 'apiDocs' ? 'active' : ''}"
+                               onclick="App.navigate('apiDocs')">API Docs</a>
+                        </div>
+
+                        <div class="nav-section">
                             <div class="nav-section-title">System</div>
                             <a class="nav-item ${this.state.currentView === 'settings' ? 'active' : ''}"
                                onclick="App.navigate('settings')">Settings</a>
@@ -566,6 +585,8 @@ const App = {
                 return this.renderFunctionsView();
             case 'storage':
                 return this.renderStorageView();
+            case 'apiDocs':
+                return this.renderApiDocsView();
             default:
                 return '<div class="card">Select a section from the sidebar</div>';
         }
@@ -7198,6 +7219,808 @@ const App = {
     escapeJsString(str) {
         if (!str) return '';
         return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+    },
+
+    // ==================== API Docs Methods ====================
+
+    async initApiDocs() {
+        this.state.apiDocs.loading = true;
+        this.render();
+
+        try {
+            // Load tables and functions in parallel
+            const [tablesRes, functionsRes] = await Promise.all([
+                fetch('/_/api/apidocs/tables'),
+                fetch('/_/api/apidocs/functions')
+            ]);
+
+            if (tablesRes.ok) {
+                this.state.apiDocs.tables = await tablesRes.json();
+            }
+            if (functionsRes.ok) {
+                this.state.apiDocs.functions = await functionsRes.json();
+            }
+        } catch (e) {
+            console.error('Failed to load API docs data:', e);
+        }
+
+        this.state.apiDocs.loading = false;
+        this.render();
+    },
+
+    navigateApiDocs(page, resource = null, rpc = null) {
+        this.state.apiDocs.page = page;
+        this.state.apiDocs.resource = resource;
+        this.state.apiDocs.rpc = rpc;
+        this.state.apiDocs.selectedTable = null;
+        this.state.apiDocs.selectedFunction = null;
+
+        if (resource) {
+            this.loadApiDocsTable(resource);
+        } else if (rpc) {
+            this.loadApiDocsFunction(rpc);
+        } else {
+            this.render();
+        }
+    },
+
+    async loadApiDocsTable(tableName) {
+        this.state.apiDocs.loading = true;
+        this.render();
+
+        try {
+            const res = await fetch(`/_/api/apidocs/tables/${encodeURIComponent(tableName)}`);
+            if (res.ok) {
+                this.state.apiDocs.selectedTable = await res.json();
+            }
+        } catch (e) {
+            console.error('Failed to load table:', e);
+        }
+
+        this.state.apiDocs.loading = false;
+        this.render();
+    },
+
+    async loadApiDocsFunction(funcName) {
+        this.state.apiDocs.loading = true;
+        this.render();
+
+        try {
+            const res = await fetch(`/_/api/apidocs/functions/${encodeURIComponent(funcName)}`);
+            if (res.ok) {
+                this.state.apiDocs.selectedFunction = await res.json();
+            }
+        } catch (e) {
+            console.error('Failed to load function:', e);
+        }
+
+        this.state.apiDocs.loading = false;
+        this.render();
+    },
+
+    setApiDocsLanguage(lang) {
+        this.state.apiDocs.language = lang;
+        this.render();
+    },
+
+    async updateTableDescription(tableName, description) {
+        try {
+            const res = await fetch(`/_/api/apidocs/tables/${encodeURIComponent(tableName)}/description`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ description })
+            });
+            if (res.ok && this.state.apiDocs.selectedTable) {
+                this.state.apiDocs.selectedTable.description = description;
+                this.render();
+            }
+        } catch (e) {
+            console.error('Failed to update description:', e);
+        }
+    },
+
+    async updateColumnDescription(tableName, columnName, description) {
+        try {
+            const res = await fetch(`/_/api/apidocs/tables/${encodeURIComponent(tableName)}/columns/${encodeURIComponent(columnName)}/description`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ description })
+            });
+            if (res.ok && this.state.apiDocs.selectedTable) {
+                const col = this.state.apiDocs.selectedTable.columns.find(c => c.name === columnName);
+                if (col) {
+                    col.description = description;
+                    this.render();
+                }
+            }
+        } catch (e) {
+            console.error('Failed to update column description:', e);
+        }
+    },
+
+    async updateFunctionDescription(funcName, description) {
+        try {
+            const res = await fetch(`/_/api/apidocs/functions/${encodeURIComponent(funcName)}/description`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ description })
+            });
+            if (res.ok && this.state.apiDocs.selectedFunction) {
+                this.state.apiDocs.selectedFunction.description = description;
+                this.render();
+            }
+        } catch (e) {
+            console.error('Failed to update function description:', e);
+        }
+    },
+
+    renderApiDocsView() {
+        const { page, resource, rpc, tables, functions, loading } = this.state.apiDocs;
+
+        return `
+            <div class="api-docs-layout">
+                ${this.renderApiDocsSidebar()}
+                <div class="api-docs-content">
+                    ${loading ? '<div class="loading">Loading...</div>' : this.renderApiDocsPage()}
+                </div>
+            </div>
+        `;
+    },
+
+    renderApiDocsSidebar() {
+        const { page, resource, rpc, tables, functions } = this.state.apiDocs;
+
+        return `
+            <aside class="api-docs-sidebar">
+                <div class="api-docs-sidebar-section">
+                    <a class="api-docs-nav-item ${page === 'intro' && !resource && !rpc ? 'active' : ''}"
+                       onclick="App.navigateApiDocs('intro')">Introduction</a>
+                    <a class="api-docs-nav-item ${page === 'auth' ? 'active' : ''}"
+                       onclick="App.navigateApiDocs('auth')">Authentication</a>
+                    <a class="api-docs-nav-item ${page === 'users-management' ? 'active' : ''}"
+                       onclick="App.navigateApiDocs('users-management')">User Management</a>
+                </div>
+
+                <div class="api-docs-sidebar-section">
+                    <div class="api-docs-sidebar-title">Tables and Views</div>
+                    <a class="api-docs-nav-item api-docs-nav-sub ${page === 'tables-intro' ? 'active' : ''}"
+                       onclick="App.navigateApiDocs('tables-intro')">Introduction</a>
+                    ${tables.map(t => `
+                        <a class="api-docs-nav-item api-docs-nav-sub ${resource === t.name ? 'active' : ''}"
+                           onclick="App.navigateApiDocs('table', '${this.escapeJsString(t.name)}')">${this.escapeHtml(t.name)}</a>
+                    `).join('')}
+                </div>
+
+                <div class="api-docs-sidebar-section">
+                    <div class="api-docs-sidebar-title">Stored Procedures</div>
+                    <a class="api-docs-nav-item api-docs-nav-sub ${page === 'rpc-intro' ? 'active' : ''}"
+                       onclick="App.navigateApiDocs('rpc-intro')">Introduction</a>
+                    ${functions.map(f => `
+                        <a class="api-docs-nav-item api-docs-nav-sub ${rpc === f.name ? 'active' : ''}"
+                           onclick="App.navigateApiDocs('rpc', null, '${this.escapeJsString(f.name)}')">${this.escapeHtml(f.name)}</a>
+                    `).join('')}
+                </div>
+            </aside>
+        `;
+    },
+
+    renderApiDocsPage() {
+        const { page, resource, rpc } = this.state.apiDocs;
+
+        if (resource) {
+            return this.renderApiDocsTablePage();
+        }
+        if (rpc) {
+            return this.renderApiDocsFunctionPage();
+        }
+
+        switch (page) {
+            case 'intro':
+                return this.renderApiDocsIntro();
+            case 'auth':
+                return this.renderApiDocsAuth();
+            case 'users-management':
+                return this.renderApiDocsUserManagement();
+            case 'tables-intro':
+                return this.renderApiDocsTablesIntro();
+            case 'rpc-intro':
+                return this.renderApiDocsRpcIntro();
+            default:
+                return this.renderApiDocsIntro();
+        }
+    },
+
+    renderApiDocsLanguageTabs() {
+        const { language } = this.state.apiDocs;
+        return `
+            <div class="api-docs-lang-tabs">
+                <button class="api-docs-lang-tab ${language === 'javascript' ? 'active' : ''}"
+                        onclick="App.setApiDocsLanguage('javascript')">JavaScript</button>
+                <button class="api-docs-lang-tab ${language === 'bash' ? 'active' : ''}"
+                        onclick="App.setApiDocsLanguage('bash')">Bash</button>
+            </div>
+        `;
+    },
+
+    getApiBaseUrl() {
+        return window.location.origin;
+    },
+
+    renderApiDocsIntro() {
+        const { language } = this.state.apiDocs;
+        const baseUrl = this.getApiBaseUrl();
+
+        const jsCode = `import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  '${baseUrl}',
+  'YOUR_ANON_KEY'
+)`;
+
+        const bashCode = `# Base URL for API requests
+BASE_URL="${baseUrl}"
+
+# Your API key (anon key for client-side, service_role for server-side)
+API_KEY="YOUR_API_KEY"`;
+
+        return `
+            <div class="api-docs-page">
+                ${this.renderApiDocsLanguageTabs()}
+                <h1>Connect To Your Project</h1>
+                <p>Your sblite project provides a RESTful API using PostgREST conventions.
+                   You can access your data using the Supabase client library or direct HTTP requests.</p>
+
+                <h2>Project URL</h2>
+                <p>Your project's API is available at:</p>
+                <div class="api-docs-code-block">
+                    <code>${baseUrl}</code>
+                </div>
+
+                <h2>API Keys</h2>
+                <p>You'll need an API key for authentication. You can find your keys in the
+                   <a onclick="App.navigate('settings')" style="cursor:pointer;color:var(--accent)">Settings</a> page.</p>
+                <ul>
+                    <li><strong>anon key</strong> - Safe to use in client-side code. Respects Row Level Security.</li>
+                    <li><strong>service_role key</strong> - Server-side only. Bypasses Row Level Security.</li>
+                </ul>
+
+                <h2>Getting Started</h2>
+                <div class="api-docs-code-block">
+                    <pre><code>${language === 'javascript' ? this.escapeHtml(jsCode) : this.escapeHtml(bashCode)}</code></pre>
+                </div>
+
+                <h2>Making Requests</h2>
+                <p>Once configured, you can interact with your database tables, authenticate users,
+                   and call stored procedures. See the sections in the sidebar for detailed examples.</p>
+            </div>
+        `;
+    },
+
+    renderApiDocsAuth() {
+        const { language } = this.state.apiDocs;
+        const baseUrl = this.getApiBaseUrl();
+
+        const jsAnonCode = `// Client-side code with anon key
+const supabase = createClient('${baseUrl}', ANON_KEY)
+
+// The anon key is automatically included in requests
+const { data } = await supabase.from('posts').select()`;
+
+        const bashAnonCode = `# Include the anon key in requests
+curl '${baseUrl}/rest/v1/posts' \\
+  -H "apikey: YOUR_ANON_KEY" \\
+  -H "Authorization: Bearer YOUR_ANON_KEY"`;
+
+        const jsServiceCode = `// Server-side code with service_role key
+// WARNING: Never expose this key in client-side code!
+const supabase = createClient('${baseUrl}', SERVICE_ROLE_KEY)
+
+// Bypasses RLS - use with caution
+const { data } = await supabase.from('users').select()`;
+
+        const bashServiceCode = `# Server-side only - bypasses RLS
+curl '${baseUrl}/rest/v1/users' \\
+  -H "apikey: YOUR_SERVICE_ROLE_KEY" \\
+  -H "Authorization: Bearer YOUR_SERVICE_ROLE_KEY"`;
+
+        return `
+            <div class="api-docs-page">
+                ${this.renderApiDocsLanguageTabs()}
+                <h1>Authentication</h1>
+                <p>sblite uses JWT (JSON Web Tokens) for API authentication.
+                   All requests require an API key in the headers.</p>
+
+                <h2>Client API Keys</h2>
+                <p>The <code>anon</code> key is safe to use in client-side applications.
+                   It respects Row Level Security (RLS) policies.</p>
+                <div class="api-docs-code-block">
+                    <pre><code>${language === 'javascript' ? this.escapeHtml(jsAnonCode) : this.escapeHtml(bashAnonCode)}</code></pre>
+                </div>
+
+                <h2>Service Keys</h2>
+                <div class="api-docs-warning">
+                    <strong>Warning:</strong> The <code>service_role</code> key bypasses Row Level Security.
+                    Never expose this key in client-side code or public repositories.
+                </div>
+                <p>Use the service role key only in secure server-side environments.</p>
+                <div class="api-docs-code-block">
+                    <pre><code>${language === 'javascript' ? this.escapeHtml(jsServiceCode) : this.escapeHtml(bashServiceCode)}</code></pre>
+                </div>
+
+                <h2>Managing Keys</h2>
+                <p>You can view and regenerate your API keys in the
+                   <a onclick="App.navigate('settings')" style="cursor:pointer;color:var(--accent)">Settings</a> page.</p>
+            </div>
+        `;
+    },
+
+    renderApiDocsUserManagement() {
+        const { language } = this.state.apiDocs;
+        const baseUrl = this.getApiBaseUrl();
+
+        const examples = {
+            signup: {
+                js: `const { data, error } = await supabase.auth.signUp({
+  email: 'user@example.com',
+  password: 'secure-password'
+})`,
+                bash: `curl -X POST '${baseUrl}/auth/v1/signup' \\
+  -H "apikey: YOUR_ANON_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"email":"user@example.com","password":"secure-password"}'`
+            },
+            signin: {
+                js: `const { data, error } = await supabase.auth.signInWithPassword({
+  email: 'user@example.com',
+  password: 'secure-password'
+})`,
+                bash: `curl -X POST '${baseUrl}/auth/v1/token?grant_type=password' \\
+  -H "apikey: YOUR_ANON_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"email":"user@example.com","password":"secure-password"}'`
+            },
+            magiclink: {
+                js: `const { data, error } = await supabase.auth.signInWithOtp({
+  email: 'user@example.com'
+})`,
+                bash: `curl -X POST '${baseUrl}/auth/v1/otp' \\
+  -H "apikey: YOUR_ANON_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"email":"user@example.com"}'`
+            },
+            getuser: {
+                js: `const { data: { user } } = await supabase.auth.getUser()`,
+                bash: `curl '${baseUrl}/auth/v1/user' \\
+  -H "apikey: YOUR_ANON_KEY" \\
+  -H "Authorization: Bearer USER_ACCESS_TOKEN"`
+            },
+            updateuser: {
+                js: `const { data, error } = await supabase.auth.updateUser({
+  data: { display_name: 'John Doe' }
+})`,
+                bash: `curl -X PUT '${baseUrl}/auth/v1/user' \\
+  -H "apikey: YOUR_ANON_KEY" \\
+  -H "Authorization: Bearer USER_ACCESS_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"data":{"display_name":"John Doe"}}'`
+            },
+            signout: {
+                js: `const { error } = await supabase.auth.signOut()`,
+                bash: `curl -X POST '${baseUrl}/auth/v1/logout' \\
+  -H "apikey: YOUR_ANON_KEY" \\
+  -H "Authorization: Bearer USER_ACCESS_TOKEN"`
+            },
+            recovery: {
+                js: `const { data, error } = await supabase.auth.resetPasswordForEmail(
+  'user@example.com'
+)`,
+                bash: `curl -X POST '${baseUrl}/auth/v1/recover' \\
+  -H "apikey: YOUR_ANON_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"email":"user@example.com"}'`
+            },
+            invite: {
+                js: `// Admin only - use service_role key
+const { data, error } = await supabase.auth.admin.inviteUserByEmail(
+  'newuser@example.com'
+)`,
+                bash: `# Admin only - use service_role key
+curl -X POST '${baseUrl}/auth/v1/invite' \\
+  -H "apikey: YOUR_SERVICE_ROLE_KEY" \\
+  -H "Authorization: Bearer YOUR_SERVICE_ROLE_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"email":"newuser@example.com"}'`
+            }
+        };
+
+        const renderExample = (title, desc, key) => `
+            <h3>${title}</h3>
+            <p>${desc}</p>
+            <div class="api-docs-code-block">
+                <pre><code>${this.escapeHtml(language === 'javascript' ? examples[key].js : examples[key].bash)}</code></pre>
+            </div>
+        `;
+
+        return `
+            <div class="api-docs-page">
+                ${this.renderApiDocsLanguageTabs()}
+                <h1>User Management</h1>
+                <p>sblite provides Supabase-compatible authentication endpoints for managing users.</p>
+
+                ${renderExample('Sign Up', 'Create a new user with email and password.', 'signup')}
+                ${renderExample('Sign In with Password', 'Authenticate an existing user.', 'signin')}
+                ${renderExample('Sign In with Magic Link', 'Send a magic link email for passwordless authentication.', 'magiclink')}
+                ${renderExample('Get User', 'Retrieve the currently authenticated user.', 'getuser')}
+                ${renderExample('Update User', 'Update the current user\'s metadata.', 'updateuser')}
+                ${renderExample('Sign Out', 'Log out the current user.', 'signout')}
+                ${renderExample('Password Recovery', 'Send a password reset email.', 'recovery')}
+                ${renderExample('Invite User (Admin)', 'Invite a new user by email. Requires admin privileges.', 'invite')}
+            </div>
+        `;
+    },
+
+    renderApiDocsTablesIntro() {
+        const { tables } = this.state.apiDocs;
+
+        return `
+            <div class="api-docs-page">
+                ${this.renderApiDocsLanguageTabs()}
+                <h1>Tables and Views</h1>
+                <p>Your database tables are automatically exposed via a RESTful API.
+                   Select a table from the sidebar to see its schema and example queries.</p>
+
+                <h2>Available Tables</h2>
+                ${tables.length === 0
+                    ? '<p>No user tables found. Create a table in the <a onclick="App.navigate(\'tables\')" style="cursor:pointer;color:var(--accent)">Tables</a> view to get started.</p>'
+                    : `<ul>${tables.map(t => `<li><a onclick="App.navigateApiDocs('table', '${this.escapeJsString(t.name)}')" style="cursor:pointer;color:var(--accent)">${this.escapeHtml(t.name)}</a></li>`).join('')}</ul>`
+                }
+
+                <h2>REST Conventions</h2>
+                <p>The API follows PostgREST conventions:</p>
+                <ul>
+                    <li><code>GET /rest/v1/table</code> - Read rows</li>
+                    <li><code>POST /rest/v1/table</code> - Insert rows</li>
+                    <li><code>PATCH /rest/v1/table</code> - Update rows</li>
+                    <li><code>DELETE /rest/v1/table</code> - Delete rows</li>
+                </ul>
+            </div>
+        `;
+    },
+
+    renderApiDocsRpcIntro() {
+        const { language, functions } = this.state.apiDocs;
+        const baseUrl = this.getApiBaseUrl();
+
+        const jsCode = `const { data, error } = await supabase.rpc('function_name', {
+  param1: 'value1',
+  param2: 123
+})`;
+
+        const bashCode = `curl -X POST '${baseUrl}/rest/v1/rpc/function_name' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"param1":"value1","param2":123}'`;
+
+        return `
+            <div class="api-docs-page">
+                ${this.renderApiDocsLanguageTabs()}
+                <h1>Stored Procedures</h1>
+                <p>Call database functions (stored procedures) via RPC.
+                   Select a function from the sidebar to see its signature and parameters.</p>
+
+                <h2>Calling Functions</h2>
+                <p>Functions are called via the <code>/rest/v1/rpc/</code> endpoint:</p>
+                <div class="api-docs-code-block">
+                    <pre><code>${language === 'javascript' ? this.escapeHtml(jsCode) : this.escapeHtml(bashCode)}</code></pre>
+                </div>
+
+                <h2>Available Functions</h2>
+                ${functions.length === 0
+                    ? '<p>No stored procedures found. Create a function using the SQL Browser to get started.</p>'
+                    : `<ul>${functions.map(f => `<li><a onclick="App.navigateApiDocs('rpc', null, '${this.escapeJsString(f.name)}')" style="cursor:pointer;color:var(--accent)">${this.escapeHtml(f.name)}</a></li>`).join('')}</ul>`
+                }
+            </div>
+        `;
+    },
+
+    renderApiDocsTablePage() {
+        const { language, selectedTable } = this.state.apiDocs;
+        if (!selectedTable) return '<div class="loading">Loading...</div>';
+
+        const { name, description, columns } = selectedTable;
+        const baseUrl = this.getApiBaseUrl();
+
+        return `
+            <div class="api-docs-page">
+                ${this.renderApiDocsLanguageTabs()}
+                <h1>${this.escapeHtml(name)}</h1>
+
+                <div class="api-docs-section">
+                    <h2>Description</h2>
+                    <div class="api-docs-editable">
+                        <textarea id="table-desc" class="api-docs-desc-input" rows="2"
+                                  placeholder="Add a description for this table...">${this.escapeHtml(description || '')}</textarea>
+                        <button class="btn btn-sm" onclick="App.updateTableDescription('${this.escapeJsString(name)}', document.getElementById('table-desc').value)">Save</button>
+                    </div>
+                </div>
+
+                ${columns.map(col => this.renderApiDocsColumn(name, col)).join('')}
+
+                ${this.renderApiDocsTableOperations(name, columns)}
+            </div>
+        `;
+    },
+
+    renderApiDocsColumn(tableName, col) {
+        const { language } = this.state.apiDocs;
+        const required = col.required ? '<span class="api-docs-badge required">REQUIRED</span>' : '<span class="api-docs-badge optional">OPTIONAL</span>';
+
+        const jsSelectCode = `let { data, error } = await supabase
+  .from('${tableName}')
+  .select('${col.name}')`;
+
+        const bashSelectCode = `curl '${this.getApiBaseUrl()}/rest/v1/${tableName}?select=${col.name}' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY"`;
+
+        return `
+            <div class="api-docs-column-section">
+                <h3>Column: ${this.escapeHtml(col.name)}</h3>
+                <div class="api-docs-column-meta">
+                    ${required}
+                    <span class="api-docs-badge type">TYPE: ${this.escapeHtml(col.type)}</span>
+                    <span class="api-docs-badge format">FORMAT: ${this.escapeHtml(col.format)}</span>
+                </div>
+
+                <div class="api-docs-editable">
+                    <input type="text" id="col-desc-${col.name}" class="api-docs-desc-input-inline"
+                           value="${this.escapeHtml(col.description || '')}"
+                           placeholder="Add column description...">
+                    <button class="btn btn-sm" onclick="App.updateColumnDescription('${this.escapeJsString(tableName)}', '${this.escapeJsString(col.name)}', document.getElementById('col-desc-${col.name}').value)">Save</button>
+                </div>
+
+                <div class="api-docs-code-block">
+                    <div class="api-docs-code-title">SELECT ${this.escapeHtml(col.name)}</div>
+                    <pre><code>${language === 'javascript' ? this.escapeHtml(jsSelectCode) : this.escapeHtml(bashSelectCode)}</code></pre>
+                </div>
+            </div>
+        `;
+    },
+
+    renderApiDocsTableOperations(tableName, columns) {
+        const { language } = this.state.apiDocs;
+        const baseUrl = this.getApiBaseUrl();
+        const allColumns = columns.map(c => c.name).join(', ');
+        const sampleInsert = columns.filter(c => !c.name.includes('id') && c.required)
+            .slice(0, 3)
+            .map(c => `${c.name}: ${c.type === 'number' ? '123' : c.type === 'boolean' ? 'true' : `'value'`}`)
+            .join(',\n    ');
+
+        const examples = {
+            readAll: {
+                title: 'Read All Rows',
+                js: `let { data, error } = await supabase
+  .from('${tableName}')
+  .select('*')`,
+                bash: `curl '${baseUrl}/rest/v1/${tableName}?select=*' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY"`
+            },
+            readCols: {
+                title: 'Read Specific Columns',
+                js: `let { data, error } = await supabase
+  .from('${tableName}')
+  .select('${allColumns}')`,
+                bash: `curl '${baseUrl}/rest/v1/${tableName}?select=${encodeURIComponent(allColumns)}' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY"`
+            },
+            pagination: {
+                title: 'With Pagination',
+                js: `let { data, error } = await supabase
+  .from('${tableName}')
+  .select('*')
+  .range(0, 9)`,
+                bash: `curl '${baseUrl}/rest/v1/${tableName}?select=*' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Range: 0-9"`
+            },
+            filter: {
+                title: 'With Filtering',
+                js: `let { data, error } = await supabase
+  .from('${tableName}')
+  .select('*')
+  .eq('column_name', 'value')
+  .gt('other_column', 10)`,
+                bash: `curl '${baseUrl}/rest/v1/${tableName}?select=*&column_name=eq.value&other_column=gt.10' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY"`
+            },
+            insertOne: {
+                title: 'Insert a Row',
+                js: `let { data, error } = await supabase
+  .from('${tableName}')
+  .insert({
+    ${sampleInsert || 'column: value'}
+  })
+  .select()`,
+                bash: `curl -X POST '${baseUrl}/rest/v1/${tableName}' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Prefer: return=representation" \\
+  -d '{${sampleInsert ? sampleInsert.replace(/\n\s*/g, ' ').replace(/'/g, '"') : '"column":"value"'}}'`
+            },
+            insertMany: {
+                title: 'Insert Many Rows',
+                js: `let { data, error } = await supabase
+  .from('${tableName}')
+  .insert([
+    { ${sampleInsert ? sampleInsert.split(',')[0] || 'column: value' : 'column: value'} },
+    { ${sampleInsert ? sampleInsert.split(',')[0] || 'column: value2' : 'column: value2'} }
+  ])
+  .select()`,
+                bash: `curl -X POST '${baseUrl}/rest/v1/${tableName}' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Prefer: return=representation" \\
+  -d '[{"column":"value1"},{"column":"value2"}]'`
+            },
+            upsert: {
+                title: 'Upsert Rows',
+                js: `let { data, error } = await supabase
+  .from('${tableName}')
+  .upsert({ id: 1, ${sampleInsert ? sampleInsert.split(',')[0] || 'column: value' : 'column: value'} })
+  .select()`,
+                bash: `curl -X POST '${baseUrl}/rest/v1/${tableName}' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Prefer: return=representation,resolution=merge-duplicates" \\
+  -d '{"id":1,"column":"value"}'`
+            },
+            update: {
+                title: 'Update Rows',
+                js: `let { data, error } = await supabase
+  .from('${tableName}')
+  .update({ ${sampleInsert ? sampleInsert.split(',')[0] || 'column: newValue' : 'column: newValue'} })
+  .eq('id', 1)
+  .select()`,
+                bash: `curl -X PATCH '${baseUrl}/rest/v1/${tableName}?id=eq.1' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Prefer: return=representation" \\
+  -d '{"column":"newValue"}'`
+            },
+            delete: {
+                title: 'Delete Rows',
+                js: `let { data, error } = await supabase
+  .from('${tableName}')
+  .delete()
+  .eq('id', 1)`,
+                bash: `curl -X DELETE '${baseUrl}/rest/v1/${tableName}?id=eq.1' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY"`
+            }
+        };
+
+        const renderOp = (key) => `
+            <div class="api-docs-code-block">
+                <div class="api-docs-code-title">${examples[key].title}</div>
+                <pre><code>${language === 'javascript' ? this.escapeHtml(examples[key].js) : this.escapeHtml(examples[key].bash)}</code></pre>
+            </div>
+        `;
+
+        return `
+            <div class="api-docs-section">
+                <h2>Read Rows</h2>
+                ${renderOp('readAll')}
+                ${renderOp('readCols')}
+                ${renderOp('pagination')}
+                ${renderOp('filter')}
+            </div>
+
+            <div class="api-docs-section">
+                <h2>Insert Rows</h2>
+                ${renderOp('insertOne')}
+                ${renderOp('insertMany')}
+                ${renderOp('upsert')}
+            </div>
+
+            <div class="api-docs-section">
+                <h2>Update Rows</h2>
+                ${renderOp('update')}
+            </div>
+
+            <div class="api-docs-section">
+                <h2>Delete Rows</h2>
+                ${renderOp('delete')}
+            </div>
+        `;
+    },
+
+    renderApiDocsFunctionPage() {
+        const { language, selectedFunction } = this.state.apiDocs;
+        if (!selectedFunction) return '<div class="loading">Loading...</div>';
+
+        const { name, description, return_type, returns_set, arguments: args } = selectedFunction;
+        const baseUrl = this.getApiBaseUrl();
+
+        const argsObj = args && args.length > 0
+            ? args.map(a => `${a.name}: ${a.type === 'number' ? '123' : a.type === 'boolean' ? 'true' : `'value'`}`).join(',\n    ')
+            : '';
+
+        const argsJson = args && args.length > 0
+            ? args.map(a => `"${a.name}":${a.type === 'number' ? '123' : a.type === 'boolean' ? 'true' : '"value"'}`).join(',')
+            : '';
+
+        const jsCode = argsObj
+            ? `let { data, error } = await supabase.rpc('${name}', {
+    ${argsObj}
+  })`
+            : `let { data, error } = await supabase.rpc('${name}')`;
+
+        const bashCode = argsJson
+            ? `curl -X POST '${baseUrl}/rest/v1/rpc/${name}' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{${argsJson}}'`
+            : `curl -X POST '${baseUrl}/rest/v1/rpc/${name}' \\
+  -H "apikey: YOUR_API_KEY" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{}'`;
+
+        return `
+            <div class="api-docs-page">
+                ${this.renderApiDocsLanguageTabs()}
+                <h1>${this.escapeHtml(name)}</h1>
+
+                <div class="api-docs-section">
+                    <h2>Description</h2>
+                    <div class="api-docs-editable">
+                        <textarea id="func-desc" class="api-docs-desc-input" rows="2"
+                                  placeholder="Add a description for this function...">${this.escapeHtml(description || '')}</textarea>
+                        <button class="btn btn-sm" onclick="App.updateFunctionDescription('${this.escapeJsString(name)}', document.getElementById('func-desc').value)">Save</button>
+                    </div>
+                </div>
+
+                <div class="api-docs-section">
+                    <h2>Invoke Function</h2>
+                    <div class="api-docs-code-block">
+                        <pre><code>${language === 'javascript' ? this.escapeHtml(jsCode) : this.escapeHtml(bashCode)}</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-docs-section">
+                    <h2>Return Type</h2>
+                    <p><code>${this.escapeHtml(return_type)}</code>${returns_set ? ' (returns multiple rows)' : ''}</p>
+                </div>
+
+                ${args && args.length > 0 ? `
+                <div class="api-docs-section">
+                    <h2>Arguments</h2>
+                    ${args.map(arg => `
+                        <div class="api-docs-arg">
+                            <div class="api-docs-arg-header">
+                                <span class="api-docs-arg-name">${this.escapeHtml(arg.name)}</span>
+                                ${arg.required ? '<span class="api-docs-badge required">REQUIRED</span>' : '<span class="api-docs-badge optional">OPTIONAL</span>'}
+                            </div>
+                            <div class="api-docs-column-meta">
+                                <span class="api-docs-badge type">TYPE: ${this.escapeHtml(arg.type)}</span>
+                                <span class="api-docs-badge format">FORMAT: ${this.escapeHtml(arg.format)}</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                ` : '<div class="api-docs-section"><h2>Arguments</h2><p>This function takes no arguments.</p></div>'}
+            </div>
+        `;
     }
 };
 
