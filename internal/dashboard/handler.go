@@ -26,6 +26,7 @@ import (
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/pgtranslate"
+	"github.com/markb/sblite/internal/rpc"
 	"github.com/markb/sblite/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -44,6 +45,7 @@ type Handler struct {
 	fts              *fts.Manager
 	functionsService *functions.Service
 	storageService   *storage.Service
+	rpcInterceptor   *rpc.Interceptor
 	migrationsDir    string
 	startTime        time.Time
 	serverConfig     *ServerConfig
@@ -106,6 +108,11 @@ func (h *Handler) GetStore() *Store {
 // SetStorageService sets the storage service for the handler.
 func (h *Handler) SetStorageService(svc *storage.Service) {
 	h.storageService = svc
+}
+
+// SetRPCInterceptor sets the RPC interceptor for SQL statement handling.
+func (h *Handler) SetRPCInterceptor(i *rpc.Interceptor) {
+	h.rpcInterceptor = i
 }
 
 // RegisterRoutes registers the dashboard routes.
@@ -2999,6 +3006,27 @@ func (h *Handler) handleExecuteSQL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startTime := time.Now()
+
+	// Intercept CREATE/DROP FUNCTION statements
+	if h.rpcInterceptor != nil {
+		result, handled, err := h.rpcInterceptor.ProcessSQL(queryToExecute, req.PostgresMode)
+		if handled {
+			response.ExecutionTimeMs = time.Since(startTime).Milliseconds()
+			if err != nil {
+				response.Error = err.Error()
+			} else {
+				response.Type = "CREATE"
+				response.AffectedRows = 1
+				response.RowCount = 1
+				// Store result message in a way the UI can display
+				response.Rows = [][]interface{}{{result}}
+				response.Columns = []string{"result"}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}
 
 	if queryType == "SELECT" || queryType == "PRAGMA" {
 		// For SELECT queries, return rows

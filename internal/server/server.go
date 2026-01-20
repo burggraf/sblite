@@ -132,6 +132,8 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 	s.dashboardHandler = dashboard.NewHandler(database.DB, cfg.MigrationsDir)
 	s.dashboardHandler.SetJWTSecret(cfg.JWTSecret)
 	s.dashboardStore = s.dashboardHandler.GetStore()
+	// Set RPC interceptor on dashboard handler
+	s.dashboardHandler.SetRPCInterceptor(s.rpcInterceptor)
 
 	// Apply persisted settings from dashboard (e.g., SiteURL)
 	s.applyPersistedSettings()
