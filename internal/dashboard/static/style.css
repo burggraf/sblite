@@ -1890,7 +1890,34 @@ small.text-muted {
 
 .sql-editor-toolbar {
     display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.postgres-mode-toggle {
+    display: flex;
+    align-items: center;
+}
+
+.postgres-mode-toggle .toggle-label {
+    display: flex;
+    align-items: center;
     gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: normal;
+    color: var(--text-secondary);
+}
+
+.postgres-mode-toggle input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.postgres-mode-toggle .toggle-text {
+    user-select: none;
 }
 
 .table-picker-container {
@@ -2064,6 +2091,44 @@ small.text-muted {
 .sql-time {
     color: var(--text-muted);
     font-size: 0.875rem;
+}
+
+.sql-translation-info {
+    padding: 0.75rem 1rem;
+    background: var(--accent-muted);
+    border-left: 3px solid var(--accent);
+    margin: 0.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+}
+
+.sql-translation-info details {
+    margin-top: 0.5rem;
+}
+
+.sql-translation-info summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-weight: 500;
+    user-select: none;
+}
+
+.sql-translation-info summary:hover {
+    color: var(--accent-hover);
+}
+
+.sql-translated-query {
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.8rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
 }
 
 .sql-results-header {

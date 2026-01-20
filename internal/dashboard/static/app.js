@@ -105,6 +105,7 @@ const App = {
             showHistory: false,
             showTablePicker: false,
             tables: [],
+            postgresMode: false,
         },
         functions: {
             list: [],
@@ -151,11 +152,19 @@ const App = {
 
     async init() {
         this.loadTheme();
+        this.loadSqlBrowserPreferences();
         await this.checkAuth();
         if (this.state.authenticated) {
             await this.loadTables();
         }
         this.render();
+    },
+
+    loadSqlBrowserPreferences() {
+        const postgresMode = localStorage.getItem('sql_postgres_mode');
+        if (postgresMode === 'true') {
+            this.state.sqlBrowser.postgresMode = true;
+        }
     },
 
     loadTheme() {
@@ -4560,7 +4569,10 @@ const App = {
             const res = await fetch('/_/api/sql', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query })
+                body: JSON.stringify({
+                    query,
+                    postgres_mode: this.state.sqlBrowser.postgresMode
+                })
             });
 
             const data = await res.json();
@@ -4666,6 +4678,13 @@ const App = {
 
     toggleSqlTablePicker() {
         this.state.sqlBrowser.showTablePicker = !this.state.sqlBrowser.showTablePicker;
+        this.render();
+    },
+
+    togglePostgresMode(enabled) {
+        this.state.sqlBrowser.postgresMode = enabled;
+        // Save preference to localStorage
+        localStorage.setItem('sql_postgres_mode', enabled ? 'true' : 'false');
         this.render();
     },
 
@@ -4784,6 +4803,14 @@ const App = {
                     <div class="sql-editor-header">
                         <span>SQL Editor</span>
                         <div class="sql-editor-toolbar">
+                            <div class="postgres-mode-toggle">
+                                <label class="toggle-label">
+                                    <input type="checkbox"
+                                           ${this.state.sqlBrowser.postgresMode ? 'checked' : ''}
+                                           onchange="App.togglePostgresMode(this.checked)">
+                                    <span class="toggle-text">PostgreSQL Mode</span>
+                                </label>
+                            </div>
                             <div class="table-picker-container">
                                 <button class="btn btn-secondary btn-sm" onclick="App.toggleSqlTablePicker()">
                                     Tables ▼
@@ -4839,12 +4866,23 @@ const App = {
     renderSqlResults() {
         const { results, page, pageSize, sort } = this.state.sqlBrowser;
 
+        const translationInfo = results.was_translated ? `
+            <div class="sql-translation-info">
+                ✓ Translated from PostgreSQL syntax
+                <details>
+                    <summary>View translated query</summary>
+                    <pre class="sql-translated-query">${this.escapeHtml(results.translated_query || '')}</pre>
+                </details>
+            </div>
+        ` : '';
+
         if (results.type !== 'SELECT' && results.type !== 'PRAGMA') {
             return `
                 <div class="sql-results-message">
                     <div class="sql-success">Query executed successfully</div>
                     <div class="sql-affected">${results.affected_rows || 0} row${results.affected_rows !== 1 ? 's' : ''} affected</div>
                     <div class="sql-time">${results.execution_time_ms}ms</div>
+                    ${translationInfo}
                 </div>
             `;
         }
@@ -4854,6 +4892,7 @@ const App = {
                 <div class="sql-results-message">
                     <div>Query returned 0 rows</div>
                     <div class="sql-time">${results.execution_time_ms}ms</div>
+                    ${translationInfo}
                 </div>
             `;
         }
@@ -4888,6 +4927,7 @@ const App = {
                 <span>${results.row_count} row${results.row_count !== 1 ? 's' : ''}, ${results.execution_time_ms}ms</span>
                 <span>Page ${page} of ${totalPages}</span>
             </div>
+            ${translationInfo}
             <div class="sql-results-table-wrapper">
                 <table class="sql-results-table">
                     <thead>
