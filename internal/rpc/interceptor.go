@@ -86,7 +86,7 @@ func (i *Interceptor) handleCreateFunction(sql string, postgresMode bool) (strin
 func (i *Interceptor) handleDropFunction(sql string) (string, bool, error) {
 	name, ifExists, err := ParseDropFunction(sql)
 	if err != nil {
-		return "", true, err
+		return "", true, fmt.Errorf("parse DROP FUNCTION: %w", err)
 	}
 
 	err = i.store.Delete(name)
