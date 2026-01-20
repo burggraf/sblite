@@ -20,6 +20,7 @@ import (
 	"github.com/markb/sblite/internal/oauth"
 	"github.com/markb/sblite/internal/rest"
 	"github.com/markb/sblite/internal/rls"
+	"github.com/markb/sblite/internal/rpc"
 	"github.com/markb/sblite/internal/schema"
 	"github.com/markb/sblite/internal/storage"
 )
@@ -54,6 +55,12 @@ type Server struct {
 	functionsService *functions.Service
 	functionsHandler *functions.Handler
 	functionsEnabled bool
+
+	// RPC fields
+	rpcStore       *rpc.Store
+	rpcExecutor    *rpc.Executor
+	rpcHandler     *rpc.Handler
+	rpcInterceptor *rpc.Interceptor
 
 	// HTTP server for graceful shutdown
 	httpServer *http.Server
@@ -112,6 +119,12 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 	// Initialize admin handler (uses schema)
 	s.adminHandler = admin.NewHandler(s.db, s.schema)
 
+	// Initialize RPC components
+	s.rpcStore = rpc.NewStore(database.DB)
+	s.rpcExecutor = rpc.NewExecutor(database.DB, s.rpcStore)
+	s.rpcHandler = rpc.NewHandler(s.rpcExecutor, s.rpcStore)
+	s.rpcInterceptor = rpc.NewInterceptor(s.rpcStore)
+
 	// Initialize mail services
 	s.initMail()
 
@@ -119,6 +132,8 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 	s.dashboardHandler = dashboard.NewHandler(database.DB, cfg.MigrationsDir)
 	s.dashboardHandler.SetJWTSecret(cfg.JWTSecret)
 	s.dashboardStore = s.dashboardHandler.GetStore()
+	// Set RPC interceptor on dashboard handler
+	s.dashboardHandler.SetRPCInterceptor(s.rpcInterceptor)
 
 	// Apply persisted settings from dashboard (e.g., SiteURL)
 	s.applyPersistedSettings()
@@ -255,6 +270,9 @@ func (s *Server) setupRoutes() {
 		r.Post("/{table}", s.restHandler.HandleInsert)
 		r.Patch("/{table}", s.restHandler.HandleUpdate)
 		r.Delete("/{table}", s.restHandler.HandleDelete)
+
+		// RPC endpoint
+		r.Post("/rpc/{name}", s.rpcHandler.HandleRPC)
 	})
 
 	// Admin API routes
@@ -432,6 +450,11 @@ func (s *Server) FunctionsService() *functions.Service {
 // FunctionsEnabled returns true if functions are enabled.
 func (s *Server) FunctionsEnabled() bool {
 	return s.functionsEnabled
+}
+
+// GetRPCInterceptor returns the RPC interceptor for SQL interception.
+func (s *Server) GetRPCInterceptor() *rpc.Interceptor {
+	return s.rpcInterceptor
 }
 
 // SetDashboardStore sets the dashboard store for auth settings.

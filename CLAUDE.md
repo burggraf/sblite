@@ -217,6 +217,7 @@ npm test         # Run all tests (server must be running)
 | `/rest/v1/{table}` | POST | Insert rows (validates against type schema) |
 | `/rest/v1/{table}` | PATCH | Update rows (validates against type schema) |
 | `/rest/v1/{table}` | DELETE | Delete rows matching filters |
+| `/rest/v1/rpc/{name}` | POST | Call RPC function |
 
 ### Storage API (`/storage/v1`)
 
@@ -503,6 +504,7 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Functions secrets management (encrypted storage)
 - Per-function JWT verification toggle
 - Full-text search (SQLite FTS5)
+- PostgreSQL Functions (RPC) - SQL functions via supabase.rpc()
 
 ### Planned
 - Realtime subscriptions (WebSocket)

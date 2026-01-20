@@ -227,6 +227,37 @@ CREATE TABLE IF NOT EXISTS _functions_metadata (
 );
 `
 
+// RPC functions schema for PostgreSQL-compatible stored functions
+const rpcFunctionsSchema = `
+-- Function definitions
+CREATE TABLE IF NOT EXISTS _rpc_functions (
+    id TEXT PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    language TEXT NOT NULL DEFAULT 'sql' CHECK (language IN ('sql')),
+    return_type TEXT NOT NULL,
+    returns_set INTEGER NOT NULL DEFAULT 0,
+    volatility TEXT DEFAULT 'VOLATILE' CHECK (volatility IN ('VOLATILE', 'STABLE', 'IMMUTABLE')),
+    security TEXT DEFAULT 'INVOKER' CHECK (security IN ('INVOKER', 'DEFINER')),
+    source_pg TEXT NOT NULL,
+    source_sqlite TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Function arguments
+CREATE TABLE IF NOT EXISTS _rpc_function_args (
+    id TEXT PRIMARY KEY,
+    function_id TEXT NOT NULL REFERENCES _rpc_functions(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    default_value TEXT,
+    UNIQUE(function_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rpc_function_args_function ON _rpc_function_args(function_id);
+`
+
 // Storage schema for Supabase-compatible file storage
 // Based on https://supabase.com/docs/guides/storage/schema/design
 const storageSchema = `
@@ -405,6 +436,11 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(functionsSchema)
 	if err != nil {
 		return fmt.Errorf("failed to run functions schema migration: %w", err)
+	}
+
+	_, err = db.Exec(rpcFunctionsSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run RPC functions schema migration: %w", err)
 	}
 
 	return nil
