@@ -279,6 +279,20 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/objects/download", h.handleDownloadObject)
 			r.Delete("/objects", h.handleDeleteObjects)
 		})
+
+		// API Docs routes (require auth)
+		r.Route("/apidocs", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			// Tables documentation
+			r.Get("/tables", h.handleAPIDocsListTables)
+			r.Get("/tables/{name}", h.handleAPIDocsGetTable)
+			r.Patch("/tables/{name}/description", h.handleAPIDocsUpdateTableDescription)
+			r.Patch("/tables/{name}/columns/{column}/description", h.handleAPIDocsUpdateColumnDescription)
+			// RPC functions documentation
+			r.Get("/functions", h.handleAPIDocsListFunctions)
+			r.Get("/functions/{name}", h.handleAPIDocsGetFunction)
+			r.Patch("/functions/{name}/description", h.handleAPIDocsUpdateFunctionDescription)
+		})
 	})
 
 	// Static files - use Route group to ensure priority
@@ -4735,4 +4749,471 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// =============================================================================
+// API Docs Handlers
+// =============================================================================
+
+// APIDocsTableInfo represents a table with its columns for API documentation.
+type APIDocsTableInfo struct {
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	Columns     []APIDocsColumnInfo `json:"columns"`
+}
+
+// APIDocsColumnInfo represents a column for API documentation.
+type APIDocsColumnInfo struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`   // JavaScript type (string, number, boolean, etc.)
+	Format      string `json:"format"` // PostgreSQL type (uuid, text, integer, etc.)
+	Required    bool   `json:"required"`
+	Description string `json:"description"`
+}
+
+// APIDocsFunctionInfo represents an RPC function for API documentation.
+type APIDocsFunctionInfo struct {
+	Name        string                   `json:"name"`
+	Description string                   `json:"description"`
+	ReturnType  string                   `json:"return_type"`
+	ReturnsSet  bool                     `json:"returns_set"`
+	Arguments   []APIDocsFunctionArgInfo `json:"arguments"`
+}
+
+// APIDocsFunctionArgInfo represents a function argument for API documentation.
+type APIDocsFunctionArgInfo struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`   // JavaScript type
+	Format   string `json:"format"` // PostgreSQL type
+	Required bool   `json:"required"`
+	Position int    `json:"position"`
+}
+
+// handleAPIDocsListTables returns all user tables with their columns for API documentation.
+func (h *Handler) handleAPIDocsListTables(w http.ResponseWriter, r *http.Request) {
+	// Get list of user tables (exclude internal tables)
+	rows, err := h.db.Query(`
+		SELECT name FROM sqlite_master
+		WHERE type='table'
+		AND name NOT LIKE 'auth_%'
+		AND name NOT LIKE '_rls%'
+		AND name NOT LIKE '_dashboard%'
+		AND name NOT LIKE '_columns%'
+		AND name NOT LIKE '_schema%'
+		AND name NOT LIKE '_fts%'
+		AND name NOT LIKE '_functions%'
+		AND name NOT LIKE '_rpc%'
+		AND name NOT LIKE '_table_descriptions%'
+		AND name NOT LIKE '_function_descriptions%'
+		AND name NOT LIKE 'storage_%'
+		AND name NOT LIKE 'sqlite_%'
+		AND name NOT LIKE '%_fts%'
+		ORDER BY name
+	`)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to list tables"})
+		return
+	}
+	defer rows.Close()
+
+	var tables []APIDocsTableInfo
+	for rows.Next() {
+		var tableName string
+		if err := rows.Scan(&tableName); err != nil {
+			continue
+		}
+
+		tableInfo, err := h.getAPIDocsTableInfo(tableName)
+		if err != nil {
+			continue
+		}
+		tables = append(tables, *tableInfo)
+	}
+
+	if tables == nil {
+		tables = []APIDocsTableInfo{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tables)
+}
+
+// handleAPIDocsGetTable returns detailed information about a specific table.
+func (h *Handler) handleAPIDocsGetTable(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	if tableName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
+		return
+	}
+
+	tableInfo, err := h.getAPIDocsTableInfo(tableName)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table not found"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tableInfo)
+}
+
+// getAPIDocsTableInfo retrieves table information including columns and descriptions.
+func (h *Handler) getAPIDocsTableInfo(tableName string) (*APIDocsTableInfo, error) {
+	// Get table description
+	var description string
+	err := h.db.QueryRow(`SELECT description FROM _table_descriptions WHERE table_name = ?`, tableName).Scan(&description)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	// Get columns from _columns metadata table with descriptions
+	rows, err := h.db.Query(`
+		SELECT column_name, pg_type, is_nullable, description
+		FROM _columns
+		WHERE table_name = ?
+		ORDER BY created_at, column_name
+	`, tableName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var columns []APIDocsColumnInfo
+	hasMetadata := false
+	for rows.Next() {
+		hasMetadata = true
+		var colName, pgType, colDesc string
+		var isNullable int
+		if err := rows.Scan(&colName, &pgType, &isNullable, &colDesc); err != nil {
+			continue
+		}
+
+		columns = append(columns, APIDocsColumnInfo{
+			Name:        colName,
+			Type:        pgTypeToJSType(pgType),
+			Format:      pgType,
+			Required:    isNullable == 0,
+			Description: colDesc,
+		})
+	}
+
+	// If no metadata, fall back to pragma table_info
+	if !hasMetadata {
+		pragmaRows, err := h.db.Query(fmt.Sprintf("PRAGMA table_info('%s')", tableName))
+		if err != nil {
+			return nil, err
+		}
+		defer pragmaRows.Close()
+
+		for pragmaRows.Next() {
+			var cid int
+			var name, colType string
+			var notNull, pk int
+			var dfltValue interface{}
+			if err := pragmaRows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+				continue
+			}
+
+			// Convert SQLite type to approximate PG type
+			pgType := sqliteTypeToPGType(colType)
+			columns = append(columns, APIDocsColumnInfo{
+				Name:        name,
+				Type:        pgTypeToJSType(pgType),
+				Format:      pgType,
+				Required:    notNull == 1 || pk == 1,
+				Description: "",
+			})
+		}
+	}
+
+	return &APIDocsTableInfo{
+		Name:        tableName,
+		Description: description,
+		Columns:     columns,
+	}, nil
+}
+
+// handleAPIDocsUpdateTableDescription updates a table's description.
+func (h *Handler) handleAPIDocsUpdateTableDescription(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	if tableName == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
+		return
+	}
+
+	var req struct {
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	// Upsert the description
+	_, err := h.db.Exec(`
+		INSERT INTO _table_descriptions (table_name, description, updated_at)
+		VALUES (?, ?, datetime('now'))
+		ON CONFLICT(table_name) DO UPDATE SET description = excluded.description, updated_at = datetime('now')
+	`, tableName, req.Description)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to update description"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleAPIDocsUpdateColumnDescription updates a column's description.
+func (h *Handler) handleAPIDocsUpdateColumnDescription(w http.ResponseWriter, r *http.Request) {
+	tableName := chi.URLParam(r, "name")
+	columnName := chi.URLParam(r, "column")
+	if tableName == "" || columnName == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table and column names required"})
+		return
+	}
+
+	var req struct {
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	// Update the column description in _columns table
+	result, err := h.db.Exec(`
+		UPDATE _columns SET description = ?
+		WHERE table_name = ? AND column_name = ?
+	`, req.Description, tableName, columnName)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to update description"})
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Column not found in metadata"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleAPIDocsListFunctions returns all RPC functions for API documentation.
+func (h *Handler) handleAPIDocsListFunctions(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(`
+		SELECT f.name, f.return_type, f.returns_set, COALESCE(d.description, '') as description
+		FROM _rpc_functions f
+		LEFT JOIN _function_descriptions d ON f.name = d.function_name
+		ORDER BY f.name
+	`)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to list functions"})
+		return
+	}
+	defer rows.Close()
+
+	var functions []APIDocsFunctionInfo
+	for rows.Next() {
+		var name, returnType, description string
+		var returnsSet int
+		if err := rows.Scan(&name, &returnType, &returnsSet, &description); err != nil {
+			continue
+		}
+
+		// Get function arguments
+		args, err := h.getFunctionArguments(name)
+		if err != nil {
+			args = []APIDocsFunctionArgInfo{}
+		}
+
+		functions = append(functions, APIDocsFunctionInfo{
+			Name:        name,
+			Description: description,
+			ReturnType:  returnType,
+			ReturnsSet:  returnsSet == 1,
+			Arguments:   args,
+		})
+	}
+
+	if functions == nil {
+		functions = []APIDocsFunctionInfo{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(functions)
+}
+
+// handleAPIDocsGetFunction returns detailed information about a specific function.
+func (h *Handler) handleAPIDocsGetFunction(w http.ResponseWriter, r *http.Request) {
+	funcName := chi.URLParam(r, "name")
+	if funcName == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Function name required"})
+		return
+	}
+
+	var name, returnType, description string
+	var returnsSet int
+	err := h.db.QueryRow(`
+		SELECT f.name, f.return_type, f.returns_set, COALESCE(d.description, '') as description
+		FROM _rpc_functions f
+		LEFT JOIN _function_descriptions d ON f.name = d.function_name
+		WHERE f.name = ?
+	`, funcName).Scan(&name, &returnType, &returnsSet, &description)
+	if err == sql.ErrNoRows {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Function not found"})
+		return
+	}
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to get function"})
+		return
+	}
+
+	// Get function arguments
+	args, err := h.getFunctionArguments(name)
+	if err != nil {
+		args = []APIDocsFunctionArgInfo{}
+	}
+
+	funcInfo := APIDocsFunctionInfo{
+		Name:        name,
+		Description: description,
+		ReturnType:  returnType,
+		ReturnsSet:  returnsSet == 1,
+		Arguments:   args,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(funcInfo)
+}
+
+// getFunctionArguments retrieves the arguments for a function.
+func (h *Handler) getFunctionArguments(funcName string) ([]APIDocsFunctionArgInfo, error) {
+	rows, err := h.db.Query(`
+		SELECT a.name, a.type, a.position, a.default_value
+		FROM _rpc_function_args a
+		JOIN _rpc_functions f ON a.function_id = f.id
+		WHERE f.name = ?
+		ORDER BY a.position
+	`, funcName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var args []APIDocsFunctionArgInfo
+	for rows.Next() {
+		var name, pgType string
+		var position int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&name, &pgType, &position, &defaultValue); err != nil {
+			continue
+		}
+
+		args = append(args, APIDocsFunctionArgInfo{
+			Name:     name,
+			Type:     pgTypeToJSType(pgType),
+			Format:   pgType,
+			Required: !defaultValue.Valid,
+			Position: position,
+		})
+	}
+
+	return args, nil
+}
+
+// handleAPIDocsUpdateFunctionDescription updates a function's description.
+func (h *Handler) handleAPIDocsUpdateFunctionDescription(w http.ResponseWriter, r *http.Request) {
+	funcName := chi.URLParam(r, "name")
+	if funcName == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Function name required"})
+		return
+	}
+
+	var req struct {
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	// Verify function exists
+	var exists int
+	err := h.db.QueryRow(`SELECT 1 FROM _rpc_functions WHERE name = ?`, funcName).Scan(&exists)
+	if err == sql.ErrNoRows {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Function not found"})
+		return
+	}
+
+	// Upsert the description
+	_, err = h.db.Exec(`
+		INSERT INTO _function_descriptions (function_name, description, updated_at)
+		VALUES (?, ?, datetime('now'))
+		ON CONFLICT(function_name) DO UPDATE SET description = excluded.description, updated_at = datetime('now')
+	`, funcName, req.Description)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to update description"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// pgTypeToJSType converts a PostgreSQL type to a JavaScript type for API docs.
+func pgTypeToJSType(pgType string) string {
+	switch pgType {
+	case "uuid", "text", "timestamptz", "bytea":
+		return "string"
+	case "integer", "numeric":
+		return "number"
+	case "boolean":
+		return "boolean"
+	case "jsonb":
+		return "object"
+	default:
+		return "string"
+	}
+}
+
+// sqliteTypeToPGType converts a SQLite type to an approximate PostgreSQL type.
+func sqliteTypeToPGType(sqliteType string) string {
+	sqliteType = strings.ToUpper(sqliteType)
+	switch {
+	case strings.Contains(sqliteType, "INT"):
+		return "integer"
+	case strings.Contains(sqliteType, "TEXT"), strings.Contains(sqliteType, "CHAR"), strings.Contains(sqliteType, "CLOB"):
+		return "text"
+	case strings.Contains(sqliteType, "BLOB"):
+		return "bytea"
+	case strings.Contains(sqliteType, "REAL"), strings.Contains(sqliteType, "FLOA"), strings.Contains(sqliteType, "DOUB"):
+		return "numeric"
+	case strings.Contains(sqliteType, "BOOL"):
+		return "boolean"
+	default:
+		return "text"
+	}
 }

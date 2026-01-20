@@ -130,11 +130,27 @@ CREATE TABLE IF NOT EXISTS _columns (
     is_nullable   INTEGER DEFAULT 1,
     default_value TEXT,
     is_primary    INTEGER DEFAULT 0,
+    description   TEXT DEFAULT '',
     created_at    TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (table_name, column_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_columns_table ON _columns(table_name);
+`
+
+// API Docs schema for storing table and function descriptions
+const apiDocsSchema = `
+CREATE TABLE IF NOT EXISTS _table_descriptions (
+    table_name    TEXT PRIMARY KEY,
+    description   TEXT DEFAULT '',
+    updated_at    TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS _function_descriptions (
+    function_name TEXT PRIMARY KEY,
+    description   TEXT DEFAULT '',
+    updated_at    TEXT DEFAULT (datetime('now'))
+);
 `
 
 const schemaMigrationsSchema = `
@@ -441,6 +457,26 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(rpcFunctionsSchema)
 	if err != nil {
 		return fmt.Errorf("failed to run RPC functions schema migration: %w", err)
+	}
+
+	// Add description column to _columns if it doesn't exist (for existing databases)
+	var hasDescription int
+	row = db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('_columns')
+		WHERE name = 'description'
+	`)
+	if err := row.Scan(&hasDescription); err == nil && hasDescription == 0 {
+		// Table exists but column doesn't - add it
+		var tableExists int
+		row := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_columns'`)
+		if err := row.Scan(&tableExists); err == nil && tableExists > 0 {
+			_, _ = db.Exec(`ALTER TABLE _columns ADD COLUMN description TEXT DEFAULT ''`)
+		}
+	}
+
+	_, err = db.Exec(apiDocsSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run API docs schema migration: %w", err)
 	}
 
 	return nil
