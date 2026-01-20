@@ -168,3 +168,30 @@ func TestExecutor_FunctionNotFound(t *testing.T) {
 		t.Error("expected error for nonexistent function")
 	}
 }
+
+func TestExecutor_ParameterUsedMultipleTimes(t *testing.T) {
+	db := setupExecutorTestDB(t)
+	defer db.Close()
+	store := NewStore(db)
+	exec := NewExecutor(db, store)
+
+	store.Create(&FunctionDef{
+		Name:         "filter_by_user",
+		Language:     "sql",
+		ReturnType:   "TABLE(id TEXT, email TEXT)",
+		ReturnsSet:   true,
+		SourcePG:     "SELECT id, email FROM users WHERE id = user_id OR id = user_id",
+		SourceSQLite: "SELECT id, email FROM users WHERE id = :user_id OR id = :user_id",
+		Args:         []FunctionArg{{Name: "user_id", Type: "text", Position: 0}},
+	})
+
+	result, err := exec.Execute("filter_by_user", map[string]interface{}{"user_id": "u1"}, nil)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	rows := result.Data.([]map[string]interface{})
+	if len(rows) != 1 {
+		t.Errorf("len(rows) = %d, want 1", len(rows))
+	}
+}

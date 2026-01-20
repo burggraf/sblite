@@ -42,9 +42,12 @@ func (e *Executor) Execute(name string, args map[string]interface{}, authCtx *rl
 	// Replace named parameters with positional ones
 	for _, arg := range fn.Args {
 		placeholder := ":" + arg.Name
-		if strings.Contains(sqlStr, placeholder) {
+		count := strings.Count(sqlStr, placeholder)
+		if count > 0 {
 			sqlStr = strings.ReplaceAll(sqlStr, placeholder, "?")
-			sqlArgs = append(sqlArgs, boundArgs[arg.Name])
+			for i := 0; i < count; i++ {
+				sqlArgs = append(sqlArgs, boundArgs[arg.Name])
+			}
 		}
 	}
 
