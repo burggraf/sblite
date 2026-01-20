@@ -3616,27 +3616,33 @@ small.text-muted {
 /* ==================== API Docs Styles ==================== */
 
 .api-docs-layout {
-    display: flex;
+    display: flex !important;
+    flex-direction: row !important;
     gap: 0;
     height: 100%;
     min-height: calc(100vh - 60px);
+    width: 100%;
 }
 
 .api-docs-sidebar {
-    width: 250px;
-    min-width: 250px;
-    background: var(--sidebar);
+    width: 220px;
+    min-width: 220px;
+    max-width: 220px;
+    flex-shrink: 0;
+    background: var(--bg-secondary);
     border-right: 1px solid var(--border);
     padding: 1rem 0;
     overflow-y: auto;
-    max-height: calc(100vh - 60px);
+    height: calc(100vh - 60px);
 }
 
 .api-docs-sidebar-section {
     margin-bottom: 1.5rem;
+    display: block;
 }
 
 .api-docs-sidebar-title {
+    display: block;
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
@@ -3646,13 +3652,15 @@ small.text-muted {
 }
 
 .api-docs-nav-item {
-    display: block;
+    display: block !important;
     padding: 0.5rem 1rem;
     color: var(--text);
     text-decoration: none;
     font-size: 0.9rem;
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .api-docs-nav-item:hover {
@@ -3674,7 +3682,8 @@ small.text-muted {
     flex: 1;
     padding: 2rem;
     overflow-y: auto;
-    max-height: calc(100vh - 60px);
+    height: calc(100vh - 60px);
+    min-width: 0;
 }
 
 .api-docs-page {
@@ -3683,6 +3692,7 @@ small.text-muted {
 
 .api-docs-page h1 {
     font-size: 2rem;
+    margin-top: 0;
     margin-bottom: 1rem;
     color: var(--text);
 }
@@ -3720,7 +3730,7 @@ small.text-muted {
 }
 
 .api-docs-page code {
-    background: var(--code-bg);
+    background: var(--bg-tertiary);
     padding: 0.15rem 0.4rem;
     border-radius: 3px;
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
@@ -3731,8 +3741,8 @@ small.text-muted {
 .api-docs-lang-tabs {
     display: flex;
     gap: 0.5rem;
-    margin-bottom: 1.5rem;
-    float: right;
+    margin-bottom: 1rem;
+    justify-content: flex-end;
 }
 
 .api-docs-lang-tab {
@@ -3759,7 +3769,7 @@ small.text-muted {
 
 /* Code blocks */
 .api-docs-code-block {
-    background: var(--code-bg);
+    background: var(--bg-tertiary);
     border: 1px solid var(--border);
     border-radius: 6px;
     margin-bottom: 1rem;
