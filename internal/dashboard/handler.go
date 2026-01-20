@@ -3015,7 +3015,12 @@ func (h *Handler) handleExecuteSQL(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				response.Error = err.Error()
 			} else {
-				response.Type = "CREATE"
+				// Determine type from result message (e.g., "CREATE FUNCTION" or "DROP FUNCTION")
+				if strings.HasPrefix(result, "DROP") {
+					response.Type = "DROP"
+				} else {
+					response.Type = "CREATE"
+				}
 				response.AffectedRows = 1
 				response.RowCount = 1
 				// Store result message in a way the UI can display
