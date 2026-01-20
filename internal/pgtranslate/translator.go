@@ -202,6 +202,109 @@ func defaultRules() []Rule {
 			pattern:     regexp.MustCompile(`(?i)CONCAT\s*\((.*?)\)`),
 			replacement: "($1)", // Then replace commas with || in a subsequent pass
 		},
+
+		// JSON operators
+		// -> operator (JSON field access by text key) -> json_extract
+		// Example: data->'field' -> json_extract(data, '$.field')
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(\w+)\s*->\s*'([^']+)'`),
+			replacement: "json_extract($1, '$.$2')",
+		},
+
+		// ->> operator (JSON field access returning text) -> json_extract
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(\w+)\s*->>\s*'([^']+)'`),
+			replacement: "json_extract($1, '$.$2')",
+		},
+
+		// ILIKE -> LIKE (case insensitive by default in SQLite, but be explicit)
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)\bILIKE\b`),
+			replacement: "LIKE",
+		},
+
+		// More date/time interval formats
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)INTERVAL\s+'(\d+)\s+days?'`),
+			replacement: "'+$1 day'",
+		},
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)INTERVAL\s+'(\d+)\s+hours?'`),
+			replacement: "'+$1 hour'",
+		},
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)INTERVAL\s+'(\d+)\s+minutes?'`),
+			replacement: "'+$1 minute'",
+		},
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)INTERVAL\s+'(\d+)\s+seconds?'`),
+			replacement: "'+$1 second'",
+		},
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)INTERVAL\s+'(\d+)\s+months?'`),
+			replacement: "'+$1 month'",
+		},
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)INTERVAL\s+'(\d+)\s+years?'`),
+			replacement: "'+$1 year'",
+		},
+
+		// EXTRACT function -> strftime
+		// EXTRACT(YEAR FROM date) -> CAST(strftime('%Y', date) AS INTEGER)
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)EXTRACT\s*\(\s*YEAR\s+FROM\s+([^)]+)\)`),
+			replacement: "CAST(strftime('%Y', $1) AS INTEGER)",
+		},
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)EXTRACT\s*\(\s*MONTH\s+FROM\s+([^)]+)\)`),
+			replacement: "CAST(strftime('%m', $1) AS INTEGER)",
+		},
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)EXTRACT\s*\(\s*DAY\s+FROM\s+([^)]+)\)`),
+			replacement: "CAST(strftime('%d', $1) AS INTEGER)",
+		},
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)EXTRACT\s*\(\s*HOUR\s+FROM\s+([^)]+)\)`),
+			replacement: "CAST(strftime('%H', $1) AS INTEGER)",
+		},
+
+		// AGE function approximation (PostgreSQL returns interval, SQLite uses julianday)
+		// AGE(timestamp) -> (julianday('now') - julianday(timestamp)) || ' days'
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)AGE\s*\(\s*([^)]+)\s*\)`),
+			replacement: "(julianday('now') - julianday($1))",
+		},
+
+		// COALESCE, NULLIF - these work in SQLite, keep as-is but normalize case
+		// (Already supported natively, no translation needed)
+
+		// GREATEST -> MAX, LEAST -> MIN (when used with multiple values)
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)\bGREATEST\s*\(`),
+			replacement: "MAX(",
+		},
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)\bLEAST\s*\(`),
+			replacement: "MIN(",
+		},
+
+		// STRING_AGG -> GROUP_CONCAT
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)STRING_AGG\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)`),
+			replacement: "GROUP_CONCAT($1, $2)",
+		},
+
+		// RETURNING clause is supported in SQLite 3.35+ (most deployments)
+		// No translation needed, but good to note
+
+		// ON CONFLICT DO NOTHING -> OR IGNORE
+		&RegexRule{
+			pattern:     regexp.MustCompile(`(?i)ON\s+CONFLICT\s+DO\s+NOTHING`),
+			replacement: "OR IGNORE",
+		},
+
+		// ON CONFLICT DO UPDATE -> needs more complex handling, leave for now
+		// (Requires rewriting the entire INSERT statement)
 	}
 }
 
@@ -239,4 +342,24 @@ func (t *Translator) TranslateWithFallback(query string) (translated string, was
 		return query, false
 	}
 	return t.Translate(query), true
+}
+
+// Package-level default translator instance for convenience
+var defaultTranslator = NewTranslator()
+
+// Translate is a convenience function that uses the default translator.
+// Use this for simple translation needs throughout the codebase.
+func Translate(query string) string {
+	return defaultTranslator.Translate(query)
+}
+
+// TranslateWithFallback is a convenience function that uses the default translator.
+// Returns the translated query and a boolean indicating if translation occurred.
+func TranslateWithFallback(query string) (translated string, wasTranslated bool) {
+	return defaultTranslator.TranslateWithFallback(query)
+}
+
+// IsTranslatable is a convenience function that uses the default translator.
+func IsTranslatable(query string) bool {
+	return defaultTranslator.IsTranslatable(query)
 }

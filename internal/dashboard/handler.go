@@ -25,6 +25,7 @@ import (
 	"github.com/markb/sblite/internal/fts"
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
+	"github.com/markb/sblite/internal/pgtranslate"
 	"github.com/markb/sblite/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -2952,8 +2953,9 @@ func (h *Handler) handleBufferLogs(w http.ResponseWriter, r *http.Request) {
 // SQL Browser handlers
 
 type SQLRequest struct {
-	Query  string        `json:"query"`
-	Params []interface{} `json:"params"`
+	Query        string        `json:"query"`
+	Params       []interface{} `json:"params"`
+	PostgresMode bool          `json:"postgres_mode,omitempty"`
 }
 
 type SQLResponse struct {
@@ -2964,6 +2966,8 @@ type SQLResponse struct {
 	ExecutionTimeMs int64           `json:"execution_time_ms"`
 	Type            string          `json:"type"`
 	Error           string          `json:"error,omitempty"`
+	TranslatedQuery string          `json:"translated_query,omitempty"`
+	WasTranslated   bool            `json:"was_translated,omitempty"`
 }
 
 func (h *Handler) handleExecuteSQL(w http.ResponseWriter, r *http.Request) {
@@ -2981,13 +2985,24 @@ func (h *Handler) handleExecuteSQL(w http.ResponseWriter, r *http.Request) {
 	// Detect query type
 	queryType := detectQueryType(req.Query)
 
-	startTime := time.Now()
+	// Initialize response
 	var response SQLResponse
 	response.Type = queryType
 
+	// Translate PostgreSQL syntax to SQLite if requested
+	queryToExecute := req.Query
+	if req.PostgresMode {
+		translated, wasTranslated := pgtranslate.TranslateWithFallback(req.Query)
+		queryToExecute = translated
+		response.TranslatedQuery = translated
+		response.WasTranslated = wasTranslated
+	}
+
+	startTime := time.Now()
+
 	if queryType == "SELECT" || queryType == "PRAGMA" {
 		// For SELECT queries, return rows
-		rows, err := h.db.Query(req.Query)
+		rows, err := h.db.Query(queryToExecute)
 		if err != nil {
 			response.Error = err.Error()
 			response.ExecutionTimeMs = time.Since(startTime).Milliseconds()
@@ -3043,7 +3058,7 @@ func (h *Handler) handleExecuteSQL(w http.ResponseWriter, r *http.Request) {
 		response.RowCount = len(resultRows)
 	} else {
 		// For non-SELECT queries (INSERT, UPDATE, DELETE, etc.)
-		result, err := h.db.Exec(req.Query)
+		result, err := h.db.Exec(queryToExecute)
 		if err != nil {
 			response.Error = err.Error()
 			response.ExecutionTimeMs = time.Since(startTime).Milliseconds()
