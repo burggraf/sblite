@@ -4,8 +4,42 @@
  * Tests for CREATE/DROP FUNCTION via SQL browser
  */
 
-import { describe, it, expect, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { TEST_CONFIG } from '../../setup/global-setup'
+
+const TEST_PASSWORD = 'testpassword123'
+let sessionCookie = ''
+
+/**
+ * Setup dashboard auth - ensures password is set and logs in
+ */
+async function setupDashboardAuth(): Promise<void> {
+  // Check if setup is needed
+  const statusRes = await fetch(`${TEST_CONFIG.SBLITE_URL}/_/api/auth/status`)
+  const status = await statusRes.json()
+
+  if (status.needs_setup) {
+    // Setup the password
+    await fetch(`${TEST_CONFIG.SBLITE_URL}/_/api/auth/setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: TEST_PASSWORD })
+    })
+  }
+
+  // Login to get session cookie
+  const loginRes = await fetch(`${TEST_CONFIG.SBLITE_URL}/_/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: TEST_PASSWORD })
+  })
+
+  // Extract session cookie from response
+  const setCookie = loginRes.headers.get('set-cookie')
+  if (setCookie) {
+    sessionCookie = setCookie.split(';')[0]
+  }
+}
 
 /**
  * Helper function to execute SQL via the dashboard API.
@@ -14,13 +48,20 @@ import { TEST_CONFIG } from '../../setup/global-setup'
 async function executeSql(query: string, postgresMode = true) {
   const response = await fetch(`${TEST_CONFIG.SBLITE_URL}/_/api/sql`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Cookie': sessionCookie
+    },
     body: JSON.stringify({ query, postgres_mode: postgresMode })
   })
   return response.json()
 }
 
 describe('RPC - Function Creation', () => {
+  beforeAll(async () => {
+    await setupDashboardAuth()
+  })
+
   afterAll(async () => {
     // Cleanup all test functions
     await executeSql(`
