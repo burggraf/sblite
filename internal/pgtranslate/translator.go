@@ -33,7 +33,17 @@ type FunctionRule struct {
 
 func (r *FunctionRule) Apply(query string) string {
 	// Case-insensitive function name replacement
-	re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(r.pgFunc) + `\b`)
+	// Only add trailing \b if the pattern ends with a word character
+	// (parentheses and other non-word chars don't have word boundaries after them)
+	pattern := `(?i)\b` + regexp.QuoteMeta(r.pgFunc)
+	if len(r.pgFunc) > 0 {
+		lastChar := r.pgFunc[len(r.pgFunc)-1]
+		if (lastChar >= 'a' && lastChar <= 'z') || (lastChar >= 'A' && lastChar <= 'Z') ||
+			(lastChar >= '0' && lastChar <= '9') || lastChar == '_' {
+			pattern += `\b`
+		}
+	}
+	re := regexp.MustCompile(pattern)
 	return re.ReplaceAllString(query, r.sqliteFunc)
 }
 
@@ -297,10 +307,13 @@ func defaultRules() []Rule {
 		// RETURNING clause is supported in SQLite 3.35+ (most deployments)
 		// No translation needed, but good to note
 
-		// ON CONFLICT DO NOTHING -> OR IGNORE
+		// ON CONFLICT DO NOTHING -> INSERT OR IGNORE
+		// SQLite requires: INSERT OR IGNORE INTO ... VALUES ...
+		// PostgreSQL uses: INSERT INTO ... VALUES ... ON CONFLICT DO NOTHING
+		// This rule rewrites the entire INSERT statement
 		&RegexRule{
-			pattern:     regexp.MustCompile(`(?i)ON\s+CONFLICT\s+DO\s+NOTHING`),
-			replacement: "OR IGNORE",
+			pattern:     regexp.MustCompile(`(?i)(INSERT)\s+(INTO\s+\S+\s*(?:\([^)]*\))?\s*VALUES\s*(?:\([^)]*\)|[^;]+))\s+ON\s+CONFLICT\s+DO\s+NOTHING`),
+			replacement: "$1 OR IGNORE $2",
 		},
 
 		// ON CONFLICT DO UPDATE -> needs more complex handling, leave for now

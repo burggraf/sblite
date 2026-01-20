@@ -133,28 +133,27 @@ SELECT '550e8400-e29b-41d4-a716-446655440000' as id;
 ```sql
 -- PostgreSQL
 CREATE TABLE users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY,
   email TEXT NOT NULL,
   active BOOLEAN DEFAULT TRUE,
   metadata JSONB,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ
 );
 
 -- Translated to SQLite
 CREATE TABLE users (
-  id TEXT PRIMARY KEY DEFAULT (SELECT lower(
-    substr(h, 1, 8) || '-' ||
-    substr(h, 9, 4) || '-' ||
-    '4' || substr(h, 14, 3) || '-' ||
-    substr('89ab', (abs(random()) % 4) + 1, 1) || substr(h, 18, 3) || '-' ||
-    substr(h, 21, 12)
-  ) FROM (SELECT hex(randomblob(16)) as h)),
+  id TEXT PRIMARY KEY,
   email TEXT NOT NULL,
   active INTEGER DEFAULT 1,
   metadata TEXT,
-  created_at TEXT DEFAULT datetime('now')
+  created_at TEXT
 );
 ```
+
+> **Note:** `gen_random_uuid()` translates to a SELECT subquery which SQLite doesn't support in DEFAULT expressions. Use `gen_random_uuid()` in INSERT statements instead:
+> ```sql
+> INSERT INTO users (id, email) VALUES (gen_random_uuid(), 'user@example.com');
+> ```
 
 ### Boolean Literals
 
@@ -267,6 +266,43 @@ For these features, you'll need to:
 1. Disable PostgreSQL mode and write SQLite syntax manually
 2. Wait for future enhancements to the translator
 3. Use workarounds (e.g., rewrite window functions as subqueries)
+
+## Known Limitations
+
+The following are known limitations of the regex-based translation approach:
+
+### DEFAULT Expressions with gen_random_uuid()
+
+SQLite doesn't support SELECT subqueries in DEFAULT expressions. While `gen_random_uuid()` translates correctly for use in INSERT statements, it cannot be used in CREATE TABLE DEFAULT clauses:
+
+```sql
+-- This PostgreSQL syntax:
+CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
+
+-- Translates to a SELECT subquery that SQLite rejects in DEFAULT:
+-- ERROR: near "SELECT": syntax error
+
+-- Workaround: Use gen_random_uuid() in INSERT statements:
+INSERT INTO users (id, name) VALUES (gen_random_uuid(), 'Alice');
+```
+
+### String Literals May Be Affected
+
+The regex-based translation doesn't distinguish between SQL keywords and string contents. Keywords inside string literals may be incorrectly translated:
+
+```sql
+-- This query:
+SELECT 'The value is TRUE' as message;
+
+-- May become:
+SELECT 'The value is 1' as message;
+```
+
+This is a known limitation of the regex-based approach. A future AST-based translation would avoid this issue.
+
+### JSON Operator Semantic Differences
+
+PostgreSQL's `->` returns JSON and `->>` returns text. SQLite's `json_extract()` always returns the value type. Both operators are translated to `json_extract()`, which works for most use cases but may differ in edge cases involving JSON type handling.
 
 ## Dashboard Integration
 
