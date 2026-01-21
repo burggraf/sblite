@@ -16,3 +16,6 @@ test_apps/*
 !test_apps/shoplite/
 !test_apps/README.md
 log.db
+
+# runtime binaries
+edge-runtime/

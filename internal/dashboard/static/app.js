@@ -6438,6 +6438,7 @@ const App = {
                     </div>
                 </div>
                 <div class="toolbar-right">
+                    <button class="btn btn-sm" onclick="App.createStorageFolder()">New Folder</button>
                     <button class="btn btn-primary btn-sm" onclick="App.triggerFileUpload()">Upload</button>
                     <input type="file" id="file-upload-input" multiple style="display:none" onchange="App.handleFileSelect(event)">
                     <div class="view-toggle">
