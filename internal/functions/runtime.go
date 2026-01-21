@@ -30,6 +30,8 @@ type RuntimeConfig struct {
 	ServiceKey string
 	// DBPath is the database path
 	DBPath string
+	// EdgeRuntimeDir is the directory for storing the edge runtime binary (overrides default)
+	EdgeRuntimeDir string
 	// Secrets contains environment variables to inject from secrets store
 	Secrets map[string]string
 }
@@ -214,8 +216,14 @@ func (rm *RuntimeManager) ensureBinary() (string, error) {
 		return rm.config.BinaryPath, nil
 	}
 
-	// Check default download location first (where build script installs it)
-	downloader := NewDownloader(DefaultDownloadDir())
+	// Determine download directory: explicit > db-relative > fallback
+	downloadDir := rm.config.EdgeRuntimeDir
+	if downloadDir == "" {
+		downloadDir = DefaultDownloadDir(rm.config.DBPath)
+	}
+
+	// Check configured download location first
+	downloader := NewDownloader(downloadDir)
 	defaultPath := downloader.BinaryPath()
 	if _, err := os.Stat(defaultPath); err == nil {
 		return defaultPath, nil

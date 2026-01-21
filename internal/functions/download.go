@@ -53,8 +53,20 @@ func NewDownloader(downloadDir string) *Downloader {
 }
 
 // DefaultDownloadDir returns the default directory for downloaded binaries.
-func DefaultDownloadDir() string {
-	// Use XDG_DATA_HOME if available, otherwise ~/.local/share
+// If dbPath is provided, returns <db-dir>/edge-runtime/
+// Otherwise falls back to XDG_DATA_HOME/sblite/bin/ or ~/.local/share/sblite/bin/
+func DefaultDownloadDir(dbPath string) string {
+	// If database path provided, use sibling edge-runtime directory
+	if dbPath != "" {
+		dbDir := filepath.Dir(dbPath)
+		// Handle relative paths
+		if absDir, err := filepath.Abs(dbDir); err == nil {
+			dbDir = absDir
+		}
+		return filepath.Join(dbDir, "edge-runtime")
+	}
+
+	// Fallback: Use XDG_DATA_HOME if available, otherwise ~/.local/share
 	dataHome := os.Getenv("XDG_DATA_HOME")
 	if dataHome == "" {
 		home, _ := os.UserHomeDir()

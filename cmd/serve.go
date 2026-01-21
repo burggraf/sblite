@@ -104,20 +104,27 @@ var serveCmd = &cobra.Command{
 		if functionsEnabled {
 			functionsDir, _ := cmd.Flags().GetString("functions-dir")
 			functionsPort, _ := cmd.Flags().GetInt("functions-port")
+			edgeRuntimeDir, _ := cmd.Flags().GetString("edge-runtime-dir")
+
+			// Check environment variable if flag not set
+			if edgeRuntimeDir == "" {
+				edgeRuntimeDir = os.Getenv("SBLITE_EDGE_RUNTIME_DIR")
+			}
 
 			// Generate API keys for function environment
 			anonKey := auth.GenerateAPIKey(jwtSecret, "anon")
 			serviceKey := auth.GenerateAPIKey(jwtSecret, "service_role")
 
 			cfg := &functions.Config{
-				FunctionsDir: functionsDir,
-				RuntimePort:  functionsPort,
-				JWTSecret:    jwtSecret,
-				BaseURL:      "http://" + addr,
-				SblitePort:   port,
-				AnonKey:      anonKey,
-				ServiceKey:   serviceKey,
-				DBPath:       dbPath,
+				FunctionsDir:   functionsDir,
+				RuntimePort:    functionsPort,
+				JWTSecret:      jwtSecret,
+				BaseURL:        "http://" + addr,
+				SblitePort:     port,
+				AnonKey:        anonKey,
+				ServiceKey:     serviceKey,
+				DBPath:         dbPath,
+				EdgeRuntimeDir: edgeRuntimeDir,
 			}
 
 			if err := srv.EnableFunctions(cfg); err != nil {
@@ -393,4 +400,5 @@ func init() {
 	serveCmd.Flags().Bool("functions", false, "Enable edge functions support")
 	serveCmd.Flags().String("functions-dir", "./functions", "Path to functions directory")
 	serveCmd.Flags().Int("functions-port", 8081, "Internal port for edge runtime")
+	serveCmd.Flags().String("edge-runtime-dir", "", "Directory for edge runtime binary (default: <db-dir>/edge-runtime/)")
 }

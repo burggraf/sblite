@@ -272,12 +272,21 @@ func TestServiceGetFunction(t *testing.T) {
 }
 
 func TestDefaultDownloadDir(t *testing.T) {
-	dir := DefaultDownloadDir()
+	// Test with empty dbPath (fallback behavior)
+	dir := DefaultDownloadDir("")
 	if dir == "" {
 		t.Error("DefaultDownloadDir returned empty string")
 	}
 	if !filepath.IsAbs(dir) {
 		t.Error("DefaultDownloadDir should return absolute path")
+	}
+
+	// Test with dbPath (db-relative behavior)
+	dbPath := "/some/path/data.db"
+	dir = DefaultDownloadDir(dbPath)
+	expected := "/some/path/edge-runtime"
+	if dir != expected {
+		t.Errorf("DefaultDownloadDir(%q) = %q, want %q", dbPath, dir, expected)
 	}
 }
 

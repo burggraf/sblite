@@ -189,6 +189,17 @@ npm test         # Run all tests (server must be running)
   --log-fields=source,request_id,user_id,extra
 ```
 
+### Edge Functions Configuration
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `--functions` | - | `false` | Enable edge functions support |
+| `--functions-dir` | - | `./functions` | Path to functions directory |
+| `--functions-port` | - | `8081` | Internal port for edge runtime |
+| `--edge-runtime-dir` | `SBLITE_EDGE_RUNTIME_DIR` | `<db-dir>/edge-runtime/` | Directory for edge runtime binary |
+
+The edge runtime binary is stored in `<db-dir>/edge-runtime/` by default (relative to the database file). This can be overridden with `--edge-runtime-dir` or `SBLITE_EDGE_RUNTIME_DIR`.
+
 ## API Endpoints
 
 ### Authentication (`/auth/v1`)

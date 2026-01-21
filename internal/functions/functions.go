@@ -45,6 +45,8 @@ type Config struct {
 	ServiceKey string
 	// DBPath is the database path for env var injection
 	DBPath string
+	// EdgeRuntimeDir is the directory for storing the edge runtime binary (overrides default)
+	EdgeRuntimeDir string
 }
 
 // DefaultConfig returns default configuration for the functions service.
@@ -74,12 +76,13 @@ func NewService(db *sql.DB, cfg *Config) (*Service, error) {
 
 	// Create runtime manager
 	runtime := NewRuntimeManager(RuntimeConfig{
-		FunctionsDir: cfg.FunctionsDir,
-		Port:         cfg.RuntimePort,
-		SblitePort:   cfg.SblitePort,
-		AnonKey:      cfg.AnonKey,
-		ServiceKey:   cfg.ServiceKey,
-		DBPath:       cfg.DBPath,
+		FunctionsDir:   cfg.FunctionsDir,
+		Port:           cfg.RuntimePort,
+		SblitePort:     cfg.SblitePort,
+		AnonKey:        cfg.AnonKey,
+		ServiceKey:     cfg.ServiceKey,
+		DBPath:         cfg.DBPath,
+		EdgeRuntimeDir: cfg.EdgeRuntimeDir,
 	})
 
 	return &Service{

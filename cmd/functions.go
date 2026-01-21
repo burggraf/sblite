@@ -164,9 +164,15 @@ For production use, use 'sblite serve --functions' instead.`,
 		functionsDir, _ := cmd.Flags().GetString("functions-dir")
 		port, _ := cmd.Flags().GetInt("port")
 		dbPath, _ := cmd.Flags().GetString("db")
+		edgeRuntimeDir, _ := cmd.Flags().GetString("edge-runtime-dir")
 		jwtSecret := os.Getenv("SBLITE_JWT_SECRET")
 		if jwtSecret == "" {
 			jwtSecret = "super-secret-jwt-key-please-change-in-production"
+		}
+
+		// Check environment variable if flag not set
+		if edgeRuntimeDir == "" {
+			edgeRuntimeDir = os.Getenv("SBLITE_EDGE_RUNTIME_DIR")
 		}
 
 		// Generate API keys
@@ -189,12 +195,13 @@ For production use, use 'sblite serve --functions' instead.`,
 		}
 
 		cfg := &functions.Config{
-			FunctionsDir: functionsDir,
-			RuntimePort:  port,
-			JWTSecret:    jwtSecret,
-			AnonKey:      anonKey,
-			ServiceKey:   serviceKey,
-			DBPath:       dbPath,
+			FunctionsDir:   functionsDir,
+			RuntimePort:    port,
+			JWTSecret:      jwtSecret,
+			AnonKey:        anonKey,
+			ServiceKey:     serviceKey,
+			DBPath:         dbPath,
+			EdgeRuntimeDir: edgeRuntimeDir,
 		}
 
 		// Create service with database for secrets
@@ -249,7 +256,21 @@ var functionsDownloadCmd = &cobra.Command{
 			return fmt.Errorf("platform %s is not supported", functions.PlatformString())
 		}
 
-		downloader := functions.NewDownloader(functions.DefaultDownloadDir())
+		dbPath, _ := cmd.Flags().GetString("db")
+		edgeRuntimeDir, _ := cmd.Flags().GetString("edge-runtime-dir")
+
+		// Check environment variable if flag not set
+		if edgeRuntimeDir == "" {
+			edgeRuntimeDir = os.Getenv("SBLITE_EDGE_RUNTIME_DIR")
+		}
+
+		// Determine download directory
+		downloadDir := edgeRuntimeDir
+		if downloadDir == "" {
+			downloadDir = functions.DefaultDownloadDir(dbPath)
+		}
+
+		downloader := functions.NewDownloader(downloadDir)
 
 		fmt.Printf("Downloading edge runtime for %s...\n", functions.PlatformString())
 		if err := downloader.Download(); err != nil {
@@ -596,6 +617,7 @@ func init() {
 	// Persistent flags for all functions subcommands
 	functionsCmd.PersistentFlags().String("functions-dir", "./functions", "Path to functions directory")
 	functionsCmd.PersistentFlags().String("db", "data.db", "Path to database file")
+	functionsCmd.PersistentFlags().String("edge-runtime-dir", "", "Directory for edge runtime binary (default: <db-dir>/edge-runtime/)")
 
 	// Flags for 'new' command
 	functionsNewCmd.Flags().String("template", "default", "Function template: default, supabase, cors")

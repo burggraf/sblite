@@ -137,8 +137,32 @@ sblite serve --functions [--functions-dir ./functions] [--functions-port 8081]
 | `--functions` | `false` | Enable edge functions support |
 | `--functions-dir` | `./functions` | Path to functions directory |
 | `--functions-port` | `8081` | Internal port for edge runtime |
+| `--edge-runtime-dir` | `<db-dir>/edge-runtime/` | Directory for edge runtime binary |
 
-### Environment Variables
+### Edge Runtime Binary Location
+
+The edge runtime binary is stored relative to your database file by default. For example, with `--db ./data.db`, the binary is stored at `./edge-runtime/edge-runtime-v1.67.4`.
+
+You can override this location:
+
+```bash
+# Using the flag
+sblite serve --functions --edge-runtime-dir /opt/sblite/runtime
+
+# Using environment variable
+SBLITE_EDGE_RUNTIME_DIR=/opt/sblite/runtime sblite serve --functions
+
+# Download to specific location
+sblite functions download --edge-runtime-dir /opt/sblite/runtime
+```
+
+| Method | Priority |
+|--------|----------|
+| `--edge-runtime-dir` flag | Highest |
+| `SBLITE_EDGE_RUNTIME_DIR` env var | Medium |
+| `<db-dir>/edge-runtime/` (default) | Lowest |
+
+### Function Environment Variables
 
 The following environment variables are automatically injected into functions:
 
@@ -347,9 +371,10 @@ Windows is not currently supported.
 
 ### Edge runtime not starting
 
-1. Check if the binary was downloaded: `ls ~/.sblite/bin/edge-runtime`
+1. Check if the binary was downloaded: `ls ./edge-runtime/` (relative to your database)
 2. Try downloading manually: `sblite functions download`
 3. Check logs for errors: `sblite serve --functions --log-level debug`
+4. Verify the download directory is writable
 
 ### Function not found (404)
 
