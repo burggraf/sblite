@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"os"
@@ -64,8 +65,8 @@ var serveCmd = &cobra.Command{
 		mailConfig := buildMailConfig(cmd)
 		migrationsDir, _ := cmd.Flags().GetString("migrations-dir")
 
-		// Build storage configuration
-		storageConfig := buildStorageConfig(cmd)
+		// Build storage configuration (pass db for dashboard settings)
+		storageConfig := buildStorageConfig(cmd, database.DB)
 
 		srv := server.NewWithConfig(database, server.ServerConfig{
 			JWTSecret:     jwtSecret,
@@ -299,9 +300,9 @@ func buildLogConfig(cmd *cobra.Command) *log.Config {
 	return cfg
 }
 
-// buildStorageConfig creates a storage.Config from environment variables and CLI flags.
-// Priority: CLI flags > environment variables > defaults
-func buildStorageConfig(cmd *cobra.Command) *storage.Config {
+// buildStorageConfig creates a storage.Config from dashboard settings, environment variables, and CLI flags.
+// Priority: Dashboard settings > CLI flags > environment variables > defaults
+func buildStorageConfig(cmd *cobra.Command, db *sql.DB) *storage.Config {
 	cfg := &storage.Config{
 		Backend:   "local",
 		LocalPath: "./storage",
@@ -357,6 +358,35 @@ func buildStorageConfig(cmd *cobra.Command) *storage.Config {
 	}
 	if pathStyle, _ := cmd.Flags().GetBool("s3-path-style"); pathStyle {
 		cfg.S3ForcePathStyle = true
+	}
+
+	// Dashboard settings have highest priority (if db is available)
+	if db != nil {
+		store := dashboard.NewStore(db)
+		if backend, _ := store.Get("storage_backend"); backend != "" {
+			cfg.Backend = backend
+		}
+		if localPath, _ := store.Get("storage_local_path"); localPath != "" {
+			cfg.LocalPath = localPath
+		}
+		if s3Endpoint, _ := store.Get("storage_s3_endpoint"); s3Endpoint != "" {
+			cfg.S3Endpoint = s3Endpoint
+		}
+		if s3Region, _ := store.Get("storage_s3_region"); s3Region != "" {
+			cfg.S3Region = s3Region
+		}
+		if s3Bucket, _ := store.Get("storage_s3_bucket"); s3Bucket != "" {
+			cfg.S3Bucket = s3Bucket
+		}
+		if s3AccessKey, _ := store.Get("storage_s3_access_key"); s3AccessKey != "" {
+			cfg.S3AccessKey = s3AccessKey
+		}
+		if s3SecretKey, _ := store.Get("storage_s3_secret_key"); s3SecretKey != "" {
+			cfg.S3SecretKey = s3SecretKey
+		}
+		if s3PathStyle, _ := store.Get("storage_s3_path_style"); s3PathStyle == "true" {
+			cfg.S3ForcePathStyle = true
+		}
 	}
 
 	return cfg

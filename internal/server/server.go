@@ -168,6 +168,20 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 		s.storageHandler.SetJWTSecret(cfg.JWTSecret)
 		// Set storage service on dashboard handler for management UI
 		s.dashboardHandler.SetStorageService(storageService)
+		// Register storage reload callback for hot-reload via dashboard
+		s.dashboardHandler.SetStorageReloadFunc(func(cfg *dashboard.StorageConfig) error {
+			storageCfg := storage.Config{
+				Backend:          cfg.Backend,
+				LocalPath:        cfg.LocalPath,
+				S3Endpoint:       cfg.S3Endpoint,
+				S3Region:         cfg.S3Region,
+				S3Bucket:         cfg.S3Bucket,
+				S3AccessKey:      cfg.S3AccessKey,
+				S3SecretKey:      cfg.S3SecretKey,
+				S3ForcePathStyle: cfg.S3ForcePathStyle,
+			}
+			return storageService.Reconfigure(storageCfg)
+		})
 	} else {
 		log.Warn("failed to initialize storage service", "error", err.Error())
 	}
