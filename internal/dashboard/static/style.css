@@ -3259,7 +3259,9 @@ small.text-muted {
 
 .file-card.selected {
     border-color: var(--accent);
+    border-width: 2px;
     background: var(--accent-muted);
+    box-shadow: 0 0 0 2px var(--accent-muted);
 }
 
 .file-card.folder {
@@ -3272,11 +3274,16 @@ small.text-muted {
     left: 0.5rem;
     opacity: 0;
     transition: opacity 0.15s;
+    z-index: 2;
 }
 
-.file-card:hover .file-select,
-.file-card.selected .file-select {
+.file-card:hover .file-select {
     opacity: 1;
+}
+
+/* Always show checkbox when selected */
+.file-card.selected .file-select {
+    opacity: 1 !important;
 }
 
 .file-card .file-icon {

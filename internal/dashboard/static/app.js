@@ -6379,6 +6379,8 @@ const App = {
                     folders.push({ name: folderName, isFolder: true });
                 }
             } else if (relativePath && !relativePath.endsWith('/')) {
+                // Hide .gitkeep placeholder files used for empty folders
+                if (relativePath === '.gitkeep') continue;
                 files.push({ ...obj, displayName: relativePath, isFolder: false });
             }
         }
@@ -6483,8 +6485,7 @@ const App = {
                                  data-filename="${this.escapeHtml(item.name)}">
                                 <div class="file-select"
                                      onclick="event.stopPropagation(); App.toggleFileSelection('${this.escapeJsString(item.name)}')">
-                                    <input type="checkbox" ${isSelected ? 'checked' : ''}
-                                           onclick="event.stopPropagation();">
+                                    <input type="checkbox" ${isSelected ? 'checked' : ''} style="pointer-events: none;">
                                 </div>
                                 <div class="file-content"
                                      onclick="App.openFilePreview('${this.escapeJsString(item.name)}')"
@@ -6543,8 +6544,7 @@ const App = {
                                         data-filename="${this.escapeHtml(item.name)}">
                                         <td class="col-checkbox"
                                             onclick="event.stopPropagation(); App.toggleFileSelection('${this.escapeJsString(item.name)}')">
-                                            <input type="checkbox" ${isSelected ? 'checked' : ''}
-                                                   onclick="event.stopPropagation();">
+                                            <input type="checkbox" ${isSelected ? 'checked' : ''} style="pointer-events: none;">
                                         </td>
                                         <td class="col-name clickable"
                                             onclick="App.openFilePreview('${this.escapeJsString(item.name)}')"
@@ -6986,6 +6986,57 @@ const App = {
         this.render();
     },
 
+    async createStorageFolder() {
+        const { selectedBucket, currentPath } = this.state.storage;
+        if (!selectedBucket) return;
+
+        const folderName = prompt('Enter folder name:');
+        if (!folderName || !folderName.trim()) return;
+
+        // Validate folder name (no slashes, dots at start, etc.)
+        const trimmedName = folderName.trim();
+        if (trimmedName.includes('/') || trimmedName.includes('\\') || trimmedName.startsWith('.')) {
+            this.showToast('Invalid folder name', 'error');
+            return;
+        }
+
+        const folderPath = currentPath + trimmedName + '/';
+
+        try {
+            // Create folder by uploading a placeholder .gitkeep file using XHR (same as file uploads)
+            const placeholder = new File([''], '.gitkeep', { type: 'application/octet-stream' });
+            const formData = new FormData();
+            formData.append('bucket', selectedBucket.name);
+            formData.append('path', folderPath);
+            formData.append('file', placeholder);
+
+            await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.addEventListener('load', () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        resolve();
+                    } else {
+                        let errorMsg = 'Failed to create folder';
+                        try {
+                            const errData = JSON.parse(xhr.responseText);
+                            errorMsg = errData.message || errData.error || errorMsg;
+                        } catch {}
+                        reject(new Error(errorMsg));
+                    }
+                });
+                xhr.addEventListener('error', () => reject(new Error('Network error')));
+                xhr.open('POST', '/_/api/storage/objects/upload');
+                xhr.send(formData);
+            });
+
+            await this.loadObjects();
+            this.showToast(`Folder "${trimmedName}" created`, 'success');
+        } catch (err) {
+            console.error('Failed to create folder:', err);
+            this.showToast(err.message || 'Failed to create folder', 'error');
+        }
+    },
+
     triggerFileUpload() {
         document.getElementById('file-upload-input').click();
     },
@@ -7002,21 +7053,31 @@ const App = {
         const { selectedBucket, currentPath } = this.state.storage;
         if (!selectedBucket) return;
 
-        for (const file of files) {
-            const uploadItem = {
-                name: file.name,
-                size: file.size,
-                progress: 0,
-                status: 'uploading'
-            };
-            this.state.storage.uploading.push(uploadItem);
-            this.render();
+        // Capture bucket and path at start to prevent race conditions if user navigates
+        const bucketName = selectedBucket.name;
+        const uploadPath = currentPath;
 
+        // Create all upload items with unique IDs first
+        const uploadItems = files.map((file, index) => ({
+            id: Date.now() + '-' + index,
+            name: file.name,
+            size: file.size,
+            progress: 0,
+            status: 'uploading',
+            file: file
+        }));
+
+        // Add all to state and render once
+        this.state.storage.uploading.push(...uploadItems);
+        this.render();
+
+        // Upload files sequentially (keeps progress tracking simple)
+        for (const uploadItem of uploadItems) {
             try {
                 const formData = new FormData();
-                formData.append('bucket', selectedBucket.name);
-                formData.append('path', currentPath);
-                formData.append('file', file);
+                formData.append('bucket', bucketName);
+                formData.append('path', uploadPath);
+                formData.append('file', uploadItem.file);
 
                 await this.uploadWithProgress(formData, uploadItem);
                 uploadItem.status = 'complete';
@@ -7025,15 +7086,26 @@ const App = {
                 uploadItem.status = 'error';
                 uploadItem.error = err.message;
             }
+            // Clear file reference to free memory
+            delete uploadItem.file;
             this.render();
         }
 
+        // Refresh file list after all uploads complete
         await this.loadObjects();
+
+        // Clear completed/errored uploads after delay
         setTimeout(() => {
-            this.state.storage.uploading = this.state.storage.uploading.filter(u => u.status === 'uploading');
+            const completedIds = uploadItems.map(u => u.id);
+            this.state.storage.uploading = this.state.storage.uploading.filter(
+                u => !completedIds.includes(u.id) && u.status === 'uploading'
+            );
             this.render();
         }, 3000);
     },
+
+    // Throttle render calls during upload progress
+    _lastProgressRender: 0,
 
     uploadWithProgress(formData, uploadItem) {
         return new Promise((resolve, reject) => {
@@ -7041,7 +7113,12 @@ const App = {
             xhr.upload.addEventListener('progress', (e) => {
                 if (e.lengthComputable) {
                     uploadItem.progress = Math.round((e.loaded / e.total) * 100);
-                    this.render();
+                    // Throttle progress renders to max 10 per second
+                    const now = Date.now();
+                    if (now - this._lastProgressRender > 100) {
+                        this._lastProgressRender = now;
+                        this.render();
+                    }
                 }
             });
             xhr.addEventListener('load', () => {
@@ -7052,10 +7129,15 @@ const App = {
                         resolve({});
                     }
                 } else {
-                    reject(new Error('Upload failed'));
+                    let errorMsg = 'Upload failed';
+                    try {
+                        const errData = JSON.parse(xhr.responseText);
+                        errorMsg = errData.message || errData.error || errorMsg;
+                    } catch {}
+                    reject(new Error(errorMsg));
                 }
             });
-            xhr.addEventListener('error', () => reject(new Error('Upload failed')));
+            xhr.addEventListener('error', () => reject(new Error('Upload failed - network error')));
             xhr.open('POST', '/_/api/storage/objects/upload');
             xhr.send(formData);
         });
@@ -7106,6 +7188,7 @@ const App = {
 
     handleDrop(event) {
         event.preventDefault();
+        event.stopPropagation(); // Prevent double-handling from nested drop zones
         event.currentTarget.classList.remove('drag-over');
         const files = Array.from(event.dataTransfer.files);
         if (files.length > 0) {
