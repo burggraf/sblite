@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext } from 'react'
+import { useState, useEffect, createContext, useContext, useRef } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import Navbar from './components/Navbar'
@@ -43,12 +43,65 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [cartCount, setCartCount] = useState(0)
   const [role, setRole] = useState(null)
+  // Track users we've already checked for admin promotion
+  const checkedUsersRef = useRef(new Set())
+
+  // Check if user should be promoted to admin (first user only)
+  async function checkAndPromoteAdmin(userId) {
+    // Only check once per user per session
+    if (checkedUsersRef.current.has(userId)) {
+      return
+    }
+    checkedUsersRef.current.add(userId)
+
+    try {
+      // Check if user already has a role
+      const { data: existingRole } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', userId)
+        .maybeSingle()
+
+      if (existingRole) {
+        // User already has a role, don't change it
+        return
+      }
+
+      // Check if this is the first user
+      const { count, error: countError } = await supabase
+        .from('auth_users')
+        .select('*', { count: 'exact', head: true })
+
+      if (countError) {
+        console.warn('Failed to check user count:', countError.message)
+        return
+      }
+
+      if (count === 1) {
+        // First user becomes admin
+        const { error: insertError } = await supabase
+          .from('user_roles')
+          .insert({ user_id: userId, role: 'admin' })
+
+        if (insertError) {
+          console.warn('Failed to insert admin role:', insertError.message)
+        } else {
+          console.log('First user promoted to admin')
+          setRole('admin')
+        }
+      }
+    } catch (err) {
+      console.warn('Error checking admin status:', err)
+    }
+  }
 
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null)
       if (session?.user) {
+        // Check for admin promotion on initial load
+        await checkAndPromoteAdmin(session.user.id)
         const userRole = await fetchUserRole(session.user.id)
         setRole(userRole)
       }
@@ -56,12 +109,30 @@ function App() {
     })
 
     // Listen for auth changes
+    // Note: Don't use async/await in onAuthStateChange callback to avoid race conditions
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      (event, session) => {
         setUser(session?.user ?? null)
         if (session?.user) {
-          const userRole = await fetchUserRole(session.user.id)
-          setRole(userRole)
+          // Check for admin promotion when user signs in
+          const userId = session.user.id
+          if (event === 'SIGNED_IN') {
+            // Fire and forget - don't await to avoid blocking
+            checkAndPromoteAdmin(userId).then(() => {
+              return fetchUserRole(userId)
+            }).then(userRole => {
+              setRole(userRole)
+            }).catch(err => {
+              console.error('Error in auth state change handler:', err)
+            })
+          } else {
+            // For other events (like TOKEN_REFRESHED), just fetch role
+            fetchUserRole(userId).then(userRole => {
+              setRole(userRole)
+            }).catch(err => {
+              console.error('Error fetching role:', err)
+            })
+          }
         } else {
           setRole(null)
         }
@@ -117,31 +188,18 @@ function App() {
         email,
         password
       })
-
-      if (!error && data.user) {
-        // Check if this is the first user
-        const { count, error: countError } = await supabase
-          .from('auth_users')
-          .select('*', { count: 'exact', head: true })
-
-        if (countError) {
-          console.warn('Failed to check user count:', countError.message)
-        } else if (count === 1) {
-          // First user becomes admin
-          const { error: insertError } = await supabase
-            .from('user_roles')
-            .insert({ user_id: data.user.id, role: 'admin' })
-
-          if (!insertError) {
-            setRole('admin')
-          }
-        }
-      }
-
+      // Note: Admin promotion now happens in onAuthStateChange when user signs in
+      // after confirming email, because we need a valid session to query the database
       return { data, error }
     },
     signOut: async () => {
-      const { error } = await supabase.auth.signOut()
+      const { error } = await supabase.auth.signOut({ scope: 'local' })
+      if (error) {
+        console.error('Sign out error:', error)
+      }
+      // Explicitly clear user state to ensure UI updates
+      setUser(null)
+      setRole(null)
       return { error }
     },
     resendConfirmation: async (email) => {
