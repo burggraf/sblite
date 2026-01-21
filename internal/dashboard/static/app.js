@@ -52,13 +52,31 @@ const App = {
             authConfig: { require_email_confirmation: true },
             templates: [],
             loading: false,
-            expandedSections: { server: true, apiKeys: false, auth: false, oauth: false, templates: false, export: false },
+            expandedSections: { server: true, apiKeys: false, auth: false, oauth: false, storage: false, templates: false, export: false },
             editingTemplate: null,
             oauth: {
                 providers: {},
                 redirectUrls: [],
             },
             apiKeys: null,
+            storageSettings: {
+                backend: 'local',
+                localPath: './storage',
+                s3: {
+                    endpoint: '',
+                    region: '',
+                    bucket: '',
+                    accessKey: '',
+                    secretKey: '',
+                    pathStyle: false
+                },
+                loading: false,
+                testing: false,
+                testResult: null,
+                saving: false,
+                dirty: false,
+                originalBackend: 'local'
+            },
         },
         logs: {
             config: null,
@@ -2874,7 +2892,144 @@ const App = {
 
     toggleSettingsSection(section) {
         this.state.settings.expandedSections[section] = !this.state.settings.expandedSections[section];
+        // Load storage settings when section is expanded
+        if (section === 'storage' && this.state.settings.expandedSections.storage) {
+            this.loadStorageSettings();
+        }
         this.render();
+    },
+
+    async loadStorageSettings() {
+        this.state.settings.storageSettings.loading = true;
+        this.render();
+
+        try {
+            const res = await fetch('/_/api/settings/storage');
+            if (res.ok) {
+                const data = await res.json();
+                this.state.settings.storageSettings.backend = data.backend || 'local';
+                this.state.settings.storageSettings.localPath = data.local_path || './storage';
+                this.state.settings.storageSettings.s3 = {
+                    endpoint: data.s3?.endpoint || '',
+                    region: data.s3?.region || '',
+                    bucket: data.s3?.bucket || '',
+                    accessKey: data.s3?.access_key || '',
+                    secretKey: '', // Never returned from server
+                    pathStyle: data.s3?.path_style || false
+                };
+                this.state.settings.storageSettings.originalBackend = data.backend || 'local';
+                this.state.settings.storageSettings.dirty = false;
+                this.state.settings.storageSettings.testResult = null;
+            }
+        } catch (e) {
+            console.error('Failed to load storage settings:', e);
+        }
+
+        this.state.settings.storageSettings.loading = false;
+        this.render();
+    },
+
+    updateStorageField(field, value) {
+        const ss = this.state.settings.storageSettings;
+        if (field === 'backend') {
+            ss.backend = value;
+        } else if (field === 'localPath') {
+            ss.localPath = value;
+        } else if (field.startsWith('s3.')) {
+            const s3Field = field.substring(3);
+            ss.s3[s3Field] = value;
+        }
+        ss.dirty = true;
+        ss.testResult = null;
+        this.render();
+    },
+
+    async saveStorageSettings() {
+        const ss = this.state.settings.storageSettings;
+        ss.saving = true;
+        this.render();
+
+        try {
+            const payload = {
+                backend: ss.backend,
+                local_path: ss.localPath,
+                s3: {
+                    endpoint: ss.s3.endpoint,
+                    region: ss.s3.region,
+                    bucket: ss.s3.bucket,
+                    access_key: ss.s3.accessKey,
+                    path_style: ss.s3.pathStyle
+                }
+            };
+            // Only include secret key if it was changed
+            if (ss.s3.secretKey) {
+                payload.s3.secret_key = ss.s3.secretKey;
+            }
+
+            const res = await fetch('/_/api/settings/storage', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok) {
+                ss.originalBackend = ss.backend;
+                ss.dirty = false;
+                ss.s3.secretKey = ''; // Clear after save
+                alert('Storage settings saved successfully');
+            } else {
+                const err = await res.json();
+                alert('Failed to save: ' + (err.error || 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Failed to save storage settings: ' + e.message);
+        }
+
+        ss.saving = false;
+        this.render();
+    },
+
+    async testS3Connection() {
+        const ss = this.state.settings.storageSettings;
+        ss.testing = true;
+        ss.testResult = null;
+        this.render();
+
+        try {
+            const payload = {
+                endpoint: ss.s3.endpoint,
+                region: ss.s3.region,
+                bucket: ss.s3.bucket,
+                access_key: ss.s3.accessKey,
+                path_style: ss.s3.pathStyle
+            };
+            if (ss.s3.secretKey) {
+                payload.secret_key = ss.s3.secretKey;
+            }
+
+            const res = await fetch('/_/api/settings/storage/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await res.json();
+            if (res.ok && data.success) {
+                ss.testResult = { success: true, message: data.message || 'Connection successful' };
+            } else {
+                ss.testResult = { success: false, message: data.error || 'Connection failed' };
+            }
+        } catch (e) {
+            ss.testResult = { success: false, message: 'Test failed: ' + e.message };
+        }
+
+        ss.testing = false;
+        this.render();
+    },
+
+    cancelStorageSettings() {
+        // Reload from server to discard changes
+        this.loadStorageSettings();
     },
 
     startEditingTemplate(type) {
@@ -3046,6 +3201,7 @@ const App = {
                 ${this.renderApiKeysSection(apiKeys, expandedSections.apiKeys)}
                 ${this.renderAuthSection(auth, expandedSections.auth)}
                 ${this.renderOAuthSection(oauth, expandedSections.oauth)}
+                ${this.renderStorageSettingsSection(expandedSections.storage)}
                 ${this.renderTemplatesSection(templates, expandedSections.templates, editingTemplate)}
                 ${this.renderExportSection(expandedSections.export)}
             </div>
@@ -3517,6 +3673,142 @@ const App = {
             this.state.error = 'Failed to remove redirect URL';
             this.render();
         }
+    },
+
+    renderStorageSettingsSection(expanded) {
+        const ss = this.state.settings.storageSettings;
+        const backendChanged = ss.backend !== ss.originalBackend;
+
+        return `
+            <div class="settings-section">
+                <div class="section-header" onclick="App.toggleSettingsSection('storage')">
+                    <span class="section-toggle">${expanded ? '▼' : '▶'}</span>
+                    <h3>Storage</h3>
+                </div>
+                ${expanded ? `
+                    <div class="section-content">
+                        ${ss.loading ? '<div class="loading">Loading storage settings...</div>' : `
+                            <div class="storage-backend-selector">
+                                <label class="form-label">Storage Backend</label>
+                                <div class="radio-group">
+                                    <label class="radio-label">
+                                        <input type="radio" name="storage-backend" value="local"
+                                               ${ss.backend === 'local' ? 'checked' : ''}
+                                               onchange="App.updateStorageField('backend', 'local')">
+                                        <span>Local Filesystem</span>
+                                    </label>
+                                    <label class="radio-label">
+                                        <input type="radio" name="storage-backend" value="s3"
+                                               ${ss.backend === 's3' ? 'checked' : ''}
+                                               onchange="App.updateStorageField('backend', 's3')">
+                                        <span>S3-Compatible Storage</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            ${backendChanged ? `
+                                <div class="warning-banner">
+                                    <strong>Warning:</strong> Changing the storage backend will not migrate existing files.
+                                    Files stored in the previous backend will remain there and will not be accessible
+                                    through the new backend.
+                                </div>
+                            ` : ''}
+
+                            <div class="settings-subsection ${ss.backend !== 'local' ? 'disabled' : ''}">
+                                <h4>Local Settings</h4>
+                                <div class="form-group">
+                                    <label class="form-label">Storage Path</label>
+                                    <input type="text" class="form-input"
+                                           value="${this.escapeHtml(ss.localPath)}"
+                                           placeholder="./storage"
+                                           ${ss.backend !== 'local' ? 'disabled' : ''}
+                                           onchange="App.updateStorageField('localPath', this.value)">
+                                    <small class="text-muted">Directory path where files will be stored locally.</small>
+                                </div>
+                            </div>
+
+                            <div class="settings-subsection ${ss.backend !== 's3' ? 'disabled' : ''}">
+                                <h4>S3 Settings</h4>
+                                <div class="form-group">
+                                    <label class="form-label">Endpoint</label>
+                                    <input type="text" class="form-input"
+                                           value="${this.escapeHtml(ss.s3.endpoint)}"
+                                           placeholder="https://s3.amazonaws.com or https://your-minio:9000"
+                                           ${ss.backend !== 's3' ? 'disabled' : ''}
+                                           onchange="App.updateStorageField('s3.endpoint', this.value)">
+                                    <small class="text-muted">S3 endpoint URL. Leave empty for AWS S3.</small>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Region</label>
+                                    <input type="text" class="form-input"
+                                           value="${this.escapeHtml(ss.s3.region)}"
+                                           placeholder="us-east-1"
+                                           ${ss.backend !== 's3' ? 'disabled' : ''}
+                                           onchange="App.updateStorageField('s3.region', this.value)">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Bucket</label>
+                                    <input type="text" class="form-input"
+                                           value="${this.escapeHtml(ss.s3.bucket)}"
+                                           placeholder="my-bucket"
+                                           ${ss.backend !== 's3' ? 'disabled' : ''}
+                                           onchange="App.updateStorageField('s3.bucket', this.value)">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Access Key</label>
+                                    <input type="text" class="form-input"
+                                           value="${this.escapeHtml(ss.s3.accessKey)}"
+                                           placeholder="AKIAIOSFODNN7EXAMPLE"
+                                           ${ss.backend !== 's3' ? 'disabled' : ''}
+                                           onchange="App.updateStorageField('s3.accessKey', this.value)">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Secret Key</label>
+                                    <input type="password" class="form-input"
+                                           value="${ss.s3.secretKey}"
+                                           placeholder="${ss.s3.accessKey ? '••••••••••••••••' : 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'}"
+                                           ${ss.backend !== 's3' ? 'disabled' : ''}
+                                           onchange="App.updateStorageField('s3.secretKey', this.value)">
+                                    <small class="text-muted">Enter a new value to change the secret key.</small>
+                                </div>
+                                <div class="form-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox"
+                                               ${ss.s3.pathStyle ? 'checked' : ''}
+                                               ${ss.backend !== 's3' ? 'disabled' : ''}
+                                               onchange="App.updateStorageField('s3.pathStyle', this.checked)">
+                                        <span>Use Path-Style Addressing</span>
+                                    </label>
+                                    <small class="text-muted">Enable for MinIO or other S3-compatible services that require path-style URLs.</small>
+                                </div>
+
+                                ${ss.backend === 's3' ? `
+                                    <div class="form-group">
+                                        <button class="btn btn-secondary" onclick="App.testS3Connection()" ${ss.testing ? 'disabled' : ''}>
+                                            ${ss.testing ? 'Testing...' : 'Test Connection'}
+                                        </button>
+                                    </div>
+                                    ${ss.testResult ? `
+                                        <div class="test-result ${ss.testResult.success ? 'success' : 'error'}">
+                                            ${this.escapeHtml(ss.testResult.message)}
+                                        </div>
+                                    ` : ''}
+                                ` : ''}
+                            </div>
+
+                            ${ss.dirty ? `
+                                <div class="form-actions">
+                                    <button class="btn btn-secondary" onclick="App.cancelStorageSettings()">Cancel</button>
+                                    <button class="btn btn-primary" onclick="App.saveStorageSettings()" ${ss.saving ? 'disabled' : ''}>
+                                        ${ss.saving ? 'Saving...' : 'Save Changes'}
+                                    </button>
+                                </div>
+                            ` : ''}
+                        `}
+                    </div>
+                ` : ''}
+            </div>
+        `;
     },
 
     renderTemplatesSection(templates, expanded, editingTemplate) {
