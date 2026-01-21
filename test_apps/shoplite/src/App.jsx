@@ -42,18 +42,29 @@ function App() {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const [cartCount, setCartCount] = useState(0)
+  const [role, setRole] = useState(null)
 
   useEffect(() => {
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null)
+      if (session?.user) {
+        const userRole = await fetchUserRole(session.user.id)
+        setRole(userRole)
+      }
       setLoading(false)
     })
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      async (_event, session) => {
         setUser(session?.user ?? null)
+        if (session?.user) {
+          const userRole = await fetchUserRole(session.user.id)
+          setRole(userRole)
+        } else {
+          setRole(null)
+        }
       }
     )
 
@@ -80,8 +91,19 @@ function App() {
     }
   }
 
+  async function fetchUserRole(userId) {
+    const { data } = await supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', userId)
+      .maybeSingle()
+
+    return data?.role || 'customer'
+  }
+
   const authValue = {
     user,
+    role,
     loading,
     signIn: async (email, password) => {
       const { data, error } = await supabase.auth.signInWithPassword({
