@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"sync"
 
 	"github.com/markb/sblite/internal/storage/backend"
 )
@@ -12,6 +13,7 @@ type Service struct {
 	db      *sql.DB
 	backend backend.Backend
 	ctx     context.Context
+	mu      sync.RWMutex
 }
 
 // Config holds configuration for the storage service.
@@ -94,5 +96,52 @@ func (s *Service) DB() *sql.DB {
 
 // Backend returns the storage backend.
 func (s *Service) Backend() backend.Backend {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.backend
+}
+
+// Reconfigure switches the storage backend to use the new configuration.
+// If the new backend fails to initialize, the old backend remains active.
+func (s *Service) Reconfigure(cfg Config) error {
+	var newBackend backend.Backend
+	var err error
+
+	switch cfg.Backend {
+	case "s3":
+		s3Cfg := backend.S3Config{
+			Bucket:          cfg.S3Bucket,
+			Region:          cfg.S3Region,
+			Endpoint:        cfg.S3Endpoint,
+			AccessKeyID:     cfg.S3AccessKey,
+			SecretAccessKey: cfg.S3SecretKey,
+			UsePathStyle:    cfg.S3ForcePathStyle,
+		}
+		newBackend, err = backend.NewS3(context.Background(), s3Cfg)
+		if err != nil {
+			return &StorageError{StatusCode: 500, ErrorCode: "internal", Message: "Failed to initialize S3 storage: " + err.Error()}
+		}
+	default:
+		localPath := cfg.LocalPath
+		if localPath == "" {
+			localPath = "./storage"
+		}
+		newBackend, err = backend.NewLocal(localPath)
+		if err != nil {
+			return &StorageError{StatusCode: 500, ErrorCode: "internal", Message: "Failed to initialize local storage: " + err.Error()}
+		}
+	}
+
+	// Swap backends atomically
+	s.mu.Lock()
+	oldBackend := s.backend
+	s.backend = newBackend
+	s.mu.Unlock()
+
+	// Close old backend
+	if oldBackend != nil {
+		oldBackend.Close()
+	}
+
+	return nil
 }
