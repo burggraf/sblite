@@ -507,6 +507,8 @@ const App = {
                             <div class="nav-section-title">Database</div>
                             <a class="nav-item ${this.state.currentView === 'tables' ? 'active' : ''}"
                                onclick="App.navigate('tables')">Tables</a>
+                            <a class="nav-item ${this.state.currentView === 'policies' ? 'active' : ''}"
+                               onclick="App.navigate('policies')">Policies</a>
                         </div>
 
                         <div class="nav-section">
@@ -519,12 +521,6 @@ const App = {
                             <div class="nav-section-title">Storage</div>
                             <a class="nav-item ${this.state.currentView === 'storage' ? 'active' : ''}"
                                onclick="App.navigate('storage')">Buckets</a>
-                        </div>
-
-                        <div class="nav-section">
-                            <div class="nav-section-title">Security</div>
-                            <a class="nav-item ${this.state.currentView === 'policies' ? 'active' : ''}"
-                               onclick="App.navigate('policies')">Policies</a>
                         </div>
 
                         <div class="nav-section">
