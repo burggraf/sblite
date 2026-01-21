@@ -242,6 +242,7 @@ const App = {
             if (res.ok) {
                 this.state.authenticated = true;
                 this.state.error = null;
+                await this.loadTables();
                 this.render();
             } else {
                 this.state.error = 'Invalid password';
