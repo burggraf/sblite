@@ -117,6 +117,27 @@ function App() {
         email,
         password
       })
+
+      if (!error && data.user) {
+        // Check if this is the first user
+        const { count, error: countError } = await supabase
+          .from('auth_users')
+          .select('*', { count: 'exact', head: true })
+
+        if (countError) {
+          console.warn('Failed to check user count:', countError.message)
+        } else if (count === 1) {
+          // First user becomes admin
+          const { error: insertError } = await supabase
+            .from('user_roles')
+            .insert({ user_id: data.user.id, role: 'admin' })
+
+          if (!insertError) {
+            setRole('admin')
+          }
+        }
+      }
+
       return { data, error }
     },
     signOut: async () => {
