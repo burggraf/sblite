@@ -95,6 +95,22 @@ button {
   margin-left: 0.25rem;
 }
 
+.user-info {
+  font-size: 0.75rem;
+  color: var(--text-light);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.3;
+}
+
+.user-role {
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--secondary);
+}
+
 /* Buttons */
 .btn {
   display: inline-flex;
