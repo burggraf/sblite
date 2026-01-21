@@ -50,8 +50,9 @@ type Handler struct {
 	startTime        time.Time
 	serverConfig     *ServerConfig
 	jwtSecret        string
-	oauthReloadFunc  func()
-	onSiteURLChange  func(string)
+	oauthReloadFunc   func()
+	onSiteURLChange   func(string)
+	onStorageReload   func(*StorageConfig) error
 }
 
 // ServerConfig holds server configuration for display in settings.
@@ -113,6 +114,11 @@ func (h *Handler) SetStorageService(svc *storage.Service) {
 // SetRPCInterceptor sets the RPC interceptor for SQL statement handling.
 func (h *Handler) SetRPCInterceptor(i *rpc.Interceptor) {
 	h.rpcInterceptor = i
+}
+
+// SetStorageReloadFunc sets the callback function for storage configuration changes.
+func (h *Handler) SetStorageReloadFunc(f func(*StorageConfig) error) {
+	h.onStorageReload = f
 }
 
 // RegisterRoutes registers the dashboard routes.
@@ -203,6 +209,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			// Auth configuration settings routes
 			r.Get("/auth-config", h.handleGetAuthConfig)
 			r.Patch("/auth-config", h.handlePatchAuthConfig)
+			// Storage settings routes
+			r.Get("/storage", h.handleGetStorageSettings)
+			r.Patch("/storage", h.handleUpdateStorageSettings)
+			r.Post("/storage/test", h.handleTestStorageConnection)
 		})
 
 		// Export API routes (require auth)
