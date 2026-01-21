@@ -3714,27 +3714,28 @@ const App = {
                                 </div>
                             ` : ''}
 
-                            <div class="settings-subsection ${ss.backend !== 'local' ? 'disabled' : ''}">
+                            ${ss.backend === 'local' ? `
+                            <div class="settings-subsection">
                                 <h4>Local Settings</h4>
                                 <div class="form-group">
                                     <label class="form-label">Storage Path</label>
                                     <input type="text" class="form-input"
                                            value="${this.escapeHtml(ss.localPath)}"
                                            placeholder="./storage"
-                                           ${ss.backend !== 'local' ? 'disabled' : ''}
                                            onchange="App.updateStorageField('localPath', this.value)">
                                     <small class="text-muted">Directory path where files will be stored locally.</small>
                                 </div>
                             </div>
+                            ` : ''}
 
-                            <div class="settings-subsection ${ss.backend !== 's3' ? 'disabled' : ''}">
+                            ${ss.backend === 's3' ? `
+                            <div class="settings-subsection">
                                 <h4>S3 Settings</h4>
                                 <div class="form-group">
                                     <label class="form-label">Endpoint</label>
                                     <input type="text" class="form-input"
                                            value="${this.escapeHtml(ss.s3.endpoint)}"
                                            placeholder="https://s3.amazonaws.com or https://your-minio:9000"
-                                           ${ss.backend !== 's3' ? 'disabled' : ''}
                                            onchange="App.updateStorageField('s3.endpoint', this.value)">
                                     <small class="text-muted">S3 endpoint URL. Leave empty for AWS S3.</small>
                                 </div>
@@ -3743,7 +3744,6 @@ const App = {
                                     <input type="text" class="form-input"
                                            value="${this.escapeHtml(ss.s3.region)}"
                                            placeholder="us-east-1"
-                                           ${ss.backend !== 's3' ? 'disabled' : ''}
                                            onchange="App.updateStorageField('s3.region', this.value)">
                                 </div>
                                 <div class="form-group">
@@ -3751,7 +3751,6 @@ const App = {
                                     <input type="text" class="form-input"
                                            value="${this.escapeHtml(ss.s3.bucket)}"
                                            placeholder="my-bucket"
-                                           ${ss.backend !== 's3' ? 'disabled' : ''}
                                            onchange="App.updateStorageField('s3.bucket', this.value)">
                                 </div>
                                 <div class="form-group">
@@ -3759,7 +3758,6 @@ const App = {
                                     <input type="text" class="form-input"
                                            value="${this.escapeHtml(ss.s3.accessKey)}"
                                            placeholder="AKIAIOSFODNN7EXAMPLE"
-                                           ${ss.backend !== 's3' ? 'disabled' : ''}
                                            onchange="App.updateStorageField('s3.accessKey', this.value)">
                                 </div>
                                 <div class="form-group">
@@ -3767,7 +3765,6 @@ const App = {
                                     <input type="password" class="form-input"
                                            value="${ss.s3.secretKey}"
                                            placeholder="${ss.s3.accessKey ? '••••••••••••••••' : 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'}"
-                                           ${ss.backend !== 's3' ? 'disabled' : ''}
                                            onchange="App.updateStorageField('s3.secretKey', this.value)">
                                     <small class="text-muted">Enter a new value to change the secret key.</small>
                                 </div>
@@ -3775,26 +3772,23 @@ const App = {
                                     <label class="checkbox-label">
                                         <input type="checkbox"
                                                ${ss.s3.pathStyle ? 'checked' : ''}
-                                               ${ss.backend !== 's3' ? 'disabled' : ''}
                                                onchange="App.updateStorageField('s3.pathStyle', this.checked)">
                                         <span>Use Path-Style Addressing</span>
                                     </label>
                                     <small class="text-muted">Enable for MinIO or other S3-compatible services that require path-style URLs.</small>
                                 </div>
-
-                                ${ss.backend === 's3' ? `
-                                    <div class="form-group">
-                                        <button class="btn btn-secondary" onclick="App.testS3Connection()" ${ss.testing ? 'disabled' : ''}>
-                                            ${ss.testing ? 'Testing...' : 'Test Connection'}
-                                        </button>
+                                <div class="form-group">
+                                    <button class="btn btn-secondary" onclick="App.testS3Connection()" ${ss.testing ? 'disabled' : ''}>
+                                        ${ss.testing ? 'Testing...' : 'Test Connection'}
+                                    </button>
+                                </div>
+                                ${ss.testResult ? `
+                                    <div class="test-result ${ss.testResult.success ? 'success' : 'error'}">
+                                        ${this.escapeHtml(ss.testResult.message)}
                                     </div>
-                                    ${ss.testResult ? `
-                                        <div class="test-result ${ss.testResult.success ? 'success' : 'error'}">
-                                            ${this.escapeHtml(ss.testResult.message)}
-                                        </div>
-                                    ` : ''}
                                 ` : ''}
                             </div>
+                            ` : ''}
 
                             ${ss.dirty ? `
                                 <div class="form-actions">
