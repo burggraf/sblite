@@ -200,6 +200,18 @@ npm test         # Run all tests (server must be running)
 
 The edge runtime binary is stored in `<db-dir>/edge-runtime/` by default (relative to the database file). This can be overridden with `--edge-runtime-dir` or `SBLITE_EDGE_RUNTIME_DIR`.
 
+### Dashboard Storage Configuration
+
+Storage can be configured via the dashboard Settings → Storage section. Dashboard settings take priority over CLI flags and environment variables.
+
+**Configurable options:**
+- Backend type (local or S3)
+- Local storage path
+- S3 endpoint, region, bucket, credentials
+- Path-style addressing for S3-compatible services
+
+Changes take effect immediately without server restart (hot-reload).
+
 ## API Endpoints
 
 ### Authentication (`/auth/v1`)
@@ -326,6 +338,9 @@ Web dashboard accessible at `http://localhost:8080/_`
 | `/_/api/settings/oauth/redirect-urls` | GET | List allowed redirect URLs |
 | `/_/api/settings/oauth/redirect-urls` | POST | Add allowed redirect URL |
 | `/_/api/settings/oauth/redirect-urls` | DELETE | Remove allowed redirect URL |
+| `/_/api/settings/storage` | GET | Get storage configuration |
+| `/_/api/settings/storage` | PATCH | Update storage configuration (hot-reload) |
+| `/_/api/settings/storage/test` | POST | Test S3 connection |
 | `/_/api/functions` | GET | List all edge functions |
 | `/_/api/functions/status` | GET | Get edge runtime status |
 | `/_/api/functions/{name}` | GET | Get function details |
