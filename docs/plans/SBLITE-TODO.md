@@ -60,7 +60,7 @@ See `docs/plans/2025-01-19-postgresql-functions-design.md` for full phased desig
 
 ---
 
-### Realtime Subscriptions
+### ~~Realtime Subscriptions~~ ✅ COMPLETE
 WebSocket-based real-time updates when data changes. Core Supabase feature for reactive apps.
 
 ```javascript
@@ -71,14 +71,16 @@ supabase
   .subscribe()
 ```
 
-**Implementation approach:**
-- Add WebSocket endpoint (`/realtime/v1/`)
-- Track subscriptions per connection
-- Emit events on INSERT/UPDATE/DELETE via REST API hooks
-- Consider: polling fallback vs true WebSocket
+**Implemented:**
+- Phoenix Protocol v1.0.0 WebSocket endpoint (`/realtime/v1/websocket`)
+- Broadcast (ephemeral client-to-client messages)
+- Presence (user online state tracking)
+- Postgres Changes (INSERT/UPDATE/DELETE notifications via REST hooks)
+- Filter operators (eq, neq, gt, gte, lt, lte, in)
+- Dashboard stats endpoint for monitoring
+- Full E2E test suite
 
-**Complexity:** Large
-**Priority:** Medium (many apps don't need realtime)
+See `docs/realtime.md` for documentation.
 
 ---
 
@@ -216,7 +218,7 @@ TOTP-based second factor.
 |---------|----------|--------|--------|
 | PostgreSQL functions (RPC) | Medium | Medium-Very Large | Pending (phased) |
 | Vector search | Medium | Medium-Large | Pending |
-| Realtime subscriptions | Medium | Large | Pending |
+| Realtime subscriptions | Medium | Large | ✅ Complete |
 | File storage | Medium | Large | ✅ Complete |
 | Edge functions | Medium | Large | Pending |
 | Full-text search | Low | Medium | ✅ Complete |
@@ -229,7 +231,6 @@ TOTP-based second factor.
 
 ## Notes
 
-- sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth + Storage)
-- Realtime and Edge Functions are the biggest gaps vs full Supabase
-- Edge Functions achievable via embedding Supabase's open-source Edge Runtime
+- sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth + Storage + Realtime)
+- Vector search is the remaining major gap vs full Supabase
 - Remaining auth gaps are for enterprise/advanced use cases
