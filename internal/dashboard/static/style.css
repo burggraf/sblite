@@ -2550,20 +2550,26 @@ small.text-muted {
     padding: 0.625rem 1rem;
     cursor: pointer;
     transition: background 0.15s;
+    color: var(--text-primary);
 }
 
 .bucket-list-item:hover {
-    background: var(--hover);
+    background: var(--bg-tertiary);
 }
 
 .bucket-list-item.active {
-    background: var(--primary);
+    background: var(--accent);
+    color: white;
+}
+
+.bucket-list-item .policy-badge {
+    background: var(--accent);
     color: white;
 }
 
 .bucket-list-item.active .policy-badge {
     background: white;
-    color: var(--primary);
+    color: var(--accent);
 }
 
 .storage-bucket-name {
