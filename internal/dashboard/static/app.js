@@ -3012,6 +3012,113 @@ const App = {
         return this.getStoragePoliciesForBucket(bucketId).length;
     },
 
+    showStoragePolicyModal(editPolicy = null) {
+        const sp = this.state.settings.storageSettings.policies;
+        const bucket = sp.selectedBucket === '__all__' ? (sp.buckets[0]?.id || '') : sp.selectedBucket;
+
+        sp.showModal = true;
+        sp.modalStep = editPolicy ? 'form' : 'template';
+        sp.template = null;
+        sp.editingPolicy = editPolicy ? { ...editPolicy } : {
+            table_name: 'storage_objects',
+            policy_name: '',
+            command: 'SELECT',
+            using_expr: '',
+            check_expr: '',
+            enabled: true,
+            bucket: bucket
+        };
+        sp.error = null;
+        this.render();
+    },
+
+    async showEditStoragePolicyModal(policyId) {
+        try {
+            const res = await fetch(`/_/api/policies/${policyId}`);
+            if (res.ok) {
+                const policy = await res.json();
+                this.showStoragePolicyModal(policy);
+            }
+        } catch (e) {
+            console.error('Failed to load policy:', e);
+        }
+    },
+
+    closeStoragePolicyModal() {
+        const sp = this.state.settings.storageSettings.policies;
+        sp.showModal = false;
+        sp.editingPolicy = null;
+        sp.template = null;
+        sp.error = null;
+        this.render();
+    },
+
+    selectStoragePolicyTemplate(template) {
+        const sp = this.state.settings.storageSettings.policies;
+        sp.template = template;
+
+        const bucket = sp.editingPolicy.bucket;
+        const templates = {
+            'public_read': {
+                policy_name: `${bucket}_public_read`,
+                command: 'SELECT',
+                using_expr: `bucket_id = '${bucket}'`,
+                check_expr: ''
+            },
+            'authenticated_read': {
+                policy_name: `${bucket}_authenticated_read`,
+                command: 'SELECT',
+                using_expr: `bucket_id = '${bucket}' AND auth.uid() IS NOT NULL`,
+                check_expr: ''
+            },
+            'authenticated_upload': {
+                policy_name: `${bucket}_authenticated_upload`,
+                command: 'INSERT',
+                using_expr: '',
+                check_expr: `bucket_id = '${bucket}' AND auth.uid() IS NOT NULL`
+            },
+            'owner_only': {
+                policy_name: `${bucket}_owner_access`,
+                command: 'ALL',
+                using_expr: `bucket_id = '${bucket}' AND storage.foldername(name) = auth.uid()`,
+                check_expr: `bucket_id = '${bucket}' AND storage.foldername(name) = auth.uid()`
+            },
+            'custom': {
+                policy_name: '',
+                command: 'SELECT',
+                using_expr: `bucket_id = '${bucket}'`,
+                check_expr: ''
+            }
+        };
+
+        const t = templates[template];
+        if (t) {
+            sp.editingPolicy = { ...sp.editingPolicy, ...t };
+        }
+
+        sp.modalStep = 'form';
+        this.render();
+    },
+
+    updateStoragePolicyField(field, value) {
+        const sp = this.state.settings.storageSettings.policies;
+        sp.editingPolicy[field] = value;
+        // Don't re-render to avoid losing focus, just update preview if visible
+        const previewEl = document.querySelector('.storage-policy-preview code');
+        if (previewEl) {
+            previewEl.textContent = this.generateStoragePolicyPreview();
+        }
+    },
+
+    generateStoragePolicyPreview() {
+        const p = this.state.settings.storageSettings.policies.editingPolicy;
+        if (!p) return '';
+        let sql = `CREATE POLICY "${p.policy_name}" ON storage_objects FOR ${p.command}`;
+        if (p.using_expr) sql += `\n  USING (${p.using_expr})`;
+        if (p.check_expr) sql += `\n  WITH CHECK (${p.check_expr})`;
+        return sql + ';';
+    },
+
     async loadMailSettings() {
         this.state.settings.mailSettings.loading = true;
         this.render();
