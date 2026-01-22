@@ -125,9 +125,6 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 	s.rpcHandler = rpc.NewHandler(s.rpcExecutor, s.rpcStore)
 	s.rpcInterceptor = rpc.NewInterceptor(s.rpcStore)
 
-	// Initialize mail services
-	s.initMail()
-
 	// Initialize dashboard handler
 	s.dashboardHandler = dashboard.NewHandler(database.DB, cfg.MigrationsDir)
 	s.dashboardHandler.SetJWTSecret(cfg.JWTSecret)
@@ -135,8 +132,12 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 	// Set RPC interceptor on dashboard handler
 	s.dashboardHandler.SetRPCInterceptor(s.rpcInterceptor)
 
-	// Apply persisted settings from dashboard (e.g., SiteURL)
+	// Apply persisted settings from dashboard (e.g., SiteURL, mail mode)
+	// This must happen before initMail() so dashboard settings are loaded
 	s.applyPersistedSettings()
+
+	// Initialize mail services (after persisted settings are loaded)
+	s.initMail()
 
 	// Set up callback to update mail config when SiteURL changes via dashboard
 	s.dashboardHandler.SetOnSiteURLChange(func(siteURL string) {
