@@ -1,4 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+
+const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2MB
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 
 function ProductFormModal({ isOpen, onClose, product, onSave }) {
   const [name, setName] = useState('')
@@ -9,6 +12,12 @@ function ProductFormModal({ isOpen, onClose, product, onSave }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  // Image upload state
+  const [imageFile, setImageFile] = useState(null)
+  const [imagePreview, setImagePreview] = useState('')
+  const [imageError, setImageError] = useState('')
+  const fileInputRef = useRef(null)
+
   const isEditing = !!product
 
   useEffect(() => {
@@ -18,17 +27,72 @@ function ProductFormModal({ isOpen, onClose, product, onSave }) {
       setPrice(product.price || '')
       setImageUrl(product.image_url || '')
       setStock(product.stock?.toString() || '0')
+      // Set preview to existing image if it exists
+      setImagePreview(product.image_url || '')
     } else {
       setName('')
       setDescription('')
       setPrice('')
       setImageUrl('')
       setStock('0')
+      setImagePreview('')
     }
     setError('')
+    setImageFile(null)
+    setImageError('')
   }, [product, isOpen])
 
+  // Cleanup blob URL on unmount or when preview changes
+  useEffect(() => {
+    return () => {
+      if (imagePreview && imagePreview.startsWith('blob:')) {
+        URL.revokeObjectURL(imagePreview)
+      }
+    }
+  }, [imagePreview])
+
   if (!isOpen) return null
+
+  function handleFileSelect(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setImageError('')
+
+    // Validate file type
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setImageError('Please select a valid image (JPEG, PNG, GIF, or WebP)')
+      return
+    }
+
+    // Validate file size
+    if (file.size > MAX_FILE_SIZE) {
+      setImageError('Image must be less than 2MB')
+      return
+    }
+
+    // Create preview
+    const previewUrl = URL.createObjectURL(file)
+    setImageFile(file)
+    setImagePreview(previewUrl)
+    setImageUrl('') // Clear URL field when file is selected
+  }
+
+  function handleRemoveImage() {
+    if (imagePreview && imagePreview.startsWith('blob:')) {
+      URL.revokeObjectURL(imagePreview)
+    }
+    setImageFile(null)
+    setImagePreview(isEditing ? (product?.image_url || '') : '')
+    setImageError('')
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  function handleChooseFile() {
+    fileInputRef.current?.click()
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -55,8 +119,9 @@ function ProductFormModal({ isOpen, onClose, product, onSave }) {
         name: name.trim(),
         description: description.trim(),
         price: price,
-        image_url: imageUrl.trim() || 'https://placehold.co/400x300?text=Product',
-        stock: parseInt(stock)
+        image_url: imageUrl.trim() || null, // Will be overwritten if file uploaded
+        stock: parseInt(stock),
+        imageFile: imageFile // Pass file to parent for upload
       })
       onClose()
     } catch (err) {
@@ -65,6 +130,9 @@ function ProductFormModal({ isOpen, onClose, product, onSave }) {
       setSaving(false)
     }
   }
+
+  const hasFile = !!imageFile
+  const showPreview = imagePreview && !imagePreview.includes('placehold.co')
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -129,8 +197,54 @@ function ProductFormModal({ isOpen, onClose, product, onSave }) {
             </div>
           </div>
 
-          <div className="form-group">
-            <label className="form-label" htmlFor="imageUrl">Image URL</label>
+          {/* Image Upload Section */}
+          <div className="image-upload-section">
+            <label className="form-label">Product Image</label>
+
+            {showPreview && (
+              <div className="image-upload-preview">
+                <img src={imagePreview} alt="Preview" />
+                <button
+                  type="button"
+                  className="remove-image"
+                  onClick={handleRemoveImage}
+                  title="Remove image"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              onChange={handleFileSelect}
+              className="image-upload-input"
+            />
+
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm image-upload-button"
+              onClick={handleChooseFile}
+            >
+              {hasFile ? 'Change Image' : 'Choose Image'}
+            </button>
+
+            {hasFile && (
+              <div className="image-upload-info">
+                {imageFile.name} ({(imageFile.size / 1024).toFixed(1)} KB)
+              </div>
+            )}
+
+            {imageError && (
+              <div className="image-upload-error">{imageError}</div>
+            )}
+          </div>
+
+          {/* Image URL fallback */}
+          <div className={`form-group ${hasFile ? 'disabled' : ''}`}>
+            <label className="form-label" htmlFor="imageUrl">Or enter Image URL</label>
             <input
               id="imageUrl"
               type="text"
@@ -138,6 +252,7 @@ function ProductFormModal({ isOpen, onClose, product, onSave }) {
               value={imageUrl}
               onChange={e => setImageUrl(e.target.value)}
               placeholder="https://example.com/image.jpg"
+              disabled={hasFile}
             />
           </div>
 
