@@ -344,7 +344,11 @@ func (c *Conn) handlePresence(msg *Message) {
 		return
 	}
 
+	// Check for event type in both "event" and "type" fields
 	eventType, _ := msg.Payload["event"].(string)
+	if eventType == "" {
+		eventType, _ = msg.Payload["type"].(string)
+	}
 	payload, _ := msg.Payload["payload"].(map[string]any)
 
 	switch eventType {
@@ -353,6 +357,14 @@ func (c *Conn) handlePresence(msg *Message) {
 		joins := map[string][]map[string]any{sub.presenceConfig.Key: {meta}}
 		diff := NewPresenceDiffMessage(msg.Topic, sub.joinRef, joins, map[string][]map[string]any{})
 		c.broadcastToChannel(ch, diff, "")
+	case "untrack":
+		leaves := presence.Untrack(sub.presenceConfig.Key, c.id)
+		if len(leaves) > 0 {
+			diff := NewPresenceDiffMessage(msg.Topic, sub.joinRef,
+				map[string][]map[string]any{},
+				map[string][]map[string]any{sub.presenceConfig.Key: leaves})
+			c.broadcastToChannel(ch, diff, "")
+		}
 	}
 }
 

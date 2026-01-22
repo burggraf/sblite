@@ -512,7 +512,7 @@ Current implementation limitations compared to Supabase:
 | Presence | Supported | Full support |
 | Postgres Changes | Supported | Triggered by REST API changes |
 | Private channels | Supported | Requires JWT authentication |
-| RLS integration | Partial | Supported for private channels |
+| RLS integration | Supported | Full RLS enforcement for postgres_changes |
 | Multiplexing | Supported | Multiple channels per connection |
 | Binary messages | Not supported | JSON only |
 | Rate limiting | Not implemented | No connection/message limits |
@@ -523,6 +523,30 @@ Current implementation limitations compared to Supabase:
 - Changes are detected via REST API hooks, not database triggers
 - Changes made directly to SQLite (bypassing the REST API) will not trigger events
 - No support for listening to changes in system tables
+
+### Row Level Security (RLS)
+
+Postgres Changes events respect Row Level Security policies. When a database change occurs:
+
+1. **RLS-enabled tables**: Only subscribers whose JWT claims satisfy the table's SELECT policies receive the event
+2. **RLS-disabled tables**: All subscribers to the table receive the event
+3. **Service role**: Connections authenticated with `service_role` bypass RLS checks
+
+This ensures that users only receive notifications for data they're authorized to see.
+
+```typescript
+// Subscribe to changes - only receives events that pass RLS
+const channel = supabase.channel('secure-updates')
+  .on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'user_data' },
+    (payload) => {
+      // Only receives changes for rows the current user can SELECT
+      console.log('Authorized change:', payload)
+    }
+  )
+  .subscribe()
+```
 
 ## Migration to Supabase
 

@@ -595,22 +595,21 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusInternalServerError, "insert_error", err.Error())
 			return
 		}
-		if returnRepresentation {
-			// For upsert, we may not get a new ID if it was an update
-			// Try to get the ID from the data itself
-			if id, ok := data["id"]; ok {
-				switch v := id.(type) {
-				case float64:
-					insertedIDs = append(insertedIDs, int64(v))
-				case int64:
-					insertedIDs = append(insertedIDs, v)
-				case int:
-					insertedIDs = append(insertedIDs, int64(v))
-				}
-			} else {
-				lastID, _ := result.LastInsertId()
-				insertedIDs = append(insertedIDs, lastID)
+		// Always collect IDs for realtime notifications
+		// For upsert, we may not get a new ID if it was an update
+		// Try to get the ID from the data itself
+		if id, ok := data["id"]; ok {
+			switch v := id.(type) {
+			case float64:
+				insertedIDs = append(insertedIDs, int64(v))
+			case int64:
+				insertedIDs = append(insertedIDs, v)
+			case int:
+				insertedIDs = append(insertedIDs, int64(v))
 			}
+		} else {
+			lastID, _ := result.LastInsertId()
+			insertedIDs = append(insertedIDs, lastID)
 		}
 	}
 

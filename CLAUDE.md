@@ -272,6 +272,21 @@ Changes take effect immediately without server restart (hot-reload).
 | `/functions/v1/{name}` | PATCH | Invoke function with PATCH method |
 | `/functions/v1/{name}` | DELETE | Invoke function with DELETE method |
 
+### Realtime API (`/realtime/v1`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/realtime/v1/websocket` | WebSocket | WebSocket connection for realtime events |
+
+**Requires `--realtime` flag to enable.**
+
+Realtime features:
+- **Broadcast** - Low-latency pub/sub messaging between clients
+- **Presence** - Track and sync online users and their state
+- **Postgres Changes** - Receive database change notifications with RLS enforcement
+
+See `docs/realtime.md` for detailed documentation.
+
 ### Admin API (`/admin/v1`)
 
 | Endpoint | Method | Description |

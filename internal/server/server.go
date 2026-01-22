@@ -563,6 +563,9 @@ func (s *Server) EnableRealtime() {
 	// Set notifier on REST handler
 	if s.restHandler != nil {
 		s.restHandler.SetRealtimeNotifier(s.realtimeService)
+		log.Debug("realtime: notifier set on REST handler")
+	} else {
+		log.Warn("realtime: REST handler is nil, cannot set notifier")
 	}
 
 	// Set realtime service on dashboard handler for stats API

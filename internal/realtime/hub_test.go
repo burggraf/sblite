@@ -211,3 +211,67 @@ func TestHubStatsChannelDetails(t *testing.T) {
 		t.Errorf("expected 0 subscribers for ch2, got %d", ch2Stats.Subscribers)
 	}
 }
+
+func TestBuildAuthContext(t *testing.T) {
+	tests := []struct {
+		name      string
+		claims    map[string]any
+		expectUID string
+		expectRole string
+		expectBypass bool
+	}{
+		{
+			name:   "nil claims",
+			claims: nil,
+			expectUID: "",
+			expectRole: "",
+			expectBypass: false,
+		},
+		{
+			name: "authenticated user",
+			claims: map[string]any{
+				"sub":   "user-123",
+				"email": "test@example.com",
+				"role":  "authenticated",
+			},
+			expectUID: "user-123",
+			expectRole: "authenticated",
+			expectBypass: false,
+		},
+		{
+			name: "service_role bypasses RLS",
+			claims: map[string]any{
+				"sub":  "service",
+				"role": "service_role",
+			},
+			expectUID: "service",
+			expectRole: "service_role",
+			expectBypass: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := buildAuthContext(tt.claims)
+			if ctx.UserID != tt.expectUID {
+				t.Errorf("UserID: expected %q, got %q", tt.expectUID, ctx.UserID)
+			}
+			if ctx.Role != tt.expectRole {
+				t.Errorf("Role: expected %q, got %q", tt.expectRole, ctx.Role)
+			}
+			if ctx.BypassRLS != tt.expectBypass {
+				t.Errorf("BypassRLS: expected %v, got %v", tt.expectBypass, ctx.BypassRLS)
+			}
+		})
+	}
+}
+
+func TestCheckRLSAccessNoRLSService(t *testing.T) {
+	// Hub without RLS service should allow all
+	hub := NewHub(nil, nil, "test-secret")
+
+	allowed := hub.checkRLSAccess("test_table", map[string]any{"id": 1}, nil)
+	if !allowed {
+		t.Error("expected access to be allowed when no RLS service")
+	}
+}

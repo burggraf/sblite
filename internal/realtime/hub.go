@@ -3,9 +3,13 @@ package realtime
 
 import (
 	"database/sql"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/rls"
 )
 
@@ -83,10 +87,30 @@ func (h *Hub) unregisterConn(conn *Conn) {
 
 	delete(h.connections, conn.id)
 
-	// Remove from all channels
+	// Remove from all channels and handle presence leave
 	for topic, ch := range h.channels {
 		ch.mu.Lock()
-		if _, ok := ch.subscribers[conn.id]; ok {
+		sub, ok := ch.subscribers[conn.id]
+		if ok {
+			// Handle presence leave if this subscriber had presence
+			if presence := ch.presence; presence != nil && sub.presenceConfig.Key != "" {
+				leaves := presence.UntrackConn(conn.id)
+				if len(leaves) > 0 {
+					// Broadcast presence_diff to remaining subscribers
+					for key, metas := range leaves {
+						diff := NewPresenceDiffMessage(topic, sub.joinRef,
+							map[string][]map[string]any{},
+							map[string][]map[string]any{key: metas})
+						// Send to all remaining subscribers
+						for _, otherSub := range ch.subscribers {
+							if otherSub.conn.id != conn.id {
+								otherSub.conn.Send(diff)
+							}
+						}
+					}
+				}
+			}
+
 			delete(ch.subscribers, conn.id)
 			// Clean up empty channels
 			if len(ch.subscribers) == 0 {
@@ -149,15 +173,35 @@ func (h *Hub) broadcastChange(schema, table, eventType string, oldRow, newRow ma
 		Errors:          []string{},
 	}
 
+	log.Debug("realtime: broadcastChange", "schema", schema, "table", table, "eventType", eventType)
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
+	log.Debug("realtime: checking channels", "count", len(h.channels))
+
 	for _, ch := range h.channels {
-		for _, sub := range ch.getSubscribers() {
+		subs := ch.getSubscribers()
+		for _, sub := range subs {
+			log.Debug("realtime: checking subscriber", "topic", ch.topic, "pgChanges", len(sub.pgChanges))
 			matchingIDs := h.getMatchingSubscriptionIDs(sub.pgChanges, event)
 			if len(matchingIDs) > 0 {
-				msg := NewPostgresChangeMessage(ch.topic, sub.joinRef, matchingIDs, event)
-				sub.conn.Send(msg)
+				// Check RLS access for this subscriber
+				// For INSERT/UPDATE, check against the new row
+				// For DELETE, check against the old row
+				rowToCheck := newRow
+				if eventType == "DELETE" {
+					rowToCheck = oldRow
+				}
+
+				// Only send if subscriber passes RLS check
+				if h.checkRLSAccess(table, rowToCheck, sub.conn.claims) {
+					msg := NewPostgresChangeMessage(ch.topic, sub.joinRef, matchingIDs, event)
+					sub.conn.Send(msg)
+					log.Debug("realtime: sent postgres_changes", "topic", ch.topic)
+				} else {
+					log.Debug("realtime: RLS check failed", "topic", ch.topic)
+				}
 			}
 		}
 	}
@@ -193,5 +237,127 @@ func (h *Hub) matchesSubscription(sub PostgresChangeSub, event ChangeEvent) bool
 		return matchesFilter(sub.Filter, event.New, event.Old)
 	}
 	return true
+}
+
+// checkRLSAccess checks if a subscriber can access a row based on RLS policies
+func (h *Hub) checkRLSAccess(tableName string, row map[string]any, claims jwt.MapClaims) bool {
+	if h.rlsService == nil {
+		return true // No RLS service, allow all
+	}
+
+	// Check if RLS is enabled for this table
+	enabled, err := h.rlsService.IsRLSEnabled(tableName)
+	if err != nil {
+		log.Error("realtime: failed to check RLS status", "table", tableName, "error", err.Error())
+		return false // Fail closed
+	}
+	if !enabled {
+		return true // RLS not enabled, allow all
+	}
+
+	// Get SELECT policies for the table
+	policies, err := h.rlsService.GetPoliciesForTable(tableName)
+	if err != nil {
+		log.Error("realtime: failed to get RLS policies", "table", tableName, "error", err.Error())
+		return false // Fail closed
+	}
+
+	if len(policies) == 0 {
+		return true // No policies, allow all
+	}
+
+	// Build auth context from JWT claims
+	ctx := buildAuthContext(claims)
+	if ctx.BypassRLS {
+		return true // service_role bypasses RLS
+	}
+
+	// Collect SELECT policy conditions
+	var conditions []string
+	for _, p := range policies {
+		if p.Command == "SELECT" || p.Command == "ALL" {
+			if p.UsingExpr != "" {
+				substituted := rls.SubstituteAuthFunctions(p.UsingExpr, ctx)
+				conditions = append(conditions, "("+substituted+")")
+			}
+		}
+	}
+
+	if len(conditions) == 0 {
+		return true // No SELECT policies
+	}
+
+	// Build a test query using the row data
+	return h.evaluateRLSCondition(strings.Join(conditions, " AND "), row)
+}
+
+// buildAuthContext creates an RLS AuthContext from JWT claims
+func buildAuthContext(claims jwt.MapClaims) *rls.AuthContext {
+	ctx := &rls.AuthContext{
+		Claims: make(map[string]any),
+	}
+
+	if claims == nil {
+		return ctx
+	}
+
+	// Extract standard claims
+	if sub, ok := claims["sub"].(string); ok {
+		ctx.UserID = sub
+	}
+	if email, ok := claims["email"].(string); ok {
+		ctx.Email = email
+	}
+	if role, ok := claims["role"].(string); ok {
+		ctx.Role = role
+		// service_role bypasses RLS
+		if role == "service_role" {
+			ctx.BypassRLS = true
+		}
+	}
+
+	// Copy all claims for auth.jwt()->>'key' access
+	for k, v := range claims {
+		ctx.Claims[k] = v
+	}
+
+	return ctx
+}
+
+// evaluateRLSCondition evaluates an RLS condition against a row
+func (h *Hub) evaluateRLSCondition(condition string, row map[string]any) bool {
+	if h.db == nil || len(row) == 0 {
+		return false
+	}
+
+	// Build column list and values for the test query
+	var columns []string
+	var placeholders []string
+	var values []any
+
+	for col, val := range row {
+		columns = append(columns, col)
+		placeholders = append(placeholders, "? AS "+col)
+		values = append(values, val)
+	}
+
+	// Build a query that tests if the row satisfies the condition
+	// SELECT 1 FROM (SELECT val1 AS col1, val2 AS col2, ...) WHERE condition
+	query := fmt.Sprintf(
+		"SELECT 1 FROM (SELECT %s) WHERE %s",
+		strings.Join(placeholders, ", "),
+		condition,
+	)
+
+	// Execute the query
+	rows, err := h.db.Query(query, values...)
+	if err != nil {
+		log.Debug("realtime: RLS condition evaluation failed", "error", err.Error(), "condition", condition)
+		return false // Fail closed on query errors
+	}
+	defer rows.Close()
+
+	// If we get any rows, the condition is satisfied
+	return rows.Next()
 }
 

@@ -4,6 +4,7 @@ package realtime
 import (
 	"database/sql"
 
+	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/rls"
 )
 
@@ -46,5 +47,6 @@ func (s *Service) Stats() any {
 
 // NotifyChange broadcasts a database change to subscribers
 func (s *Service) NotifyChange(schema, table, eventType string, oldRow, newRow map[string]any) {
+	log.Debug("realtime: NotifyChange called", "schema", schema, "table", table, "eventType", eventType)
 	s.hub.broadcastChange(schema, table, eventType, oldRow, newRow)
 }
