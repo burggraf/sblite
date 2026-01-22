@@ -32,7 +32,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | PostgreSQL Functions (RPC) | :white_check_mark: |
 | Edge Functions | :white_check_mark: |
 | API Docs Dashboard | :white_check_mark: |
-| Realtime subscriptions | :construction: Planned |
+| Realtime subscriptions (WebSocket) | :white_check_mark: |
 | File storage | :white_check_mark: |
 
 ## Quick Start
@@ -55,6 +55,7 @@ go build -o sblite
 ./sblite serve                        # Default: localhost:8080
 ./sblite serve --port 3000            # Custom port
 ./sblite serve --host 0.0.0.0         # Bind to all interfaces
+./sblite serve --realtime             # Enable WebSocket realtime subscriptions
 ./sblite serve --mail-mode=catch      # Development: captures emails, web UI at /_/mail
 ./sblite serve --mail-mode=smtp       # Production: sends real emails via SMTP
 ```
@@ -213,6 +214,14 @@ See [Email System Documentation](docs/EMAIL.md) for detailed configuration and u
 | `/storage/v1/object/copy` | POST | Copy a file |
 | `/storage/v1/object/move` | POST | Move/rename a file |
 
+### Realtime API (`/realtime/v1`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/realtime/v1/websocket` | WS | WebSocket endpoint for realtime subscriptions |
+
+Enable with `--realtime` flag. Supports Broadcast, Presence, and Postgres Changes. See [Realtime Documentation](docs/realtime.md).
+
 ### Dashboard (`/_`)
 
 | Endpoint | Method | Description |
@@ -250,6 +259,7 @@ See [Email System Documentation](docs/EMAIL.md) for detailed configuration and u
 - [Storage API](docs/STORAGE.md) - File uploads, downloads, buckets, and public access
 - [Edge Functions](docs/edge-functions.md) - Serverless TypeScript/JavaScript functions with secrets and configuration
 - [API Docs Dashboard](docs/api-docs-dashboard.md) - Auto-generated API documentation with code examples
+- [Realtime](docs/realtime.md) - WebSocket subscriptions for Broadcast, Presence, and Postgres Changes
 
 ### Design & Implementation
 - [Design Document](docs/plans/2026-01-16-supabase-lite-design.md) - Architecture, schema design, and roadmap
@@ -293,6 +303,7 @@ npm test         # Run all tests
 │  /auth/v1/*     →  Auth Service     │
 │  /rest/v1/*     →  REST Handler     │
 │  /storage/v1/*  →  Storage Service  │
+│  /realtime/v1/* →  Realtime (WS)    │
 │  /_/*           →  Web Dashboard    │
 │  /_/mail/*      →  Mail Viewer      │
 ├─────────────────────────────────────┤

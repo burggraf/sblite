@@ -540,9 +540,10 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Per-function JWT verification toggle
 - Full-text search (SQLite FTS5)
 - PostgreSQL Functions (RPC) - SQL functions via supabase.rpc()
+- Realtime subscriptions (WebSocket) - Broadcast, Presence, Postgres Changes
 
 ### Planned
-- Realtime subscriptions (WebSocket)
+- Vector search (pgvector-compatible)
 
 See `docs/plans/SBLITE-TODO.md` for detailed tracking.
 
