@@ -144,6 +144,13 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
+		// Enable realtime WebSocket support if requested
+		realtimeEnabled, _ := cmd.Flags().GetBool("realtime")
+		if realtimeEnabled {
+			srv.EnableRealtime()
+			log.Info("realtime enabled", "realtime_api", "ws://"+addr+"/realtime/v1")
+		}
+
 		// Handle graceful shutdown for all modes
 		go func() {
 			sigCh := make(chan os.Signal, 1)
@@ -431,4 +438,7 @@ func init() {
 	serveCmd.Flags().String("functions-dir", "./functions", "Path to functions directory")
 	serveCmd.Flags().Int("functions-port", 8081, "Internal port for edge runtime")
 	serveCmd.Flags().String("edge-runtime-dir", "", "Directory for edge runtime binary (default: <db-dir>/edge-runtime/)")
+
+	// Realtime flags
+	serveCmd.Flags().Bool("realtime", false, "Enable realtime WebSocket support")
 }
