@@ -53,6 +53,7 @@ type Handler struct {
 	oauthReloadFunc   func()
 	onSiteURLChange   func(string)
 	onStorageReload   func(*StorageConfig) error
+	onMailReload      func(*MailConfig) error
 }
 
 // ServerConfig holds server configuration for display in settings.
@@ -119,6 +120,11 @@ func (h *Handler) SetRPCInterceptor(i *rpc.Interceptor) {
 // SetStorageReloadFunc sets the callback function for storage configuration changes.
 func (h *Handler) SetStorageReloadFunc(f func(*StorageConfig) error) {
 	h.onStorageReload = f
+}
+
+// SetMailReloadFunc sets the callback function for mail configuration changes.
+func (h *Handler) SetMailReloadFunc(f func(*MailConfig) error) {
+	h.onMailReload = f
 }
 
 // RegisterRoutes registers the dashboard routes.
@@ -213,6 +219,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/storage", h.handleGetStorageSettings)
 			r.Patch("/storage", h.handleUpdateStorageSettings)
 			r.Post("/storage/test", h.handleTestStorageConnection)
+			// Mail settings routes
+			r.Get("/mail", h.handleGetMailSettings)
+			r.Patch("/mail", h.handleUpdateMailSettings)
 		})
 
 		// Export API routes (require auth)
