@@ -2920,6 +2920,7 @@ const App = {
         // Load storage settings when section is expanded
         if (section === 'storage' && this.state.settings.expandedSections.storage) {
             this.loadStorageSettings();
+            this.loadStoragePolicies();
         }
         // Load mail settings when section is expanded
         if (section === 'email' && this.state.settings.expandedSections.email) {
@@ -2956,6 +2957,59 @@ const App = {
 
         this.state.settings.storageSettings.loading = false;
         this.render();
+    },
+
+    async loadStoragePolicies() {
+        const sp = this.state.settings.storageSettings.policies;
+        sp.loading = true;
+        this.render();
+
+        try {
+            // Load buckets
+            const bucketsRes = await fetch('/_/api/storage/buckets');
+            if (bucketsRes.ok) {
+                sp.buckets = await bucketsRes.json();
+            }
+
+            // Load all storage_objects policies
+            const policiesRes = await fetch('/_/api/policies?table=storage_objects');
+            if (policiesRes.ok) {
+                const data = await policiesRes.json();
+                sp.list = data.policies || [];
+            }
+
+            // Auto-select first bucket if none selected
+            if (!sp.selectedBucket && sp.buckets.length > 0) {
+                sp.selectedBucket = sp.buckets[0].id;
+            }
+        } catch (e) {
+            console.error('Failed to load storage policies:', e);
+            sp.error = 'Failed to load storage policies';
+        }
+
+        sp.loading = false;
+        this.render();
+    },
+
+    selectStorageBucket(bucketId) {
+        this.state.settings.storageSettings.policies.selectedBucket = bucketId;
+        this.render();
+    },
+
+    getStoragePoliciesForBucket(bucketId) {
+        const { list } = this.state.settings.storageSettings.policies;
+        if (bucketId === '__all__') {
+            return list;
+        }
+        // Filter policies that reference this bucket
+        return list.filter(p => {
+            const expr = (p.using_expr || '') + (p.check_expr || '');
+            return expr.includes(`'${bucketId}'`) || expr.includes(`"${bucketId}"`);
+        });
+    },
+
+    getStoragePolicyCountForBucket(bucketId) {
+        return this.getStoragePoliciesForBucket(bucketId).length;
     },
 
     async loadMailSettings() {
