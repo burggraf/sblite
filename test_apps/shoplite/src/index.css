@@ -489,7 +489,14 @@ button {
 
 /* Page Header */
 .page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   padding: 2rem 0 1rem;
+}
+
+.page-header .page-title {
+  margin: 0;
 }
 
 .page-title {
@@ -585,4 +592,64 @@ button {
 .modal-footer {
   display: flex;
   justify-content: center;
+}
+
+/* Product Form Modal */
+.product-form-modal {
+  max-width: 500px;
+}
+
+.product-form-modal .modal-title {
+  text-align: left;
+  margin-bottom: 1.5rem;
+}
+
+.form-textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+/* Delete Confirm Modal */
+.delete-confirm-modal {
+  max-width: 400px;
+}
+
+.delete-confirm-modal .modal-title {
+  text-align: left;
+  margin-bottom: 1rem;
+}
+
+.delete-confirm-modal .modal-body {
+  text-align: left;
+  margin-bottom: 0;
+}
+
+.text-muted {
+  color: var(--text-light);
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
+
+/* Admin Controls on Product Card */
+.admin-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.admin-controls .btn {
+  flex: 1;
 }
