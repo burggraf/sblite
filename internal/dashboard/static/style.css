@@ -2646,6 +2646,55 @@ small.text-muted {
     font-style: normal;
 }
 
+/* Storage Policy Modal Templates */
+.storage-policy-modal {
+    max-width: 550px;
+}
+
+.template-options {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.template-option {
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.template-option:hover {
+    border-color: var(--primary);
+    background: var(--hover);
+}
+
+.template-name {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.template-desc {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+.storage-policy-preview {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+}
+
+.storage-policy-preview pre {
+    background: var(--code-bg);
+    padding: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.8125rem;
+    overflow-x: auto;
+}
+
 /* =====================
    Edge Functions Styles
    ===================== */
