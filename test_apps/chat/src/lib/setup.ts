@@ -41,11 +41,11 @@ export async function ensureTodosTable(): Promise<{ success: boolean; error?: st
       body: JSON.stringify({
         name: 'todos',
         columns: [
-          { name: 'id', type: 'uuid', primary_key: true },
+          { name: 'id', type: 'uuid', primary: true, default: 'gen_random_uuid()' },
           { name: 'title', type: 'text', nullable: false },
           { name: 'completed', type: 'integer', default: '0' },
           { name: 'author', type: 'text', nullable: false },
-          { name: 'created_at', type: 'timestamptz', nullable: false }
+          { name: 'created_at', type: 'timestamptz', nullable: false, default: 'now()' }
         ]
       })
     })

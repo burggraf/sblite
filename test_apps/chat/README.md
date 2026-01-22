@@ -189,12 +189,28 @@ Navigate to `http://localhost:8080/_` and run:
 
 ```sql
 CREATE TABLE todos (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
   title TEXT NOT NULL,
   completed INTEGER DEFAULT 0,
   author TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT DEFAULT (datetime('now'))
 );
+```
+
+For PostgreSQL/Supabase, use:
+
+```sql
+CREATE TABLE todos (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  completed INTEGER DEFAULT 0,
+  author TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Enable realtime (Supabase only)
+ALTER TABLE todos REPLICA IDENTITY DEFAULT;
+ALTER PUBLICATION supabase_realtime ADD TABLE todos;
 ```
 
 ### Option 2: Via admin API
@@ -206,11 +222,11 @@ curl -X POST http://localhost:8080/admin/v1/tables \
   -d '{
     "name": "todos",
     "columns": [
-      {"name": "id", "type": "uuid", "primary_key": true},
+      {"name": "id", "type": "uuid", "primary": true, "default": "gen_random_uuid()"},
       {"name": "title", "type": "text", "nullable": false},
       {"name": "completed", "type": "integer", "default": "0"},
       {"name": "author", "type": "text", "nullable": false},
-      {"name": "created_at", "type": "timestamptz", "nullable": false}
+      {"name": "created_at", "type": "timestamptz", "default": "now()"}
     ]
   }'
 ```
