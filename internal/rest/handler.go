@@ -13,6 +13,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/markb/sblite/internal/db"
 	"github.com/markb/sblite/internal/fts"
+	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/rls"
 	"github.com/markb/sblite/internal/schema"
 	"github.com/markb/sblite/internal/types"
@@ -581,7 +582,7 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var insertedIDs []int64
+	var insertedIDs []any
 	for _, data := range records {
 		var sqlStr string
 		var args []any
@@ -600,6 +601,8 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 		// Try to get the ID from the data itself
 		if id, ok := data["id"]; ok {
 			switch v := id.(type) {
+			case string:
+				insertedIDs = append(insertedIDs, v)
 			case float64:
 				insertedIDs = append(insertedIDs, int64(v))
 			case int64:
@@ -648,8 +651,10 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 
 	// Notify realtime subscribers even when not returning representation
 	// We need to fetch the inserted rows to notify
+	log.Debug("rest: INSERT complete", "table", table, "ids", insertedIDs, "notifier_set", h.notifier != nil)
 	if h.notifier != nil && len(insertedIDs) > 0 {
 		results := h.selectByIDs(table, nil, insertedIDs)
+		log.Debug("rest: notifying realtime", "table", table, "rows", len(results))
 		for _, row := range results {
 			h.notifier.NotifyChange("public", table, "INSERT", nil, row)
 		}
@@ -690,13 +695,15 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Capture old rows before update (for realtime notifications and return=representation)
 	var oldRows []map[string]any
-	var affectedIDs []int64
+	var affectedIDs []any
 	if returnRepresentation || h.notifier != nil {
 		oldRows = h.selectMatchingWithRLS(q)
 		// Extract IDs from old rows
 		for _, row := range oldRows {
 			if id, ok := row["id"]; ok {
 				switch v := id.(type) {
+				case string:
+					affectedIDs = append(affectedIDs, v)
 				case float64:
 					affectedIDs = append(affectedIDs, int64(v))
 				case int64:
@@ -909,25 +916,23 @@ func (h *Handler) tableHasColumn(table, column string) bool {
 	return false
 }
 
-// selectByIDs retrieves rows by their IDs
-func (h *Handler) selectByIDs(table string, selectCols []string, ids []int64) []map[string]any {
+// selectByIDs retrieves rows by their IDs (supports both int64 and string IDs)
+func (h *Handler) selectByIDs(table string, selectCols []string, ids []any) []map[string]any {
 	if len(ids) == 0 {
 		return []map[string]any{}
 	}
 
 	// Build IN clause for IDs
 	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
+	for i := range ids {
 		placeholders[i] = "?"
-		args[i] = id
 	}
 
 	q := Query{Table: table, Select: selectCols}
 	sqlStr, _ := BuildSelectQuery(q)
 	sqlStr += fmt.Sprintf(" WHERE \"id\" IN (%s)", strings.Join(placeholders, ", "))
 
-	rows, err := h.db.Query(sqlStr, args...)
+	rows, err := h.db.Query(sqlStr, ids...)
 	if err != nil {
 		return []map[string]any{}
 	}

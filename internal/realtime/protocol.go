@@ -183,14 +183,24 @@ func NewBroadcastMessage(topic string, event string, payload map[string]any) *Me
 }
 
 // NewPostgresChangeMessage creates a postgres_changes message
+// Format matches Supabase's Realtime protocol specification
 func NewPostgresChangeMessage(topic, joinRef string, ids []int, event ChangeEvent) *Message {
 	return &Message{
 		Event:   EventPostgres,
 		Topic:   topic,
 		JoinRef: joinRef,
 		Payload: map[string]any{
-			"ids":  ids,
-			"data": event,
+			"ids": ids,
+			"data": map[string]any{
+				"schema":           event.Schema,
+				"table":            event.Table,
+				"commit_timestamp": event.CommitTimestamp,
+				"type":             event.EventType,
+				"columns":          []map[string]any{}, // Empty columns array
+				"record":           event.New,
+				"old_record":       event.Old,
+				"errors":           nil,
+			},
 		},
 	}
 }

@@ -211,6 +211,7 @@ func (h *Hub) broadcastChange(schema, table, eventType string, oldRow, newRow ma
 func (h *Hub) getMatchingSubscriptionIDs(subs []PostgresChangeSub, event ChangeEvent) []int {
 	var ids []int
 	for _, sub := range subs {
+		log.Debug("realtime: matching check", "sub_event", sub.Event, "sub_schema", sub.Schema, "sub_table", sub.Table, "event_type", event.EventType, "event_schema", event.Schema, "event_table", event.Table)
 		if h.matchesSubscription(sub, event) {
 			ids = append(ids, sub.ID)
 		}

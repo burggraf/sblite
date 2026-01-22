@@ -219,6 +219,11 @@ func (c *Conn) handleJoin(msg *Message) {
 		config.PostgresChanges[i].ID = i + 1
 	}
 
+	log.Debug("realtime: join channel", "topic", msg.Topic, "postgres_changes_count", len(config.PostgresChanges))
+	for i, pgSub := range config.PostgresChanges {
+		log.Debug("realtime: postgres_changes subscription", "index", i, "event", pgSub.Event, "schema", pgSub.Schema, "table", pgSub.Table)
+	}
+
 	// Create subscription
 	sub := &ChannelSub{
 		conn:            c,
@@ -241,8 +246,28 @@ func (c *Conn) handleJoin(msg *Message) {
 	c.channels[msg.Topic] = sub
 	c.mu.Unlock()
 
-	// Send join reply
-	reply := NewReply(msg.Topic, msg.JoinRef, msg.Ref, "ok", map[string]any{})
+	// Build postgres_changes response with assigned IDs
+	// The client uses these IDs to route incoming change events
+	// IDs are integers, all fields must match exactly what client sent
+	pgChangesResponse := make([]map[string]any, len(config.PostgresChanges))
+	for i, pgSub := range config.PostgresChanges {
+		resp := map[string]any{
+			"id":     pgSub.ID,
+			"event":  pgSub.Event,
+			"schema": pgSub.Schema,
+			"table":  pgSub.Table,
+		}
+		// Only include filter if it was provided (empty string causes mismatch)
+		if pgSub.Filter != "" {
+			resp["filter"] = pgSub.Filter
+		}
+		pgChangesResponse[i] = resp
+	}
+
+	// Send join reply with postgres_changes config
+	reply := NewReply(msg.Topic, msg.JoinRef, msg.Ref, "ok", map[string]any{
+		"postgres_changes": pgChangesResponse,
+	})
 	c.Send(reply)
 
 	// Send system messages for postgres_changes subscriptions

@@ -60,9 +60,11 @@ export function useTodos({ onEvent }: UseTodosOptions = {}) {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'todos' },
         (payload: RealtimePostgresChangesPayload<Todo>) => {
-          const eventType = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE'
-          const newRecord = payload.new as Todo | null
-          const oldRecord = payload.old as Todo | null
+          // Supabase protocol uses 'eventType' for the type field
+          const eventType = (payload.eventType || (payload as any).type) as 'INSERT' | 'UPDATE' | 'DELETE'
+          // Supabase protocol uses 'new'/'old' but raw protocol uses 'record'/'old_record'
+          const newRecord = (payload.new || (payload as any).record) as Todo | null
+          const oldRecord = (payload.old || (payload as any).old_record) as Todo | null
 
           // Notify event listener
           onEvent?.({
