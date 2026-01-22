@@ -2,8 +2,12 @@ import { test, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'http://localhost:8080'
-const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3Njg3MTY2NDUsImlzcyI6InNibGl0ZSIsInJvbGUiOiJhbm9uIn0.HgBiWMyahpSwGurQpvKmfqrCY70GWkhvzO8eHTnPzg8'
-const SUPABASE_SERVICE_KEY = process.env.VITE_SUPABASE_SERVICE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3Njg3MTYyNzksImlzcyI6InNibGl0ZSIsInJvbGUiOiJzZXJ2aWNlX3JvbGUifQ.aVNuDYg5y5uRMOEkvJU01F4Uxix3CihRXeq9l_v8_hg'
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY
+const SUPABASE_SERVICE_KEY = process.env.VITE_SUPABASE_SERVICE_KEY
+
+if (!SUPABASE_ANON_KEY || !SUPABASE_SERVICE_KEY) {
+  throw new Error('VITE_SUPABASE_ANON_KEY and VITE_SUPABASE_SERVICE_KEY environment variables are required')
+}
 
 // Service role client for test setup/cleanup
 const adminSupabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
