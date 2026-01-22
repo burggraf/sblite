@@ -3246,6 +3246,7 @@ const App = {
                 ${this.renderApiKeysSection(apiKeys, expandedSections.apiKeys)}
                 ${this.renderAuthSection(auth, expandedSections.auth)}
                 ${this.renderOAuthSection(oauth, expandedSections.oauth)}
+                ${this.renderMailSettingsSection(expandedSections.email)}
                 ${this.renderStorageSettingsSection(expandedSections.storage)}
                 ${this.renderTemplatesSection(templates, expandedSections.templates, editingTemplate)}
                 ${this.renderExportSection(expandedSections.export)}
@@ -3840,6 +3841,118 @@ const App = {
                                     <button class="btn btn-secondary" onclick="App.cancelStorageSettings()">Cancel</button>
                                     <button class="btn btn-primary" onclick="App.saveStorageSettings()" ${ss.saving ? 'disabled' : ''}>
                                         ${ss.saving ? 'Saving...' : 'Save Changes'}
+                                    </button>
+                                </div>
+                            ` : ''}
+                        `}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    renderMailSettingsSection(expanded) {
+        const ms = this.state.settings.mailSettings;
+        const modeChanged = ms.mode !== ms.originalMode;
+
+        return `
+            <div class="settings-section">
+                <div class="section-header" onclick="App.toggleSettingsSection('email')">
+                    <span class="section-toggle">${expanded ? '▼' : '▶'}</span>
+                    <h3>Email</h3>
+                </div>
+                ${expanded ? `
+                    <div class="section-content">
+                        ${ms.loading ? '<div class="loading">Loading mail settings...</div>' : `
+                            <div class="mail-mode-selector">
+                                <label class="form-label">Email Mode</label>
+                                <div class="radio-group">
+                                    <label class="radio-label">
+                                        <input type="radio" name="mail-mode" value="log"
+                                               ${ms.mode === 'log' ? 'checked' : ''}
+                                               onchange="App.updateMailField('mode', 'log')">
+                                        <span>Log (stdout)</span>
+                                    </label>
+                                    <label class="radio-label">
+                                        <input type="radio" name="mail-mode" value="catch"
+                                               ${ms.mode === 'catch' ? 'checked' : ''}
+                                               onchange="App.updateMailField('mode', 'catch')">
+                                        <span>Catch (database + UI)</span>
+                                    </label>
+                                    <label class="radio-label">
+                                        <input type="radio" name="mail-mode" value="smtp"
+                                               ${ms.mode === 'smtp' ? 'checked' : ''}
+                                               onchange="App.updateMailField('mode', 'smtp')">
+                                        <span>SMTP (real email)</span>
+                                    </label>
+                                </div>
+                                <small class="text-muted">
+                                    ${ms.mode === 'log' ? 'Emails are printed to server console. Good for quick debugging.' :
+                                      ms.mode === 'catch' ? 'Emails are stored in database. View at /mail. Good for development.' :
+                                      'Emails are sent via SMTP server. Use for staging/production.'}
+                                </small>
+                            </div>
+
+                            ${modeChanged ? `
+                                <div class="warning-banner">
+                                    <strong>Note:</strong> Changing email mode takes effect immediately after saving.
+                                    ${ms.mode === 'catch' ? 'The mail viewer will be available at <code>/mail</code>.' : ''}
+                                </div>
+                            ` : ''}
+
+                            <div class="settings-subsection">
+                                <h4>General Settings</h4>
+                                <div class="form-group">
+                                    <label class="form-label">From Address</label>
+                                    <input type="email" class="form-input"
+                                           value="${this.escapeHtml(ms.from)}"
+                                           placeholder="noreply@localhost"
+                                           onchange="App.updateMailField('from', this.value)">
+                                    <small class="text-muted">Default sender address for all emails.</small>
+                                </div>
+                            </div>
+
+                            ${ms.mode === 'smtp' ? `
+                            <div class="settings-subsection">
+                                <h4>SMTP Settings</h4>
+                                <div class="form-group">
+                                    <label class="form-label">SMTP Host</label>
+                                    <input type="text" class="form-input"
+                                           value="${this.escapeHtml(ms.smtp.host)}"
+                                           placeholder="smtp.gmail.com"
+                                           onchange="App.updateMailField('smtp.host', this.value)">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">SMTP Port</label>
+                                    <input type="number" class="form-input"
+                                           value="${ms.smtp.port}"
+                                           placeholder="587"
+                                           onchange="App.updateMailField('smtp.port', parseInt(this.value) || 587)">
+                                    <small class="text-muted">Common ports: 587 (TLS), 465 (SSL), 25 (unencrypted)</small>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Username</label>
+                                    <input type="text" class="form-input"
+                                           value="${this.escapeHtml(ms.smtp.user)}"
+                                           placeholder="user@example.com"
+                                           onchange="App.updateMailField('smtp.user', this.value)">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Password</label>
+                                    <input type="password" class="form-input"
+                                           value="${ms.smtp.pass}"
+                                           placeholder="${ms.smtp.user ? '••••••••' : 'Enter password'}"
+                                           onchange="App.updateMailField('smtp.pass', this.value)">
+                                    <small class="text-muted">Enter a new value to change the password.</small>
+                                </div>
+                            </div>
+                            ` : ''}
+
+                            ${ms.dirty ? `
+                                <div class="form-actions">
+                                    <button class="btn btn-secondary" onclick="App.cancelMailSettings()">Cancel</button>
+                                    <button class="btn btn-primary" onclick="App.saveMailSettings()" ${ms.saving ? 'disabled' : ''}>
+                                        ${ms.saving ? 'Saving...' : 'Save Changes'}
                                     </button>
                                 </div>
                             ` : ''}
