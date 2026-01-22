@@ -16,6 +16,7 @@ test_apps/*
 !test_apps/shoplite/
 !test_apps/shoplite/migrations/
 !test_apps/chat/
+!test_apps/vector-feld/
 !test_apps/README.md
 log.db
 
