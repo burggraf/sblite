@@ -202,6 +202,16 @@ const App = {
             selectedTable: null,    // detailed table info
             selectedFunction: null, // detailed function info
         },
+        realtime: {
+            enabled: false,         // Whether realtime is enabled on server
+            connections: 0,
+            channels: 0,
+            channelDetails: [],
+            loading: false,
+            error: null,
+            autoRefresh: false,
+            autoRefreshInterval: null,
+        },
     },
 
     async init() {
@@ -463,6 +473,8 @@ const App = {
             this.loadStoragePolicies();
         } else if (view === 'apiDocs') {
             this.initApiDocs();
+        } else if (view === 'realtime') {
+            this.loadRealtimeStats();
         } else {
             this.render();
         }
@@ -578,6 +590,12 @@ const App = {
                         </div>
 
                         <div class="nav-section">
+                            <div class="nav-section-title">Realtime</div>
+                            <a class="nav-item ${this.state.currentView === 'realtime' ? 'active' : ''}"
+                               onclick="App.navigate('realtime')">Monitor</a>
+                        </div>
+
+                        <div class="nav-section">
                             <div class="nav-section-title">Documentation</div>
                             <a class="nav-item ${this.state.currentView === 'apiDocs' ? 'active' : ''}"
                                onclick="App.navigate('apiDocs')">API Docs</a>
@@ -633,6 +651,8 @@ const App = {
                 return this.renderStoragePoliciesView();
             case 'apiDocs':
                 return this.renderApiDocsView();
+            case 'realtime':
+                return this.renderRealtimeView();
             default:
                 return '<div class="card">Select a section from the sidebar</div>';
         }
@@ -9104,6 +9124,158 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
                     `).join('')}
                 </div>
                 ` : '<div class="api-docs-section"><h2>Arguments</h2><p>This function takes no arguments.</p></div>'}
+            </div>
+        `;
+    },
+
+    // ==================== Realtime ====================
+
+    async loadRealtimeStats() {
+        this.state.realtime.loading = true;
+        this.state.realtime.error = null;
+        this.render();
+
+        try {
+            const res = await fetch('/_/api/realtime/stats');
+            if (res.status === 503) {
+                // Realtime not enabled
+                this.state.realtime.enabled = false;
+                this.state.realtime.loading = false;
+                this.render();
+                return;
+            }
+            if (!res.ok) {
+                throw new Error(`Failed to load realtime stats: ${res.status}`);
+            }
+            const data = await res.json();
+            this.state.realtime.enabled = true;
+            this.state.realtime.connections = data.connections || 0;
+            this.state.realtime.channels = data.channels || 0;
+            this.state.realtime.channelDetails = data.channel_details || [];
+            this.state.realtime.loading = false;
+            this.render();
+        } catch (e) {
+            this.state.realtime.loading = false;
+            this.state.realtime.error = e.message;
+            this.render();
+        }
+    },
+
+    toggleRealtimeAutoRefresh() {
+        if (this.state.realtime.autoRefresh) {
+            // Turn off
+            clearInterval(this.state.realtime.autoRefreshInterval);
+            this.state.realtime.autoRefreshInterval = null;
+            this.state.realtime.autoRefresh = false;
+        } else {
+            // Turn on - refresh every 5 seconds
+            this.state.realtime.autoRefresh = true;
+            this.state.realtime.autoRefreshInterval = setInterval(() => {
+                if (this.state.currentView === 'realtime') {
+                    this.loadRealtimeStats();
+                }
+            }, 5000);
+        }
+        this.render();
+    },
+
+    renderRealtimeView() {
+        const { enabled, connections, channels, channelDetails, loading, error, autoRefresh } = this.state.realtime;
+
+        if (loading) {
+            return `
+                <div class="card-title">Realtime Monitor</div>
+                <div class="card">
+                    <div class="loading">Loading realtime stats...</div>
+                </div>
+            `;
+        }
+
+        if (error) {
+            return `
+                <div class="card-title">Realtime Monitor</div>
+                <div class="card">
+                    <div class="error-message">${this.escapeHtml(error)}</div>
+                    <button class="btn btn-primary" onclick="App.loadRealtimeStats()">Retry</button>
+                </div>
+            `;
+        }
+
+        if (!enabled) {
+            return `
+                <div class="card-title">Realtime Monitor</div>
+                <div class="card">
+                    <div class="empty-state">
+                        <p style="font-size: 1.2em; margin-bottom: 1rem;">Realtime is not enabled</p>
+                        <p style="color: var(--text-secondary);">Start sblite with the <code>--realtime</code> flag to enable WebSocket support:</p>
+                        <pre style="background: var(--bg-secondary); padding: 1rem; border-radius: 4px; margin-top: 1rem;"><code>./sblite serve --realtime</code></pre>
+                    </div>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="card-title">
+                Realtime Monitor
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button class="btn btn-sm ${autoRefresh ? 'btn-primary' : ''}" onclick="App.toggleRealtimeAutoRefresh()">
+                        ${autoRefresh ? '&#9632; Stop' : '&#9654; Auto-refresh'}
+                    </button>
+                    <button class="btn btn-sm" onclick="App.loadRealtimeStats()">&#8635; Refresh</button>
+                </div>
+            </div>
+
+            <div class="realtime-stats-grid">
+                <div class="card realtime-stat-card">
+                    <div class="realtime-stat-value">${connections}</div>
+                    <div class="realtime-stat-label">Active Connections</div>
+                </div>
+                <div class="card realtime-stat-card">
+                    <div class="realtime-stat-value">${channels}</div>
+                    <div class="realtime-stat-label">Active Channels</div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 1rem;">
+                <div class="card-header">
+                    <span>Channel Details</span>
+                </div>
+                ${channelDetails.length === 0 ? `
+                    <div class="empty-state">No active channels</div>
+                ` : `
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Topic</th>
+                                <th style="text-align: right;">Subscribers</th>
+                                <th style="text-align: center;">Presence</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${channelDetails.map(ch => `
+                                <tr>
+                                    <td><code>${this.escapeHtml(ch.topic)}</code></td>
+                                    <td style="text-align: right;">${ch.subscribers}</td>
+                                    <td style="text-align: center;">${ch.has_presence ? '&#10003;' : '-'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `}
+            </div>
+
+            <div class="card" style="margin-top: 1rem;">
+                <div class="card-header">Quick Start</div>
+                <div style="padding: 1rem;">
+                    <p style="margin-bottom: 1rem;">Connect using <code>@supabase/supabase-js</code>:</p>
+                    <pre style="background: var(--bg-secondary); padding: 1rem; border-radius: 4px; overflow-x: auto;"><code>const channel = supabase
+  .channel('my-channel')
+  .on('postgres_changes',
+    { event: '*', schema: 'public', table: 'messages' },
+    (payload) => console.log(payload)
+  )
+  .subscribe()</code></pre>
+                </div>
             </div>
         `;
     }

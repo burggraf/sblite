@@ -5276,6 +5276,7 @@ func sqliteTypeToPGType(sqliteType string) string {
 
 // handleRealtimeStats returns realtime connection statistics
 func (h *Handler) handleRealtimeStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	if h.realtimeService == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{

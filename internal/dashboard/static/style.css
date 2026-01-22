@@ -4131,3 +4131,31 @@ small.text-muted {
 [data-theme="light"] .api-docs-arg {
     background: #f8fafc;
 }
+
+/* ==================== Realtime ==================== */
+
+.realtime-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.realtime-stat-card {
+    text-align: center;
+    padding: 1.5rem;
+}
+
+.realtime-stat-value {
+    font-size: 3rem;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+    margin-bottom: 0.5rem;
+}
+
+.realtime-stat-label {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
