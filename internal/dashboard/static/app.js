@@ -2974,6 +2974,68 @@ const App = {
         this.render();
     },
 
+    updateMailField(field, value) {
+        const ms = this.state.settings.mailSettings;
+        if (field === 'mode') {
+            ms.mode = value;
+        } else if (field === 'from') {
+            ms.from = value;
+        } else if (field.startsWith('smtp.')) {
+            const smtpField = field.substring(5);
+            ms.smtp[smtpField] = value;
+        }
+        ms.dirty = true;
+        this.render();
+    },
+
+    async saveMailSettings() {
+        const ms = this.state.settings.mailSettings;
+        ms.saving = true;
+        this.render();
+
+        try {
+            const body = {
+                mode: ms.mode,
+                from: ms.from
+            };
+
+            // Only include SMTP settings if mode is smtp
+            if (ms.mode === 'smtp') {
+                body.smtp_host = ms.smtp.host;
+                body.smtp_port = ms.smtp.port;
+                body.smtp_user = ms.smtp.user;
+                if (ms.smtp.pass && ms.smtp.pass !== '********') {
+                    body.smtp_pass = ms.smtp.pass;
+                }
+            }
+
+            const resp = await fetch('/_/api/settings/mail', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+
+            if (resp.ok) {
+                ms.originalMode = ms.mode;
+                ms.dirty = false;
+                this.showToast('Mail settings saved successfully');
+            } else {
+                const err = await resp.text();
+                this.showToast('Failed to save: ' + err, 'error');
+            }
+        } catch (err) {
+            this.showToast('Failed to save mail settings: ' + err.message, 'error');
+        }
+
+        ms.saving = false;
+        this.render();
+    },
+
+    cancelMailSettings() {
+        this.state.settings.mailSettings.dirty = false;
+        this.loadMailSettings();
+    },
+
     updateStorageField(field, value) {
         const ss = this.state.settings.storageSettings;
         if (field === 'backend') {
