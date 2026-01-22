@@ -186,6 +186,11 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 		log.Warn("failed to initialize storage service", "error", err.Error())
 	}
 
+	// Register mail reload callback
+	s.dashboardHandler.SetMailReloadFunc(func(cfg *dashboard.MailConfig) error {
+		return s.ReloadMail(cfg)
+	})
+
 	s.setupRoutes()
 	return s
 }
@@ -201,6 +206,27 @@ func (s *Server) applyPersistedSettings() {
 	// Apply persisted SiteURL if configured
 	if siteURL := s.dashboardHandler.GetSiteURL(); siteURL != "" {
 		s.mailConfig.SiteURL = siteURL
+	}
+
+	// Apply persisted mail settings if configured
+	if mode := s.dashboardHandler.GetMailMode(); mode != "" {
+		s.mailConfig.Mode = mode
+	}
+	if from := s.dashboardHandler.GetMailFrom(); from != "" {
+		s.mailConfig.From = from
+	}
+	host, port, user, pass := s.dashboardHandler.GetSMTPConfig()
+	if host != "" {
+		s.mailConfig.SMTPHost = host
+	}
+	if port != 587 || s.mailConfig.SMTPPort == 0 {
+		s.mailConfig.SMTPPort = port
+	}
+	if user != "" {
+		s.mailConfig.SMTPUser = user
+	}
+	if pass != "" {
+		s.mailConfig.SMTPPass = pass
 	}
 }
 
@@ -226,6 +252,27 @@ func (s *Server) initMail() {
 	// Create template and email services
 	templates := mail.NewTemplateService(s.db)
 	s.emailService = mail.NewEmailService(s.mailer, templates, s.mailConfig)
+}
+
+// ReloadMail recreates the mailer with new configuration.
+// Called by dashboard when mail settings change.
+func (s *Server) ReloadMail(cfg *dashboard.MailConfig) error {
+	// Update mail config
+	s.mailConfig.Mode = cfg.Mode
+	s.mailConfig.From = cfg.From
+	s.mailConfig.SMTPHost = cfg.SMTPHost
+	s.mailConfig.SMTPPort = cfg.SMTPPort
+	s.mailConfig.SMTPUser = cfg.SMTPUser
+	s.mailConfig.SMTPPass = cfg.SMTPPass
+
+	// Reinitialize mailer
+	s.initMail()
+
+	log.Info("mail configuration reloaded",
+		"mode", cfg.Mode,
+		"from", cfg.From,
+	)
+	return nil
 }
 
 func (s *Server) setupRoutes() {
