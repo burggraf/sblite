@@ -3119,6 +3119,162 @@ const App = {
         return sql + ';';
     },
 
+    renderStoragePolicyModal() {
+        const sp = this.state.settings.storageSettings.policies;
+        const isEdit = sp.editingPolicy && sp.editingPolicy.id;
+
+        if (sp.modalStep === 'template' && !isEdit) {
+            return this.renderStoragePolicyTemplateStep();
+        }
+        return this.renderStoragePolicyFormStep();
+    },
+
+    renderStoragePolicyTemplateStep() {
+        const sp = this.state.settings.storageSettings.policies;
+
+        return `
+            <div class="modal-header">
+                <h3>New Storage Policy</h3>
+                <button class="btn-icon" onclick="App.closeStoragePolicyModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Bucket</label>
+                    <select class="form-input" onchange="App.updateStoragePolicyField('bucket', this.value)">
+                        ${sp.buckets.map(b => `
+                            <option value="${this.escapeHtml(b.id)}" ${sp.editingPolicy?.bucket === b.id ? 'selected' : ''}>${this.escapeHtml(b.id)}</option>
+                        `).join('')}
+                    </select>
+                </div>
+
+                <label class="form-label">Choose a template</label>
+                <div class="template-options">
+                    <div class="template-option" onclick="App.selectStoragePolicyTemplate('public_read')">
+                        <div class="template-name">Public read</div>
+                        <div class="template-desc">Anyone can download files from this bucket</div>
+                    </div>
+                    <div class="template-option" onclick="App.selectStoragePolicyTemplate('authenticated_read')">
+                        <div class="template-name">Authenticated read</div>
+                        <div class="template-desc">Only logged-in users can download</div>
+                    </div>
+                    <div class="template-option" onclick="App.selectStoragePolicyTemplate('authenticated_upload')">
+                        <div class="template-name">Authenticated upload</div>
+                        <div class="template-desc">Only logged-in users can upload files</div>
+                    </div>
+                    <div class="template-option" onclick="App.selectStoragePolicyTemplate('owner_only')">
+                        <div class="template-name">Owner only</div>
+                        <div class="template-desc">Users can only access files in their own folder</div>
+                    </div>
+                    <div class="template-option" onclick="App.selectStoragePolicyTemplate('custom')">
+                        <div class="template-name">Custom policy</div>
+                        <div class="template-desc">Write your own USING/CHECK expressions</div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="App.closeStoragePolicyModal()">Cancel</button>
+            </div>
+        `;
+    },
+
+    renderStoragePolicyFormStep() {
+        const sp = this.state.settings.storageSettings.policies;
+        const p = sp.editingPolicy;
+        const isEdit = p && p.id;
+        const showUsing = ['SELECT', 'UPDATE', 'DELETE', 'ALL'].includes(p.command);
+        const showCheck = ['INSERT', 'UPDATE', 'ALL'].includes(p.command);
+
+        return `
+            <div class="modal-header">
+                <h3>${isEdit ? 'Edit Policy' : 'New Storage Policy'}</h3>
+                <button class="btn-icon" onclick="App.closeStoragePolicyModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                ${sp.error ? `<div class="message message-error">${this.escapeHtml(sp.error)}</div>` : ''}
+
+                <div class="form-group">
+                    <label class="form-label">Policy Name</label>
+                    <input type="text" class="form-input" value="${this.escapeHtml(p.policy_name || '')}"
+                        placeholder="e.g., bucket_public_read"
+                        oninput="App.updateStoragePolicyField('policy_name', this.value)">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Command</label>
+                    <select class="form-input" onchange="App.updateStoragePolicyField('command', this.value)">
+                        <option value="SELECT" ${p.command === 'SELECT' ? 'selected' : ''}>SELECT</option>
+                        <option value="INSERT" ${p.command === 'INSERT' ? 'selected' : ''}>INSERT</option>
+                        <option value="UPDATE" ${p.command === 'UPDATE' ? 'selected' : ''}>UPDATE</option>
+                        <option value="DELETE" ${p.command === 'DELETE' ? 'selected' : ''}>DELETE</option>
+                        <option value="ALL" ${p.command === 'ALL' ? 'selected' : ''}>ALL</option>
+                    </select>
+                </div>
+
+                ${showUsing ? `
+                    <div class="form-group">
+                        <label class="form-label">USING Expression</label>
+                        <textarea class="form-input" rows="3"
+                            placeholder="bucket_id = 'my-bucket' AND auth.uid() IS NOT NULL"
+                            oninput="App.updateStoragePolicyField('using_expr', this.value)">${this.escapeHtml(p.using_expr || '')}</textarea>
+                        <small class="text-muted">Filters which existing objects can be accessed</small>
+                    </div>
+                ` : ''}
+
+                ${showCheck ? `
+                    <div class="form-group">
+                        <label class="form-label">CHECK Expression</label>
+                        <textarea class="form-input" rows="3"
+                            placeholder="bucket_id = 'my-bucket' AND auth.uid() IS NOT NULL"
+                            oninput="App.updateStoragePolicyField('check_expr', this.value)">${this.escapeHtml(p.check_expr || '')}</textarea>
+                        <small class="text-muted">Validates new or modified objects</small>
+                    </div>
+                ` : ''}
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" ${p.enabled ? 'checked' : ''}
+                            onchange="App.updateStoragePolicyField('enabled', this.checked)">
+                        Policy enabled
+                    </label>
+                </div>
+
+                <details class="helper-reference">
+                    <summary>Helper Functions</summary>
+                    <div class="helper-list">
+                        <div class="helper-item">
+                            <code>storage.filename(name)</code>
+                            <span>Returns filename without path</span>
+                        </div>
+                        <div class="helper-item">
+                            <code>storage.foldername(name)</code>
+                            <span>Returns folder path</span>
+                        </div>
+                        <div class="helper-item">
+                            <code>storage.extension(name)</code>
+                            <span>Returns file extension</span>
+                        </div>
+                        <div class="helper-item">
+                            <code>auth.uid()</code>
+                            <span>Current user's ID or NULL</span>
+                        </div>
+                    </div>
+                </details>
+
+                <div class="storage-policy-preview">
+                    <label class="form-label">SQL Preview</label>
+                    <pre><code>${this.escapeHtml(this.generateStoragePolicyPreview())}</code></pre>
+                </div>
+            </div>
+            <div class="modal-footer">
+                ${!isEdit && sp.template !== 'custom' ? `
+                    <button class="btn btn-secondary" onclick="App.state.settings.storageSettings.policies.modalStep='template';App.render()">Back</button>
+                ` : ''}
+                <button class="btn btn-secondary" onclick="App.closeStoragePolicyModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="App.saveStoragePolicy()">${isEdit ? 'Save Changes' : 'Create Policy'}</button>
+            </div>
+        `;
+    },
+
     async loadMailSettings() {
         this.state.settings.mailSettings.loading = true;
         this.render();
@@ -4001,6 +4157,11 @@ const App = {
                     </div>
                 </div>
             </div>
+            ${sp.showModal ? `
+                <div class="modal-overlay" onclick="if(event.target===this)App.closeStoragePolicyModal()">
+                    <div class="modal storage-policy-modal">${this.renderStoragePolicyModal()}</div>
+                </div>
+            ` : ''}
         `;
     },
 
