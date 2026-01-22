@@ -8,19 +8,73 @@ import (
 	"github.com/markb/sblite/internal/rls"
 )
 
-// Conn represents a WebSocket connection (stub for now, will be implemented in Task 1.5)
-type Conn struct {
-	id string
-}
-
 // PresenceState tracks presence for a channel (stub for now)
 type PresenceState struct {
-	// Will be implemented in Task 1.6
+	// Will be fully implemented in Task 1.6
+	mu    sync.RWMutex
+	state map[string][]map[string]any // key -> list of presence metas
 }
 
 // NewPresenceState creates a new PresenceState
 func NewPresenceState() *PresenceState {
-	return &PresenceState{}
+	return &PresenceState{
+		state: make(map[string][]map[string]any),
+	}
+}
+
+// GetState returns the current presence state
+func (p *PresenceState) GetState() map[string]any {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	result := make(map[string]any)
+	for k, v := range p.state {
+		result[k] = v
+	}
+	return result
+}
+
+// Track adds a presence for a key
+func (p *PresenceState) Track(key, connID string, meta map[string]any) map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	presenceMeta := make(map[string]any)
+	for k, v := range meta {
+		presenceMeta[k] = v
+	}
+	presenceMeta["phx_ref"] = connID
+
+	p.state[key] = append(p.state[key], presenceMeta)
+	return presenceMeta
+}
+
+// Untrack removes a presence for a key and connID
+func (p *PresenceState) Untrack(key, connID string) []map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	metas, ok := p.state[key]
+	if !ok {
+		return nil
+	}
+
+	var removed []map[string]any
+	var remaining []map[string]any
+	for _, m := range metas {
+		if ref, _ := m["phx_ref"].(string); ref == connID {
+			removed = append(removed, m)
+		} else {
+			remaining = append(remaining, m)
+		}
+	}
+
+	if len(remaining) == 0 {
+		delete(p.state, key)
+	} else {
+		p.state[key] = remaining
+	}
+
+	return removed
 }
 
 // Hub manages all WebSocket connections and channels
