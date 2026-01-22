@@ -3865,16 +3865,16 @@ const App = {
                 <div class="storage-policies-layout">
                     <div class="storage-bucket-panel">
                         <div class="panel-header">Buckets</div>
-                        <div class="bucket-list">
+                        <div class="storage-bucket-list">
                             <div class="bucket-list-item ${sp.selectedBucket === '__all__' ? 'active' : ''}"
                                  onclick="App.selectStorageBucket('__all__')">
-                                <span class="bucket-name">All Buckets</span>
+                                <span class="storage-bucket-name">All Buckets</span>
                                 <span class="policy-badge">${sp.list.length}</span>
                             </div>
                             ${sp.buckets.map(b => `
                                 <div class="bucket-list-item ${sp.selectedBucket === b.id ? 'active' : ''}"
                                      onclick="App.selectStorageBucket('${this.escapeJsString(b.id)}')">
-                                    <span class="bucket-name">${this.escapeHtml(b.id)}</span>
+                                    <span class="storage-bucket-name">${this.escapeHtml(b.id)}</span>
                                     <span class="policy-badge">${this.getStoragePolicyCountForBucket(b.id)}</span>
                                 </div>
                             `).join('')}
