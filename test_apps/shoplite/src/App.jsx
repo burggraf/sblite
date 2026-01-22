@@ -43,6 +43,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [cartCount, setCartCount] = useState(0)
   const [role, setRole] = useState(null)
+  const [showAdminDialog, setShowAdminDialog] = useState(false)
   // Track users we've already checked for admin promotion
   const checkedUsersRef = useRef(new Set())
 
@@ -88,6 +89,7 @@ function App() {
         } else {
           console.log('First user promoted to admin')
           setRole('admin')
+          setShowAdminDialog(true)
         }
       }
     } catch (err) {
@@ -250,6 +252,27 @@ function App() {
               }
             />
           </Routes>
+
+          {/* Admin Promotion Dialog */}
+          {showAdminDialog && (
+            <div className="modal-overlay" onClick={() => setShowAdminDialog(false)}>
+              <div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-icon">
+                  <span style={{ color: 'white', fontSize: '2rem' }}>&#9733;</span>
+                </div>
+                <h2 className="modal-title">Welcome, Admin!</h2>
+                <div className="modal-body">
+                  <p>You are the first user to register on ShopLite.</p>
+                  <p>You have been automatically promoted to <strong>Administrator</strong> and can now manage products, orders, and other users.</p>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-primary" onClick={() => setShowAdminDialog(false)}>
+                    Got it!
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </BrowserRouter>
       </CartContext.Provider>
     </AuthContext.Provider>
