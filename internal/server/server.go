@@ -17,6 +17,7 @@ import (
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
 	"github.com/markb/sblite/internal/oauth"
+	"github.com/markb/sblite/internal/realtime"
 	"github.com/markb/sblite/internal/rest"
 	"github.com/markb/sblite/internal/rls"
 	"github.com/markb/sblite/internal/rpc"
@@ -60,6 +61,9 @@ type Server struct {
 	rpcExecutor    *rpc.Executor
 	rpcHandler     *rpc.Handler
 	rpcInterceptor *rpc.Interceptor
+
+	// Realtime fields
+	realtimeService *realtime.Service
 
 	// HTTP server for graceful shutdown
 	httpServer *http.Server
@@ -533,4 +537,36 @@ func (s *Server) isAnonymousSigninEnabled() bool {
 		return true // Default enabled on error
 	}
 	return val != "false"
+}
+
+// EnableRealtime enables realtime WebSocket support
+func (s *Server) EnableRealtime() {
+	if s.realtimeService != nil {
+		return
+	}
+
+	// Get API keys from dashboard store
+	var anonKey, serviceKey string
+	if s.dashboardStore != nil {
+		anonKey, _ = s.dashboardStore.Get("anon_key")
+		serviceKey, _ = s.dashboardStore.Get("service_role_key")
+	}
+
+	cfg := realtime.Config{
+		JWTSecret:  s.jwtSecret,
+		AnonKey:    anonKey,
+		ServiceKey: serviceKey,
+	}
+
+	s.realtimeService = realtime.NewService(s.db.DB, s.rlsService, cfg)
+
+	// Register WebSocket route
+	s.router.Get("/realtime/v1/websocket", s.realtimeService.HandleWebSocket)
+
+	log.Info("realtime enabled")
+}
+
+// RealtimeService returns the realtime service (may be nil)
+func (s *Server) RealtimeService() *realtime.Service {
+	return s.realtimeService
 }
