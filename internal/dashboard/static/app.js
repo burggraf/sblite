@@ -46,6 +46,17 @@ const App = {
             list: [],             // Policies for selected table
             loading: false,
         },
+        storagePolicies: {
+            loading: false,
+            list: [],
+            buckets: [],
+            selectedBucket: null,
+            showModal: false,
+            modalStep: 'template',
+            editingPolicy: null,
+            template: null,
+            error: null
+        },
         settings: {
             server: null,
             auth: null,
@@ -75,18 +86,7 @@ const App = {
                 testResult: null,
                 saving: false,
                 dirty: false,
-                originalBackend: 'local',
-                policies: {
-                    loading: false,
-                    list: [],
-                    buckets: [],
-                    selectedBucket: null,
-                    showModal: false,
-                    modalStep: 'template',
-                    editingPolicy: null,
-                    template: null,
-                    error: null
-                }
+                originalBackend: 'local'
             },
             mailSettings: {
                 mode: 'log',
@@ -459,6 +459,8 @@ const App = {
             this.loadFunctions();
         } else if (view === 'storage') {
             this.loadBuckets();
+        } else if (view === 'storagePolicies') {
+            this.loadStoragePolicies();
         } else if (view === 'apiDocs') {
             this.initApiDocs();
         } else {
@@ -565,6 +567,8 @@ const App = {
                             <div class="nav-section-title">Storage</div>
                             <a class="nav-item ${this.state.currentView === 'storage' ? 'active' : ''}"
                                onclick="App.navigate('storage')">Buckets</a>
+                            <a class="nav-item ${this.state.currentView === 'storagePolicies' ? 'active' : ''}"
+                               onclick="App.navigate('storagePolicies')">Policies</a>
                         </div>
 
                         <div class="nav-section">
@@ -625,6 +629,8 @@ const App = {
                 return this.renderFunctionsView();
             case 'storage':
                 return this.renderStorageView();
+            case 'storagePolicies':
+                return this.renderStoragePoliciesView();
             case 'apiDocs':
                 return this.renderApiDocsView();
             default:
@@ -2420,6 +2426,82 @@ const App = {
         `;
     },
 
+    renderStoragePoliciesView() {
+        const { buckets, selectedBucket, list, loading, error } = this.state.storagePolicies;
+
+        if (loading && buckets.length === 0) {
+            return '<div class="loading">Loading...</div>';
+        }
+
+        return `
+            <div class="card-title">Storage Policies</div>
+            ${error ? `<div class="message message-error">${this.escapeHtml(error)}</div>` : ''}
+            <div class="policies-layout">
+                <div class="policy-tables-panel">
+                    <div class="panel-header">
+                        <span>Buckets</span>
+                    </div>
+                    <div class="table-list">
+                        <div class="table-list-item ${selectedBucket === '__all__' ? 'active' : ''}"
+                             onclick="App.selectStorageBucket('__all__')">
+                            <div class="table-item-info">
+                                <span class="table-name">All Buckets</span>
+                                ${list.length > 0 ? `<span class="policy-badge">${list.length}</span>` : ''}
+                            </div>
+                        </div>
+                        ${buckets.map(b => `
+                            <div class="table-list-item ${selectedBucket === b.id ? 'active' : ''}"
+                                 onclick="App.selectStorageBucket('${this.escapeJsString(b.id)}')">
+                                <div class="table-item-info">
+                                    <span class="table-name">${this.escapeHtml(b.id)}</span>
+                                    ${this.getStoragePolicyCountForBucket(b.id) > 0
+                                        ? `<span class="policy-badge">${this.getStoragePolicyCountForBucket(b.id)}</span>`
+                                        : ''}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="policy-content-panel">
+                    ${selectedBucket ? this.renderStoragePolicyContent() : '<div class="empty-state">Select a bucket to manage policies</div>'}
+                </div>
+            </div>
+            ${this.state.storagePolicies.showModal ? this.renderStoragePolicyModalOverlay() : ''}
+        `;
+    },
+
+    renderStoragePolicyContent() {
+        const { selectedBucket, loading } = this.state.storagePolicies;
+        const selectedPolicies = this.getStoragePoliciesForBucket(selectedBucket);
+
+        if (loading) {
+            return '<div class="loading">Loading...</div>';
+        }
+
+        return `
+            <div class="table-toolbar">
+                <h2>${selectedBucket === '__all__' ? 'All Policies' : this.escapeHtml(selectedBucket)}</h2>
+                <div class="toolbar-actions">
+                    <button class="btn btn-primary btn-sm" onclick="App.showStoragePolicyModal()">+ New Policy</button>
+                </div>
+            </div>
+            <div class="policies-list">
+                ${selectedPolicies.length === 0
+                    ? '<div class="empty-state">No policies for this bucket. Click "+ New Policy" to create one.</div>'
+                    : selectedPolicies.map(p => this.renderStoragePolicyCard(p)).join('')}
+            </div>
+            ${this.renderStorageHelperReference()}
+        `;
+    },
+
+    renderStoragePolicyModalOverlay() {
+        return `
+            <div class="modal-overlay" onclick="if(event.target===this)App.closeStoragePolicyModal()">
+                <div class="modal storage-policy-modal">${this.renderStoragePolicyModal()}</div>
+            </div>
+        `;
+    },
+
     renderPolicyContent() {
         const { selectedTable, list, loading } = this.state.policies;
         const table = this.state.policies.tables.find(t => t.name === selectedTable);
@@ -2920,7 +3002,6 @@ const App = {
         // Load storage settings when section is expanded
         if (section === 'storage' && this.state.settings.expandedSections.storage) {
             this.loadStorageSettings();
-            this.loadStoragePolicies();
         }
         // Load mail settings when section is expanded
         if (section === 'email' && this.state.settings.expandedSections.email) {
@@ -2960,7 +3041,7 @@ const App = {
     },
 
     async loadStoragePolicies() {
-        const sp = this.state.settings.storageSettings.policies;
+        const sp = this.state.storagePolicies;
         sp.loading = true;
         this.render();
 
@@ -2978,9 +3059,9 @@ const App = {
                 sp.list = data.policies || [];
             }
 
-            // Auto-select first bucket if none selected
-            if (!sp.selectedBucket && sp.buckets.length > 0) {
-                sp.selectedBucket = sp.buckets[0].id;
+            // Auto-select 'All Buckets' if none selected
+            if (!sp.selectedBucket) {
+                sp.selectedBucket = '__all__';
             }
         } catch (e) {
             console.error('Failed to load storage policies:', e);
@@ -2992,12 +3073,12 @@ const App = {
     },
 
     selectStorageBucket(bucketId) {
-        this.state.settings.storageSettings.policies.selectedBucket = bucketId;
+        this.state.storagePolicies.selectedBucket = bucketId;
         this.render();
     },
 
     getStoragePoliciesForBucket(bucketId) {
-        const { list } = this.state.settings.storageSettings.policies;
+        const { list } = this.state.storagePolicies;
         if (bucketId === '__all__') {
             return list;
         }
@@ -3013,12 +3094,10 @@ const App = {
     },
 
     showStoragePolicyModal(editPolicy = null) {
-        const sp = this.state.settings.storageSettings.policies;
+        const sp = this.state.storagePolicies;
         const bucket = sp.selectedBucket === '__all__' ? (sp.buckets[0]?.id || '') : sp.selectedBucket;
 
         sp.showModal = true;
-        sp.modalStep = editPolicy ? 'form' : 'template';
-        sp.template = null;
         sp.editingPolicy = editPolicy ? { ...editPolicy } : {
             table_name: 'storage_objects',
             policy_name: '',
@@ -3045,7 +3124,7 @@ const App = {
     },
 
     closeStoragePolicyModal() {
-        const sp = this.state.settings.storageSettings.policies;
+        const sp = this.state.storagePolicies;
         sp.showModal = false;
         sp.editingPolicy = null;
         sp.template = null;
@@ -3053,55 +3132,49 @@ const App = {
         this.render();
     },
 
-    selectStoragePolicyTemplate(template) {
-        const sp = this.state.settings.storageSettings.policies;
-        sp.template = template;
+    applyStoragePolicyTemplate(template) {
+        if (!template) return;
 
-        const bucket = sp.editingPolicy.bucket;
+        const sp = this.state.storagePolicies;
+        const bucket = sp.editingPolicy?.bucket || sp.buckets[0]?.id || 'my-bucket';
+
         const templates = {
-            'public_read': {
-                policy_name: `${bucket}_public_read`,
-                command: 'SELECT',
+            public_read: {
                 using_expr: `bucket_id = '${bucket}'`,
                 check_expr: ''
             },
-            'authenticated_read': {
-                policy_name: `${bucket}_authenticated_read`,
-                command: 'SELECT',
+            authenticated_read: {
                 using_expr: `bucket_id = '${bucket}' AND auth.uid() IS NOT NULL`,
                 check_expr: ''
             },
-            'authenticated_upload': {
-                policy_name: `${bucket}_authenticated_upload`,
-                command: 'INSERT',
+            authenticated_upload: {
                 using_expr: '',
                 check_expr: `bucket_id = '${bucket}' AND auth.uid() IS NOT NULL`
             },
-            'owner_only': {
-                policy_name: `${bucket}_owner_access`,
-                command: 'ALL',
+            owner_folder: {
                 using_expr: `bucket_id = '${bucket}' AND storage.foldername(name) = auth.uid()`,
                 check_expr: `bucket_id = '${bucket}' AND storage.foldername(name) = auth.uid()`
-            },
-            'custom': {
-                policy_name: '',
-                command: 'SELECT',
-                using_expr: `bucket_id = '${bucket}'`,
-                check_expr: ''
             }
         };
 
         const t = templates[template];
         if (t) {
-            sp.editingPolicy = { ...sp.editingPolicy, ...t };
-        }
+            if (t.using_expr) sp.editingPolicy.using_expr = t.using_expr;
+            if (t.check_expr) sp.editingPolicy.check_expr = t.check_expr;
+            this.render();
 
-        sp.modalStep = 'form';
-        this.render();
+            // Update syntax highlighting after render
+            setTimeout(() => {
+                const usingHighlight = document.getElementById('storage-using-highlight');
+                const checkHighlight = document.getElementById('storage-check-highlight');
+                if (usingHighlight) usingHighlight.innerHTML = this.highlightSql(t.using_expr || '');
+                if (checkHighlight) checkHighlight.innerHTML = this.highlightSql(t.check_expr || '');
+            }, 0);
+        }
     },
 
     updateStoragePolicyField(field, value) {
-        const sp = this.state.settings.storageSettings.policies;
+        const sp = this.state.storagePolicies;
         sp.editingPolicy[field] = value;
         // Don't re-render to avoid losing focus, just update preview if visible
         const previewEl = document.querySelector('.storage-policy-preview code');
@@ -3111,7 +3184,7 @@ const App = {
     },
 
     generateStoragePolicyPreview() {
-        const p = this.state.settings.storageSettings.policies.editingPolicy;
+        const p = this.state.storagePolicies.editingPolicy;
         if (!p) return '';
         let sql = `CREATE POLICY "${p.policy_name}" ON storage_objects FOR ${p.command}`;
         if (p.using_expr) sql += `\n  USING (${p.using_expr})`;
@@ -3120,65 +3193,11 @@ const App = {
     },
 
     renderStoragePolicyModal() {
-        const sp = this.state.settings.storageSettings.policies;
-        const isEdit = sp.editingPolicy && sp.editingPolicy.id;
-
-        if (sp.modalStep === 'template' && !isEdit) {
-            return this.renderStoragePolicyTemplateStep();
-        }
         return this.renderStoragePolicyFormStep();
     },
 
-    renderStoragePolicyTemplateStep() {
-        const sp = this.state.settings.storageSettings.policies;
-
-        return `
-            <div class="modal-header">
-                <h3>New Storage Policy</h3>
-                <button class="btn-icon" onclick="App.closeStoragePolicyModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Bucket</label>
-                    <select class="form-input" onchange="App.updateStoragePolicyField('bucket', this.value)">
-                        ${sp.buckets.map(b => `
-                            <option value="${this.escapeHtml(b.id)}" ${sp.editingPolicy?.bucket === b.id ? 'selected' : ''}>${this.escapeHtml(b.id)}</option>
-                        `).join('')}
-                    </select>
-                </div>
-
-                <label class="form-label">Choose a template</label>
-                <div class="template-options">
-                    <div class="template-option" onclick="App.selectStoragePolicyTemplate('public_read')">
-                        <div class="template-name">Public read</div>
-                        <div class="template-desc">Anyone can download files from this bucket</div>
-                    </div>
-                    <div class="template-option" onclick="App.selectStoragePolicyTemplate('authenticated_read')">
-                        <div class="template-name">Authenticated read</div>
-                        <div class="template-desc">Only logged-in users can download</div>
-                    </div>
-                    <div class="template-option" onclick="App.selectStoragePolicyTemplate('authenticated_upload')">
-                        <div class="template-name">Authenticated upload</div>
-                        <div class="template-desc">Only logged-in users can upload files</div>
-                    </div>
-                    <div class="template-option" onclick="App.selectStoragePolicyTemplate('owner_only')">
-                        <div class="template-name">Owner only</div>
-                        <div class="template-desc">Users can only access files in their own folder</div>
-                    </div>
-                    <div class="template-option" onclick="App.selectStoragePolicyTemplate('custom')">
-                        <div class="template-name">Custom policy</div>
-                        <div class="template-desc">Write your own USING/CHECK expressions</div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="App.closeStoragePolicyModal()">Cancel</button>
-            </div>
-        `;
-    },
-
     renderStoragePolicyFormStep() {
-        const sp = this.state.settings.storageSettings.policies;
+        const sp = this.state.storagePolicies;
         const p = sp.editingPolicy;
         const isEdit = p && p.id;
         const showUsing = ['SELECT', 'UPDATE', 'DELETE', 'ALL'].includes(p.command);
@@ -3210,12 +3229,28 @@ const App = {
                     </select>
                 </div>
 
+                <div class="form-group">
+                    <label class="form-label">Use Template</label>
+                    <select class="form-input" onchange="App.applyStoragePolicyTemplate(this.value); this.value='';">
+                        <option value="">Select a template...</option>
+                        <option value="public_read">Public read (anyone can download)</option>
+                        <option value="authenticated_read">Authenticated read</option>
+                        <option value="authenticated_upload">Authenticated upload</option>
+                        <option value="owner_folder">Owner folder (users access own folder)</option>
+                    </select>
+                </div>
+
                 ${showUsing ? `
                     <div class="form-group">
                         <label class="form-label">USING Expression</label>
-                        <textarea class="form-input" rows="3"
-                            placeholder="bucket_id = 'my-bucket' AND auth.uid() IS NOT NULL"
-                            oninput="App.updateStoragePolicyField('using_expr', this.value)">${this.escapeHtml(p.using_expr || '')}</textarea>
+                        <div class="policy-expr-editor">
+                            <pre class="policy-expr-highlight" id="storage-using-highlight" aria-hidden="true">${this.highlightSql(p.using_expr || '')}</pre>
+                            <textarea class="policy-expr-input"
+                                id="storage-using-input"
+                                spellcheck="false"
+                                placeholder="bucket_id = 'my-bucket' AND auth.uid() IS NOT NULL"
+                                oninput="App.updateStoragePolicyField('using_expr', this.value); document.getElementById('storage-using-highlight').innerHTML = App.highlightSql(this.value);">${this.escapeHtml(p.using_expr || '')}</textarea>
+                        </div>
                         <small class="text-muted">Filters which existing objects can be accessed</small>
                     </div>
                 ` : ''}
@@ -3223,9 +3258,14 @@ const App = {
                 ${showCheck ? `
                     <div class="form-group">
                         <label class="form-label">CHECK Expression</label>
-                        <textarea class="form-input" rows="3"
-                            placeholder="bucket_id = 'my-bucket' AND auth.uid() IS NOT NULL"
-                            oninput="App.updateStoragePolicyField('check_expr', this.value)">${this.escapeHtml(p.check_expr || '')}</textarea>
+                        <div class="policy-expr-editor">
+                            <pre class="policy-expr-highlight" id="storage-check-highlight" aria-hidden="true">${this.highlightSql(p.check_expr || '')}</pre>
+                            <textarea class="policy-expr-input"
+                                id="storage-check-input"
+                                spellcheck="false"
+                                placeholder="bucket_id = 'my-bucket' AND auth.uid() IS NOT NULL"
+                                oninput="App.updateStoragePolicyField('check_expr', this.value); document.getElementById('storage-check-highlight').innerHTML = App.highlightSql(this.value);">${this.escapeHtml(p.check_expr || '')}</textarea>
+                        </div>
                         <small class="text-muted">Validates new or modified objects</small>
                     </div>
                 ` : ''}
@@ -3238,37 +3278,12 @@ const App = {
                     </label>
                 </div>
 
-                <details class="helper-reference">
-                    <summary>Helper Functions</summary>
-                    <div class="helper-list">
-                        <div class="helper-item">
-                            <code>storage.filename(name)</code>
-                            <span>Returns filename without path</span>
-                        </div>
-                        <div class="helper-item">
-                            <code>storage.foldername(name)</code>
-                            <span>Returns folder path</span>
-                        </div>
-                        <div class="helper-item">
-                            <code>storage.extension(name)</code>
-                            <span>Returns file extension</span>
-                        </div>
-                        <div class="helper-item">
-                            <code>auth.uid()</code>
-                            <span>Current user's ID or NULL</span>
-                        </div>
-                    </div>
-                </details>
-
-                <div class="storage-policy-preview">
+                <div class="policy-preview">
                     <label class="form-label">SQL Preview</label>
-                    <pre><code>${this.escapeHtml(this.generateStoragePolicyPreview())}</code></pre>
+                    <pre class="sql-preview">${this.highlightSql(this.generateStoragePolicyPreview())}</pre>
                 </div>
             </div>
             <div class="modal-footer">
-                ${!isEdit && sp.template !== 'custom' ? `
-                    <button class="btn btn-secondary" onclick="App.state.settings.storageSettings.policies.modalStep='template';App.render()">Back</button>
-                ` : ''}
                 <button class="btn btn-secondary" onclick="App.closeStoragePolicyModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="App.saveStoragePolicy()">${isEdit ? 'Save Changes' : 'Create Policy'}</button>
             </div>
@@ -3276,7 +3291,7 @@ const App = {
     },
 
     async saveStoragePolicy() {
-        const sp = this.state.settings.storageSettings.policies;
+        const sp = this.state.storagePolicies;
         const p = sp.editingPolicy;
         const isEdit = p && p.id;
 
@@ -3343,14 +3358,14 @@ const App = {
                 body: JSON.stringify({ enabled })
             });
             if (res.ok) {
-                const sp = this.state.settings.storageSettings.policies;
+                const sp = this.state.storagePolicies;
                 const policy = sp.list.find(p => p.id === policyId);
                 if (policy) policy.enabled = enabled;
                 this.render();
             }
         } catch (e) {
             console.error('Failed to update policy:', e);
-            this.state.settings.storageSettings.policies.error = 'Failed to update policy';
+            this.state.storagePolicies.error = 'Failed to update policy';
             this.render();
         }
     },
@@ -4204,60 +4219,6 @@ const App = {
         }
     },
 
-    renderStoragePoliciesSection() {
-        const sp = this.state.settings.storageSettings.policies;
-
-        if (sp.loading) {
-            return '<div class="loading">Loading storage policies...</div>';
-        }
-
-        const selectedPolicies = this.getStoragePoliciesForBucket(sp.selectedBucket || '__all__');
-
-        return `
-            <div class="settings-subsection storage-policies-section">
-                <h4>Storage Policies</h4>
-                <p class="text-muted">Manage access control for storage objects by bucket.</p>
-
-                <div class="storage-policies-layout">
-                    <div class="storage-bucket-panel">
-                        <div class="panel-header">Buckets</div>
-                        <div class="storage-bucket-list">
-                            <div class="bucket-list-item ${sp.selectedBucket === '__all__' ? 'active' : ''}"
-                                 onclick="App.selectStorageBucket('__all__')">
-                                <span class="storage-bucket-name">All Buckets</span>
-                                <span class="policy-badge">${sp.list.length}</span>
-                            </div>
-                            ${sp.buckets.map(b => `
-                                <div class="bucket-list-item ${sp.selectedBucket === b.id ? 'active' : ''}"
-                                     onclick="App.selectStorageBucket('${this.escapeJsString(b.id)}')">
-                                    <span class="storage-bucket-name">${this.escapeHtml(b.id)}</span>
-                                    <span class="policy-badge">${this.getStoragePolicyCountForBucket(b.id)}</span>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                    <div class="storage-policy-panel">
-                        <div class="panel-header">
-                            <span>${sp.selectedBucket === '__all__' ? 'All Policies' : sp.selectedBucket}</span>
-                            <button class="btn btn-primary btn-sm" onclick="App.showStoragePolicyModal()">+ New Policy</button>
-                        </div>
-                        <div class="storage-policies-list">
-                            ${selectedPolicies.length === 0
-                                ? '<div class="empty-state">No policies for this bucket</div>'
-                                : selectedPolicies.map(p => this.renderStoragePolicyCard(p)).join('')}
-                        </div>
-                        ${this.renderStorageHelperReference()}
-                    </div>
-                </div>
-            </div>
-            ${sp.showModal ? `
-                <div class="modal-overlay" onclick="if(event.target===this)App.closeStoragePolicyModal()">
-                    <div class="modal storage-policy-modal">${this.renderStoragePolicyModal()}</div>
-                </div>
-            ` : ''}
-        `;
-    },
-
     renderStoragePolicyCard(policy) {
         return `
             <div class="policy-card ${!policy.enabled ? 'disabled' : ''}">
@@ -4441,10 +4402,6 @@ const App = {
                                     </button>
                                 </div>
                             ` : ''}
-
-                            <hr class="section-divider">
-
-                            ${this.renderStoragePoliciesSection()}
                         `}
                     </div>
                 ` : ''}
