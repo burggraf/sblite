@@ -13,25 +13,14 @@ type Conn struct {
 	id string
 }
 
-// Channel represents a realtime channel (stub for now, will be implemented in Task 1.4)
-type Channel struct {
-	mu          sync.RWMutex
-	topic       string
-	private     bool
-	subscribers map[string]*ChannelSub
-	presence    *PresenceState // nil if presence not enabled
-}
-
-// ChannelSub represents a subscription to a channel
-type ChannelSub struct {
-	conn    *Conn
-	joinRef string
-	config  *JoinConfig
-}
-
 // PresenceState tracks presence for a channel (stub for now)
 type PresenceState struct {
 	// Will be implemented in Task 1.6
+}
+
+// NewPresenceState creates a new PresenceState
+func NewPresenceState() *PresenceState {
+	return &PresenceState{}
 }
 
 // Hub manages all WebSocket connections and channels
