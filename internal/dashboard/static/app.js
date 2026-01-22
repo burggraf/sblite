@@ -3275,6 +3275,99 @@ const App = {
         `;
     },
 
+    async saveStoragePolicy() {
+        const sp = this.state.settings.storageSettings.policies;
+        const p = sp.editingPolicy;
+        const isEdit = p && p.id;
+
+        // Validate
+        if (!p.policy_name) {
+            sp.error = 'Policy name is required';
+            this.render();
+            return;
+        }
+        if (!p.using_expr && !p.check_expr) {
+            sp.error = 'At least one expression (USING or CHECK) is required';
+            this.render();
+            return;
+        }
+
+        try {
+            let res;
+            if (isEdit) {
+                res = await fetch(`/_/api/policies/${p.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        policy_name: p.policy_name,
+                        command: p.command,
+                        using_expr: p.using_expr || null,
+                        check_expr: p.check_expr || null,
+                        enabled: p.enabled
+                    })
+                });
+            } else {
+                res = await fetch('/_/api/policies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        table_name: 'storage_objects',
+                        policy_name: p.policy_name,
+                        command: p.command,
+                        using_expr: p.using_expr || null,
+                        check_expr: p.check_expr || null,
+                        enabled: p.enabled
+                    })
+                });
+            }
+
+            if (res.ok) {
+                this.closeStoragePolicyModal();
+                await this.loadStoragePolicies();
+            } else {
+                const err = await res.json();
+                sp.error = err.error || 'Failed to save policy';
+                this.render();
+            }
+        } catch (e) {
+            sp.error = 'Failed to save policy';
+            this.render();
+        }
+    },
+
+    async toggleStoragePolicyEnabled(policyId, enabled) {
+        try {
+            const res = await fetch(`/_/api/policies/${policyId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled })
+            });
+            if (res.ok) {
+                const sp = this.state.settings.storageSettings.policies;
+                const policy = sp.list.find(p => p.id === policyId);
+                if (policy) policy.enabled = enabled;
+                this.render();
+            }
+        } catch (e) {
+            console.error('Failed to update policy:', e);
+            this.state.settings.storageSettings.policies.error = 'Failed to update policy';
+            this.render();
+        }
+    },
+
+    async confirmDeleteStoragePolicy(policyId, policyName) {
+        if (!confirm(`Delete policy "${policyName}"? This cannot be undone.`)) return;
+
+        try {
+            const res = await fetch(`/_/api/policies/${policyId}`, { method: 'DELETE' });
+            if (res.ok) {
+                await this.loadStoragePolicies();
+            }
+        } catch (e) {
+            console.error('Failed to delete policy:', e);
+        }
+    },
+
     async loadMailSettings() {
         this.state.settings.mailSettings.loading = true;
         this.render();
