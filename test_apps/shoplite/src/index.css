@@ -653,3 +653,77 @@ button {
 .admin-controls .btn {
   flex: 1;
 }
+
+/* Image Upload Section */
+.image-upload-section {
+  margin-bottom: 1rem;
+}
+
+.image-upload-section .form-label {
+  margin-bottom: 0.5rem;
+}
+
+.image-upload-preview {
+  position: relative;
+  width: 100%;
+  max-width: 200px;
+  margin-bottom: 0.75rem;
+}
+
+.image-upload-preview img {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.image-upload-preview .remove-image {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.image-upload-preview .remove-image:hover {
+  background: #dc2626;
+}
+
+.image-upload-input {
+  display: none;
+}
+
+.image-upload-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.image-upload-info {
+  font-size: 0.75rem;
+  color: var(--text-light);
+  margin-top: 0.25rem;
+}
+
+.image-upload-error {
+  font-size: 0.75rem;
+  color: var(--danger);
+  margin-top: 0.25rem;
+}
+
+.form-group.disabled .form-input {
+  background: var(--background);
+  color: var(--text-light);
+  cursor: not-allowed;
+}
