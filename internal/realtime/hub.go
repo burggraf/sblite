@@ -4,6 +4,7 @@ package realtime
 import (
 	"database/sql"
 	"sync"
+	"time"
 
 	"github.com/markb/sblite/internal/rls"
 )
@@ -134,4 +135,70 @@ func (h *Hub) removeChannelIfEmpty(topic string) {
 			delete(h.channels, topic)
 		}
 	}
+}
+
+// broadcastChange sends a change event to matching subscribers
+func (h *Hub) broadcastChange(schema, table, eventType string, oldRow, newRow map[string]any) {
+	event := ChangeEvent{
+		Schema:          schema,
+		Table:           table,
+		CommitTimestamp: time.Now().UTC().Format(time.RFC3339),
+		EventType:       eventType,
+		New:             newRow,
+		Old:             oldRow,
+		Errors:          []string{},
+	}
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, ch := range h.channels {
+		for _, sub := range ch.getSubscribers() {
+			matchingIDs := h.getMatchingSubscriptionIDs(sub.pgChanges, event)
+			if len(matchingIDs) > 0 {
+				msg := NewPostgresChangeMessage(ch.topic, sub.joinRef, matchingIDs, event)
+				sub.conn.Send(msg)
+			}
+		}
+	}
+}
+
+// getMatchingSubscriptionIDs returns IDs of subscriptions matching the event
+func (h *Hub) getMatchingSubscriptionIDs(subs []PostgresChangeSub, event ChangeEvent) []int {
+	var ids []int
+	for _, sub := range subs {
+		if h.matchesSubscription(sub, event) {
+			ids = append(ids, sub.ID)
+		}
+	}
+	return ids
+}
+
+// matchesSubscription checks if an event matches a subscription
+func (h *Hub) matchesSubscription(sub PostgresChangeSub, event ChangeEvent) bool {
+	// Check event type
+	if sub.Event != "*" && sub.Event != event.EventType {
+		return false
+	}
+	// Check schema
+	if sub.Schema != "*" && sub.Schema != event.Schema {
+		return false
+	}
+	// Check table
+	if sub.Table != "*" && sub.Table != event.Table {
+		return false
+	}
+	// Check filter (if any)
+	if sub.Filter != "" {
+		return matchesFilter(sub.Filter, event.New, event.Old)
+	}
+	return true
+}
+
+// matchesFilter checks if an event matches a filter expression
+// TODO: This is a stub that returns true - will be implemented in Task 1.8
+func matchesFilter(filter string, newRow, oldRow map[string]any) bool {
+	// Stub implementation - always returns true for now
+	// Task 1.8 will implement proper filter parsing and evaluation
+	return true
 }
