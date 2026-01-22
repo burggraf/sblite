@@ -52,7 +52,7 @@ const App = {
             authConfig: { require_email_confirmation: true },
             templates: [],
             loading: false,
-            expandedSections: { server: true, apiKeys: false, auth: false, oauth: false, storage: false, templates: false, export: false },
+            expandedSections: { server: true, apiKeys: false, auth: false, oauth: false, email: false, storage: false, templates: false, export: false },
             editingTemplate: null,
             oauth: {
                 providers: {},
@@ -76,6 +76,20 @@ const App = {
                 saving: false,
                 dirty: false,
                 originalBackend: 'local'
+            },
+            mailSettings: {
+                mode: 'log',
+                from: 'noreply@localhost',
+                smtp: {
+                    host: '',
+                    port: 587,
+                    user: '',
+                    pass: ''
+                },
+                loading: false,
+                saving: false,
+                dirty: false,
+                originalMode: 'log'
             },
         },
         logs: {
@@ -2896,6 +2910,10 @@ const App = {
         if (section === 'storage' && this.state.settings.expandedSections.storage) {
             this.loadStorageSettings();
         }
+        // Load mail settings when section is expanded
+        if (section === 'email' && this.state.settings.expandedSections.email) {
+            this.loadMailSettings();
+        }
         this.render();
     },
 
@@ -2926,6 +2944,33 @@ const App = {
         }
 
         this.state.settings.storageSettings.loading = false;
+        this.render();
+    },
+
+    async loadMailSettings() {
+        this.state.settings.mailSettings.loading = true;
+        this.render();
+
+        try {
+            const resp = await fetch('/_/api/settings/mail');
+            if (resp.ok) {
+                const data = await resp.json();
+                this.state.settings.mailSettings.mode = data.mode || 'log';
+                this.state.settings.mailSettings.from = data.from || 'noreply@localhost';
+                this.state.settings.mailSettings.smtp = {
+                    host: data.smtp_host || '',
+                    port: data.smtp_port || 587,
+                    user: data.smtp_user || '',
+                    pass: data.smtp_pass || ''
+                };
+                this.state.settings.mailSettings.originalMode = data.mode || 'log';
+                this.state.settings.mailSettings.dirty = false;
+            }
+        } catch (err) {
+            console.error('Failed to load mail settings:', err);
+        }
+
+        this.state.settings.mailSettings.loading = false;
         this.render();
     },
 
