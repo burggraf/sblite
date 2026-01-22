@@ -3848,6 +3848,115 @@ const App = {
         }
     },
 
+    renderStoragePoliciesSection() {
+        const sp = this.state.settings.storageSettings.policies;
+
+        if (sp.loading) {
+            return '<div class="loading">Loading storage policies...</div>';
+        }
+
+        const selectedPolicies = this.getStoragePoliciesForBucket(sp.selectedBucket || '__all__');
+
+        return `
+            <div class="settings-subsection storage-policies-section">
+                <h4>Storage Policies</h4>
+                <p class="text-muted">Manage access control for storage objects by bucket.</p>
+
+                <div class="storage-policies-layout">
+                    <div class="storage-bucket-panel">
+                        <div class="panel-header">Buckets</div>
+                        <div class="bucket-list">
+                            <div class="bucket-list-item ${sp.selectedBucket === '__all__' ? 'active' : ''}"
+                                 onclick="App.selectStorageBucket('__all__')">
+                                <span class="bucket-name">All Buckets</span>
+                                <span class="policy-badge">${sp.list.length}</span>
+                            </div>
+                            ${sp.buckets.map(b => `
+                                <div class="bucket-list-item ${sp.selectedBucket === b.id ? 'active' : ''}"
+                                     onclick="App.selectStorageBucket('${this.escapeJsString(b.id)}')">
+                                    <span class="bucket-name">${this.escapeHtml(b.id)}</span>
+                                    <span class="policy-badge">${this.getStoragePolicyCountForBucket(b.id)}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <div class="storage-policy-panel">
+                        <div class="panel-header">
+                            <span>${sp.selectedBucket === '__all__' ? 'All Policies' : sp.selectedBucket}</span>
+                            <button class="btn btn-primary btn-sm" onclick="App.showStoragePolicyModal()">+ New Policy</button>
+                        </div>
+                        <div class="storage-policies-list">
+                            ${selectedPolicies.length === 0
+                                ? '<div class="empty-state">No policies for this bucket</div>'
+                                : selectedPolicies.map(p => this.renderStoragePolicyCard(p)).join('')}
+                        </div>
+                        ${this.renderStorageHelperReference()}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    renderStoragePolicyCard(policy) {
+        return `
+            <div class="policy-card ${!policy.enabled ? 'disabled' : ''}">
+                <div class="policy-header">
+                    <div class="policy-title">
+                        <span class="policy-name">${this.escapeHtml(policy.policy_name)}</span>
+                        <span class="policy-command">${this.escapeHtml(policy.command)}</span>
+                    </div>
+                    <div class="policy-actions">
+                        <label class="policy-toggle">
+                            <input type="checkbox" ${policy.enabled ? 'checked' : ''}
+                                onchange="App.toggleStoragePolicyEnabled(${policy.id}, this.checked)">
+                            <span class="toggle-label">${policy.enabled ? 'Enabled' : 'Disabled'}</span>
+                        </label>
+                        <button class="btn-icon" onclick="App.showEditStoragePolicyModal(${policy.id})">Edit</button>
+                        <button class="btn-icon" onclick="App.confirmDeleteStoragePolicy(${policy.id}, '${this.escapeJsString(policy.policy_name)}')">Delete</button>
+                    </div>
+                </div>
+                ${policy.using_expr ? `
+                    <div class="policy-expr">
+                        <span class="expr-label">USING:</span>
+                        <code>${this.escapeHtml(this.truncate(policy.using_expr, 80))}</code>
+                    </div>
+                ` : ''}
+                ${policy.check_expr ? `
+                    <div class="policy-expr">
+                        <span class="expr-label">CHECK:</span>
+                        <code>${this.escapeHtml(this.truncate(policy.check_expr, 80))}</code>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    renderStorageHelperReference() {
+        return `
+            <details class="helper-reference">
+                <summary>Helper Functions Reference</summary>
+                <div class="helper-list">
+                    <div class="helper-item">
+                        <code>storage.filename(name)</code>
+                        <span>Returns filename without path. <em>'uploads/photo.jpg'</em> → <em>'photo.jpg'</em></span>
+                    </div>
+                    <div class="helper-item">
+                        <code>storage.foldername(name)</code>
+                        <span>Returns folder path. <em>'user123/photos/img.png'</em> → <em>'user123/photos'</em></span>
+                    </div>
+                    <div class="helper-item">
+                        <code>storage.extension(name)</code>
+                        <span>Returns file extension. <em>'document.pdf'</em> → <em>'pdf'</em></span>
+                    </div>
+                    <div class="helper-item">
+                        <code>auth.uid()</code>
+                        <span>Current user's ID, or NULL if anonymous.</span>
+                    </div>
+                </div>
+            </details>
+        `;
+    },
+
     renderStorageSettingsSection(expanded) {
         const ss = this.state.settings.storageSettings;
         const backendChanged = ss.backend !== ss.originalBackend;
@@ -3971,6 +4080,10 @@ const App = {
                                     </button>
                                 </div>
                             ` : ''}
+
+                            <hr class="section-divider">
+
+                            ${this.renderStoragePoliciesSection()}
                         `}
                     </div>
                 ` : ''}
