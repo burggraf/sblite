@@ -1,14 +1,15 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { AppHeader } from '@/components/app-header'
 import { TodosTab } from '@/components/tabs/todos-tab'
 import { BroadcastTab } from '@/components/tabs/broadcast-tab'
 import { StatusTab } from '@/components/tabs/status-tab'
 import { useEventLog } from '@/hooks/use-event-log'
+import { ensureTodosTable } from '@/lib/setup'
 import type { TodoEvent } from '@/hooks/use-todos'
 import type { PresenceUser } from '@/hooks/use-presence'
 import type { CursorPosition, ReactionEvent } from '@/hooks/use-broadcast'
-import { Database, Radio, Activity } from 'lucide-react'
+import { Database, Radio, Activity, Loader2 } from 'lucide-react'
 
 function generateRandomUsername(): string {
   const adjectives = ['Happy', 'Swift', 'Bright', 'Cool', 'Calm']
@@ -23,7 +24,21 @@ export function App() {
   const [username, setUsername] = useState(generateRandomUsername)
   const [activeTab, setActiveTab] = useState('todos')
   const [isConnected, setIsConnected] = useState(false)
+  const [setupState, setSetupState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [setupError, setSetupError] = useState<string | null>(null)
   const { events, addEvent, clearEvents } = useEventLog()
+
+  // Run setup on mount
+  useEffect(() => {
+    ensureTodosTable().then(result => {
+      if (result.success) {
+        setSetupState('ready')
+      } else {
+        setSetupState('error')
+        setSetupError(result.error || 'Unknown setup error')
+      }
+    })
+  }, [])
 
   // Event handlers for logging
   const handleTodoEvent = useCallback((event: TodoEvent) => {
@@ -56,6 +71,34 @@ export function App() {
   const handleReaction = useCallback((reaction: ReactionEvent) => {
     addEvent('broadcast_reaction', `${reaction.username} sent ${reaction.emoji}`, reaction)
   }, [addEvent])
+
+  // Show loading state during setup
+  if (setupState === 'loading') {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <p className="text-muted-foreground">Setting up database...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Show error state
+  if (setupState === 'error') {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-background">
+        <div className="max-w-md p-6 text-center">
+          <h1 className="text-xl font-semibold text-destructive mb-2">Setup Error</h1>
+          <p className="text-muted-foreground mb-4">{setupError}</p>
+          <p className="text-sm text-muted-foreground">
+            Make sure sblite is running with <code className="bg-muted px-1 rounded">--realtime</code> flag
+            and the service key is set in <code className="bg-muted px-1 rounded">.env.local</code>
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="h-screen w-screen flex flex-col bg-background">

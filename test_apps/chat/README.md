@@ -47,55 +47,26 @@ A React demo app showcasing all three sblite realtime features: **Postgres Chang
 ./sblite init
 ```
 
-### 2. Create the todos table
-
-Using the sblite dashboard at `http://localhost:8080/_` or via API:
-
-```bash
-curl -X POST http://localhost:8080/admin/v1/tables \
-  -H "Authorization: Bearer <service_role_key>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "todos",
-    "columns": [
-      {"name": "id", "type": "uuid", "primary_key": true},
-      {"name": "title", "type": "text", "nullable": false},
-      {"name": "completed", "type": "integer", "default": "0"},
-      {"name": "author", "type": "text", "nullable": false},
-      {"name": "created_at", "type": "timestamptz", "nullable": false}
-    ]
-  }'
-```
-
-Or create via SQL in the dashboard SQL Browser:
-
-```sql
-CREATE TABLE todos (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  completed INTEGER DEFAULT 0,
-  author TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-```
-
-### 3. Install dependencies
+### 2. Install dependencies
 
 ```bash
 cd test_apps/chat
 npm install
 ```
 
-### 4. Configure environment
+### 3. Configure environment
 
 Edit `.env.local`:
 
 ```bash
 VITE_SUPABASE_URL=http://localhost:8080
 VITE_SUPABASE_PUBLISHABLE_OR_ANON_KEY=<your_anon_key>
+VITE_SUPABASE_SERVICE_KEY=<your_service_role_key>
 ```
 
-Get your anon key from the sblite dashboard at Settings > API Keys.
+Get your keys from the sblite dashboard at Settings > API Keys.
+
+**Note:** The service key is used to automatically create the `todos` table on first run. If you prefer not to use the service key, you can create the table manually (see [Manual Table Creation](#manual-table-creation) below).
 
 ## Running
 
@@ -115,6 +86,8 @@ npm run dev
 ### 3. Open multiple browser tabs
 
 Navigate to `http://localhost:5173` in multiple tabs/windows to test realtime sync.
+
+The app will automatically create the `todos` table if it doesn't exist (requires service key).
 
 ## How It Works
 
@@ -198,6 +171,7 @@ chat/
 │   ├── lib/
 │   │   ├── supabase/
 │   │   │   └── client.ts          # Supabase client
+│   │   ├── setup.ts               # Auto table creation
 │   │   └── utils.ts               # Utilities
 │   ├── App.tsx                    # Main app with tabs
 │   └── main.tsx                   # Entry point
@@ -205,11 +179,47 @@ chat/
 └── package.json
 ```
 
+## Manual Table Creation
+
+If you prefer not to use the service key for automatic table creation, you can create the `todos` table manually:
+
+### Option 1: Via dashboard SQL Browser
+
+Navigate to `http://localhost:8080/_` and run:
+
+```sql
+CREATE TABLE todos (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  completed INTEGER DEFAULT 0,
+  author TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+```
+
+### Option 2: Via admin API
+
+```bash
+curl -X POST http://localhost:8080/admin/v1/tables \
+  -H "Authorization: Bearer <service_role_key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "todos",
+    "columns": [
+      {"name": "id", "type": "uuid", "primary_key": true},
+      {"name": "title", "type": "text", "nullable": false},
+      {"name": "completed", "type": "integer", "default": "0"},
+      {"name": "author", "type": "text", "nullable": false},
+      {"name": "created_at", "type": "timestamptz", "nullable": false}
+    ]
+  }'
+```
+
 ## Troubleshooting
 
-### "Table 'todos' does not exist"
+### Setup Error: Service key not set
 
-Create the todos table using the setup instructions above.
+Add `VITE_SUPABASE_SERVICE_KEY` to your `.env.local` file, or create the todos table manually.
 
 ### Connection fails
 
