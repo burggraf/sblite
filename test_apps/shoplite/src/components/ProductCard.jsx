@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth, useCart } from '../App'
 
-function ProductCard({ product }) {
+function ProductCard({ product, isAdmin, onEdit, onDelete }) {
   const { user } = useAuth()
   const { refreshCart } = useCart()
   const navigate = useNavigate()
@@ -77,6 +77,23 @@ function ProductCard({ product }) {
         >
           {adding ? 'Adding...' : added ? 'Added!' : 'Add to Cart'}
         </button>
+
+        {isAdmin && (
+          <div className="admin-controls">
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => onEdit(product)}
+            >
+              Edit
+            </button>
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={() => onDelete(product)}
+            >
+              Delete
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
