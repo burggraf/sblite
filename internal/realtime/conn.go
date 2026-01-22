@@ -2,6 +2,7 @@
 package realtime
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -113,7 +114,11 @@ func (c *Conn) ReadPump() {
 
 		msg, err := DecodeMessage(data)
 		if err != nil {
-			log.Debug("realtime: invalid message", "conn_id", c.id, "error", err.Error())
+			n := len(data)
+			if n > 100 {
+				n = 100
+			}
+			log.Debug("realtime: invalid message", "conn_id", c.id, "error", err.Error(), "raw_hex", fmt.Sprintf("%x", data[:n]), "raw_str", string(data), "len", len(data))
 			continue
 		}
 
@@ -156,6 +161,8 @@ func (c *Conn) WritePump() {
 
 // handleMessage routes incoming messages to appropriate handlers
 func (c *Conn) handleMessage(msg *Message) {
+	log.Debug("realtime: handleMessage", "conn_id", c.id, "event", msg.Event, "topic", msg.Topic)
+
 	switch msg.Event {
 	case EventHeartbeat:
 		c.handleHeartbeat(msg)
@@ -170,7 +177,7 @@ func (c *Conn) handleMessage(msg *Message) {
 	case EventAccessToken:
 		c.handleAccessToken(msg)
 	default:
-		log.Debug("realtime: unknown event", "conn_id", c.id, "event", msg.Event)
+		log.Debug("realtime: unknown event", "conn_id", c.id, "event", msg.Event, "topic", msg.Topic)
 	}
 }
 
@@ -291,22 +298,28 @@ func (c *Conn) handleLeave(msg *Message) {
 
 // handleBroadcast handles broadcast messages
 func (c *Conn) handleBroadcast(msg *Message) {
+	log.Debug("realtime: handleBroadcast", "conn_id", c.id, "topic", msg.Topic, "event", msg.Event, "payload", msg.Payload)
+
 	c.mu.Lock()
 	sub, ok := c.channels[msg.Topic]
 	c.mu.Unlock()
 
 	if !ok {
+		log.Debug("realtime: handleBroadcast - not subscribed to channel", "topic", msg.Topic)
 		return
 	}
 
 	ch := c.hub.getChannel(msg.Topic)
 	if ch == nil {
+		log.Debug("realtime: handleBroadcast - channel not found", "topic", msg.Topic)
 		return
 	}
 
 	// Extract broadcast payload
 	payload, _ := msg.Payload["payload"].(map[string]any)
 	event, _ := msg.Payload["event"].(string)
+
+	log.Debug("realtime: handleBroadcast - broadcasting", "event", event, "numSubscribers", len(ch.getSubscribers()))
 
 	broadcastMsg := NewBroadcastMessage(msg.Topic, event, payload)
 

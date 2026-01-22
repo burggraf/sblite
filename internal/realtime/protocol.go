@@ -223,16 +223,207 @@ func NewPresenceDiffMessage(topic, joinRef string, joins, leaves map[string][]ma
 	}
 }
 
-// Encode serializes a message to JSON bytes
+// Encode serializes a message to JSON bytes in Phoenix array format
+// [join_ref, ref, topic, event, payload]
 func (m *Message) Encode() ([]byte, error) {
-	return json.Marshal(m)
+	arr := []any{m.JoinRef, m.Ref, m.Topic, m.Event, m.Payload}
+	return json.Marshal(arr)
 }
 
 // DecodeMessage parses JSON bytes into a Message
+// Supports:
+// - Phoenix array format [join_ref, ref, topic, event, payload]
+// - Object format {event, topic, payload, ref, join_ref}
+// - Phoenix v2 binary format (push/broadcast)
 func DecodeMessage(data []byte) (*Message, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty message")
+	}
+
+	// Check first byte to detect format
+	firstByte := data[0]
+
+	// Phoenix v2 binary format: first byte is message kind
+	// 0 = push, 1 = reply, 2 = broadcast, 3 = push (alternate?)
+	// If first byte is small and message doesn't start with '[' or '{', try binary
+	if firstByte <= 10 && firstByte != '[' && firstByte != '{' {
+		return decodeBinaryMessage(data)
+	}
+
+	// Skip whitespace for JSON detection
+	for i := 0; i < len(data); i++ {
+		if data[i] == ' ' || data[i] == '\t' || data[i] == '\n' || data[i] == '\r' {
+			continue
+		}
+		if data[i] == '[' {
+			// Array format: [join_ref, ref, topic, event, payload]
+			return decodeArrayMessage(data)
+		}
+		break
+	}
+
+	// Object format
 	var msg Message
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return nil, fmt.Errorf("invalid message format: %w", err)
 	}
 	return &msg, nil
+}
+
+// decodeBinaryMessage parses Phoenix v2 binary format
+// Format: [kind:1][join_ref_size:1][ref_size:1][topic_size:1][event_size:1][...variable...][topic][event][payload]
+// The variable portion contains join_ref and ref as length-prefixed strings
+func decodeBinaryMessage(data []byte) (*Message, error) {
+	if len(data) < 5 {
+		return nil, fmt.Errorf("binary message too short: need at least 5 bytes for header")
+	}
+
+	// Parse header - sizes tell us the LENGTH of topic and event strings
+	// kind := data[0]  // 0=push, 1=reply, 2=broadcast
+	topicSize := int(data[3])
+	eventSize := int(data[4])
+
+	// Find JSON payload start by searching for '{'
+	jsonStart := -1
+	for i := 5; i < len(data); i++ {
+		if data[i] == '{' {
+			jsonStart = i
+			break
+		}
+	}
+
+	if jsonStart == -1 {
+		return nil, fmt.Errorf("no JSON payload found in binary message")
+	}
+
+	// Work backwards from JSON start to extract event and topic
+	// Event is the last eventSize bytes before JSON
+	// Topic is the topicSize bytes before that
+	eventStart := jsonStart - eventSize
+	topicStart := eventStart - topicSize
+
+	if topicStart < 5 {
+		return nil, fmt.Errorf("invalid binary message: topic would start before header")
+	}
+
+	topic := string(data[topicStart : topicStart+topicSize])
+	event := string(data[eventStart : eventStart+eventSize])
+
+	// Extract join_ref and ref from the space between header and topic
+	// This area contains length-prefixed strings
+	middleSection := data[5:topicStart]
+	joinRef, ref := parseRefsFromMiddle(middleSection)
+
+	msg := &Message{
+		JoinRef: joinRef,
+		Ref:     ref,
+		Topic:   topic,
+		Event:   event,
+	}
+
+	// Parse JSON payload
+	if err := json.Unmarshal(data[jsonStart:], &msg.Payload); err != nil {
+		return nil, fmt.Errorf("invalid payload JSON: %w", err)
+	}
+
+	// For broadcast events, wrap the payload with event info
+	// This matches what handleBroadcast expects
+	if msg.Event != EventJoin && msg.Event != EventLeave && msg.Event != EventHeartbeat &&
+		msg.Event != EventAccessToken && msg.Event != EventPresence {
+		// This is a user-defined broadcast event (like "message")
+		originalPayload := msg.Payload
+		msg.Payload = map[string]any{
+			"event":   msg.Event,
+			"payload": originalPayload,
+			"type":    "broadcast",
+		}
+		msg.Event = EventBroadcast
+	}
+
+	return msg, nil
+}
+
+// parseRefsFromMiddle extracts join_ref and ref from the middle section
+// The format appears to be length-prefixed strings
+func parseRefsFromMiddle(data []byte) (joinRef, ref string) {
+	if len(data) == 0 {
+		return "", ""
+	}
+
+	pos := 0
+
+	// First length-prefixed string is join_ref
+	if pos < len(data) {
+		length := int(data[pos])
+		pos++
+		if pos+length <= len(data) {
+			joinRef = string(data[pos : pos+length])
+			pos += length
+		}
+	}
+
+	// Second length-prefixed string is ref
+	if pos < len(data) {
+		length := int(data[pos])
+		pos++
+		if pos+length <= len(data) {
+			ref = string(data[pos : pos+length])
+		}
+	}
+
+	return joinRef, ref
+}
+
+// decodeArrayMessage parses Phoenix array format [join_ref, ref, topic, event, payload]
+func decodeArrayMessage(data []byte) (*Message, error) {
+	var arr []json.RawMessage
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return nil, fmt.Errorf("invalid array message: %w", err)
+	}
+
+	if len(arr) < 5 {
+		return nil, fmt.Errorf("array message must have 5 elements, got %d", len(arr))
+	}
+
+	msg := &Message{}
+
+	// Parse join_ref (index 0)
+	var joinRef string
+	if err := json.Unmarshal(arr[0], &joinRef); err != nil {
+		// Try as null
+		var nullVal any
+		json.Unmarshal(arr[0], &nullVal)
+		if nullVal != nil {
+			return nil, fmt.Errorf("invalid join_ref: %w", err)
+		}
+	}
+	msg.JoinRef = joinRef
+
+	// Parse ref (index 1)
+	var ref string
+	if err := json.Unmarshal(arr[1], &ref); err != nil {
+		var nullVal any
+		json.Unmarshal(arr[1], &nullVal)
+		if nullVal != nil {
+			return nil, fmt.Errorf("invalid ref: %w", err)
+		}
+	}
+	msg.Ref = ref
+
+	// Parse topic (index 2)
+	if err := json.Unmarshal(arr[2], &msg.Topic); err != nil {
+		return nil, fmt.Errorf("invalid topic: %w", err)
+	}
+
+	// Parse event (index 3)
+	if err := json.Unmarshal(arr[3], &msg.Event); err != nil {
+		return nil, fmt.Errorf("invalid event: %w", err)
+	}
+
+	// Parse payload (index 4)
+	if err := json.Unmarshal(arr[4], &msg.Payload); err != nil {
+		return nil, fmt.Errorf("invalid payload: %w", err)
+	}
+
+	return msg, nil
 }
