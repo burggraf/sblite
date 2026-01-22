@@ -3950,7 +3950,7 @@ const App = {
                                 </div>
                                 <small class="text-muted">
                                     ${ms.mode === 'log' ? 'Emails are printed to server console. Good for quick debugging.' :
-                                      ms.mode === 'catch' ? 'Emails are stored in database. View at /mail. Good for development.' :
+                                      ms.mode === 'catch' ? 'Emails are stored in database. View at /_/mail. Good for development.' :
                                       'Emails are sent via SMTP server. Use for staging/production.'}
                                 </small>
                             </div>
@@ -3958,7 +3958,7 @@ const App = {
                             ${modeChanged ? `
                                 <div class="warning-banner">
                                     <strong>Note:</strong> Changing email mode takes effect immediately after saving.
-                                    ${ms.mode === 'catch' ? 'The mail viewer will be available at <code>/mail</code>.' : ''}
+                                    ${ms.mode === 'catch' ? 'The mail viewer will be available at <code>/_/mail</code>.' : ''}
                                 </div>
                             ` : ''}
 

@@ -287,13 +287,13 @@ sblite supports multiple email modes for development and production:
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | `log` | Logs emails to console | Quick development |
-| `catch` | Captures emails, web viewer at `/mail` | Testing email flows |
+| `catch` | Captures emails, web viewer at `/_/mail` | Testing email flows |
 | `smtp` | Sends real emails via SMTP | Production |
 
 Start the server with different modes:
 ```bash
 ./sblite serve --mail-mode=log      # Development
-./sblite serve --mail-mode=catch    # Testing (view at /mail)
+./sblite serve --mail-mode=catch    # Testing (view at /_/mail)
 ./sblite serve --mail-mode=smtp     # Production
 ```
 

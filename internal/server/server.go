@@ -16,7 +16,6 @@ import (
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
-	"github.com/markb/sblite/internal/mail/viewer"
 	"github.com/markb/sblite/internal/oauth"
 	"github.com/markb/sblite/internal/rest"
 	"github.com/markb/sblite/internal/rls"
@@ -139,6 +138,9 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 	// Initialize mail services (after persisted settings are loaded)
 	s.initMail()
 
+	// Set catch mailer on dashboard handler for mail viewer (if in catch mode)
+	s.dashboardHandler.SetCatchMailer(s.catchMailer)
+
 	// Set up callback to update mail config when SiteURL changes via dashboard
 	s.dashboardHandler.SetOnSiteURLChange(func(siteURL string) {
 		s.mailConfig.SiteURL = siteURL
@@ -238,6 +240,7 @@ func (s *Server) initMail() {
 		s.catchMailer = mail.NewCatchMailer(s.db)
 		s.mailer = s.catchMailer
 	case mail.ModeSMTP:
+		s.catchMailer = nil // Clear catch mailer when not in catch mode
 		smtpConfig := mail.SMTPConfig{
 			Host: s.mailConfig.SMTPHost,
 			Port: s.mailConfig.SMTPPort,
@@ -247,6 +250,7 @@ func (s *Server) initMail() {
 		s.mailer = mail.NewSMTPMailer(smtpConfig)
 	default:
 		// Default to log mode
+		s.catchMailer = nil // Clear catch mailer when not in catch mode
 		s.mailer = mail.NewLogMailer(nil)
 	}
 
@@ -268,6 +272,9 @@ func (s *Server) ReloadMail(cfg *dashboard.MailConfig) error {
 
 	// Reinitialize mailer
 	s.initMail()
+
+	// Update dashboard handler with catch mailer state (may be nil if not in catch mode)
+	s.dashboardHandler.SetCatchMailer(s.catchMailer)
 
 	log.Info("mail configuration reloaded",
 		"mode", cfg.Mode,
@@ -351,14 +358,6 @@ func (s *Server) setupRoutes() {
 		r.Delete("/tables/{name}/fts/{index}", s.adminHandler.DeleteFTSIndex)
 		r.Post("/tables/{name}/fts/{index}/rebuild", s.adminHandler.RebuildFTSIndex)
 	})
-
-	// Mail viewer routes (only in catch mode)
-	if s.mailConfig.Mode == mail.ModeCatch && s.catchMailer != nil {
-		s.router.Route("/mail", func(r chi.Router) {
-			viewerHandler := viewer.NewHandler(s.catchMailer)
-			viewerHandler.RegisterRoutes(r)
-		})
-	}
 
 	// Dashboard routes
 	s.router.Route("/_", func(r chi.Router) {

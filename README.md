@@ -55,7 +55,7 @@ go build -o sblite
 ./sblite serve                        # Default: localhost:8080
 ./sblite serve --port 3000            # Custom port
 ./sblite serve --host 0.0.0.0         # Bind to all interfaces
-./sblite serve --mail-mode=catch      # Development: captures emails, web UI at /mail
+./sblite serve --mail-mode=catch      # Development: captures emails, web UI at /_/mail
 ./sblite serve --mail-mode=smtp       # Production: sends real emails via SMTP
 ```
 
@@ -294,7 +294,7 @@ npm test         # Run all tests
 │  /rest/v1/*     →  REST Handler     │
 │  /storage/v1/*  →  Storage Service  │
 │  /_/*           →  Web Dashboard    │
-│  /mail/*        →  Mail Viewer      │
+│  /_/mail/*      →  Mail Viewer      │
 ├─────────────────────────────────────┤
 │  Email Service (log/catch/smtp)     │
 ├─────────────────────────────────────┤

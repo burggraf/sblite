@@ -25,6 +25,8 @@ import (
 	"github.com/markb/sblite/internal/fts"
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
+	"github.com/markb/sblite/internal/mail"
+	"github.com/markb/sblite/internal/mail/viewer"
 	"github.com/markb/sblite/internal/pgtranslate"
 	"github.com/markb/sblite/internal/rpc"
 	"github.com/markb/sblite/internal/storage"
@@ -46,6 +48,8 @@ type Handler struct {
 	functionsService *functions.Service
 	storageService   *storage.Service
 	rpcInterceptor   *rpc.Interceptor
+	catchMailer      *mail.CatchMailer
+	mailViewer       *viewer.Handler
 	migrationsDir    string
 	startTime        time.Time
 	serverConfig     *ServerConfig
@@ -125,6 +129,14 @@ func (h *Handler) SetStorageReloadFunc(f func(*StorageConfig) error) {
 // SetMailReloadFunc sets the callback function for mail configuration changes.
 func (h *Handler) SetMailReloadFunc(f func(*MailConfig) error) {
 	h.onMailReload = f
+}
+
+// SetCatchMailer sets the catch mailer for the mail viewer.
+func (h *Handler) SetCatchMailer(cm *mail.CatchMailer) {
+	h.catchMailer = cm
+	if cm != nil {
+		h.mailViewer = viewer.NewHandler(cm)
+	}
 }
 
 // RegisterRoutes registers the dashboard routes.
@@ -313,6 +325,14 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Patch("/functions/{name}/description", h.handleAPIDocsUpdateFunctionDescription)
 		})
 	})
+
+	// Mail viewer routes (require auth, only when catch mailer is configured)
+	if h.mailViewer != nil {
+		r.Route("/mail", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			h.mailViewer.RegisterRoutes(r)
+		})
+	}
 
 	// Static files - use Route group to ensure priority
 	r.Route("/static", func(r chi.Router) {

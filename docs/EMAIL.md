@@ -36,7 +36,7 @@ Stores emails in the database and provides a web UI to view them. Ideal for deve
 ./sblite serve --mail-mode=catch
 ```
 
-The mail viewer UI is available at `http://localhost:8080/mail` and shows:
+The mail viewer UI is available at `http://localhost:8080/_/mail` (requires dashboard login) and shows:
 - List of all caught emails with type, recipient, subject, and time
 - Filter by email type (confirmation, recovery, magic link, etc.)
 - Click to view full email content (HTML and plain text)
@@ -256,22 +256,24 @@ When running in catch mode, the following API endpoints are available:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/mail/` | GET | Mail viewer web UI |
-| `/mail/api/emails` | GET | List all caught emails |
-| `/mail/api/emails/:id` | GET | Get single email by ID |
-| `/mail/api/emails/:id` | DELETE | Delete single email |
-| `/mail/api/emails` | DELETE | Clear all emails |
+| `/_/mail/` | GET | Mail viewer web UI |
+| `/_/mail/api/emails` | GET | List all caught emails |
+| `/_/mail/api/emails/:id` | GET | Get single email by ID |
+| `/_/mail/api/emails/:id` | DELETE | Delete single email |
+| `/_/mail/api/emails` | DELETE | Clear all emails |
+
+**Note:** All mail viewer endpoints require dashboard authentication.
 
 ### Query Parameters
 
 The list endpoint supports pagination:
 
 ```bash
-# Get first 10 emails
-curl http://localhost:8080/mail/api/emails?limit=10
+# Get first 10 emails (requires dashboard session cookie)
+curl http://localhost:8080/_/mail/api/emails?limit=10
 
 # Get next page
-curl http://localhost:8080/mail/api/emails?limit=10&offset=10
+curl http://localhost:8080/_/mail/api/emails?limit=10&offset=10
 ```
 
 ## Development Workflow
@@ -304,8 +306,8 @@ curl http://localhost:8080/mail/api/emails?limit=10&offset=10
 With catch mode, you can programmatically verify email flows in tests:
 
 ```javascript
-// After triggering an email...
-const response = await fetch('http://localhost:8080/mail/api/emails');
+// After triggering an email... (requires dashboard session)
+const response = await fetch('http://localhost:8080/_/mail/api/emails');
 const emails = await response.json();
 
 // Find the confirmation email
@@ -406,10 +408,14 @@ const token = extractToken(email)
 
 ### Mail viewer not accessible
 
-The `/mail` endpoint is only available in `catch` mode. Verify you're running with:
+The `/_/mail` endpoint is only available in `catch` mode and requires dashboard authentication. Verify:
+
+1. You're running with catch mode:
 ```bash
 ./sblite serve --mail-mode=catch
 ```
+
+2. You're logged into the dashboard at `/_`
 
 ### Token expired errors
 
