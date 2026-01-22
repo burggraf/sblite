@@ -33,30 +33,30 @@ See `docs/plans/2026-01-18-vector-search-design.md` for full design.
 
 ---
 
-### PostgreSQL Functions (RPC)
-Supabase RPC compatibility for calling server-side functions via `/rpc/v1/{name}`.
+### ~~PostgreSQL Functions (RPC)~~ ✅ COMPLETE (Phase C)
+Supabase RPC compatibility for calling server-side functions via `/rest/v1/rpc/{name}`.
 
 ```javascript
 // Client usage
 const { data } = await supabase.rpc('get_user_orders', { user_id: '...' })
 ```
 
-**Implementation approach (phased):**
-- **Phase C:** SQL-language functions only (2-4 weeks, ~40% compatibility)
-- **Phase D:** PL/pgSQL → TypeScript transpilation (4-6 weeks, ~70-80% compatibility)
-- **Phase A:** Full PL/pgSQL interpreter (3-6 months, ~95% compatibility)
-
-**Key components:**
+**Implemented (Phase C - SQL functions):**
 - Function metadata schema (`_functions`, `_function_args` tables)
-- RPC HTTP handler at `/rpc/v1/{name}`
-- SQL dialect translator (PostgreSQL → SQLite)
-- Admin API and Dashboard integration
-- Optional: PL/pgSQL lexer, parser, and interpreter/transpiler
+- RPC HTTP handler at `/rest/v1/rpc/{name}`
+- SQL dialect support with parameter binding
+- Return type support (scalar, setof, table)
+- Variadic function support
+- Security definer functions (execute with elevated privileges)
+- Dashboard UI for function management
+- Admin API for function CRUD operations
+- Full E2E test suite
 
-**Complexity:** Medium (Phase C) to Very Large (Phase A)
-**Priority:** Medium (enables stored procedure migration from Supabase)
+**Future phases (optional):**
+- **Phase D:** PL/pgSQL → TypeScript transpilation (~70-80% compatibility)
+- **Phase A:** Full PL/pgSQL interpreter (~95% compatibility)
 
-See `docs/plans/2025-01-19-postgresql-functions-design.md` for full phased design.
+See `docs/rpc-functions.md` for documentation.
 
 ---
 
@@ -77,8 +77,10 @@ supabase
 - Presence (user online state tracking)
 - Postgres Changes (INSERT/UPDATE/DELETE notifications via REST hooks)
 - Filter operators (eq, neq, gt, gte, lt, lte, in)
+- RLS enforcement (events filtered by user's row-level security policies)
+- Broadcast replay (retrieve recent messages on subscribe)
 - Dashboard stats endpoint for monitoring
-- Full E2E test suite
+- Full E2E test suite (42 tests)
 
 See `docs/realtime.md` for documentation.
 
@@ -216,14 +218,14 @@ TOTP-based second factor.
 
 | Feature | Priority | Effort | Status |
 |---------|----------|--------|--------|
-| PostgreSQL functions (RPC) | Medium | Medium-Very Large | Pending (phased) |
+| PostgreSQL functions (RPC) | Medium | Medium-Very Large | ✅ Complete (SQL functions) |
 | Vector search | Medium | Medium-Large | Pending |
 | Realtime subscriptions | Medium | Large | ✅ Complete |
 | File storage | Medium | Large | ✅ Complete |
-| Edge functions | Medium | Large | Pending |
+| Edge functions | Medium | Large | ✅ Complete |
 | Full-text search | Low | Medium | ✅ Complete |
 | OAuth providers | Low | Large | ✅ Complete (Google, GitHub) |
-| Anonymous sign-in | Low | Small | Pending |
+| Anonymous sign-in | Low | Small | ✅ Complete |
 | Phone auth | Low | Medium | Pending |
 | MFA | Low | Medium | Pending |
 | Image transformations | Low | High | Pending (storage enhancement) |
@@ -231,6 +233,7 @@ TOTP-based second factor.
 
 ## Notes
 
-- sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth + Storage + Realtime)
-- Vector search is the remaining major gap vs full Supabase
-- Remaining auth gaps are for enterprise/advanced use cases
+- sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth + Storage + Realtime + Edge Functions + RPC)
+- Vector search is the remaining major feature gap vs full Supabase
+- Remaining auth gaps (phone auth, MFA) are for enterprise/advanced use cases
+- All core Supabase client SDK features are now supported
