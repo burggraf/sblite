@@ -421,7 +421,7 @@
             <div class="modal-body">
                 <div class="tab-content active" id="tabHtml">
                     <div class="email-preview">
-                        <iframe id="emailFrame" sandbox="allow-same-origin"></iframe>
+                        <iframe id="emailFrame" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe>
                     </div>
                 </div>
                 <div class="tab-content" id="tabText">
@@ -533,7 +533,9 @@
                 const iframe = document.getElementById('emailFrame');
                 const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
                 iframeDoc.open();
-                iframeDoc.write(email.body_html || '<p style="color: #888;">No HTML content</p>');
+                // Add base target to open links in new tab (not inside sandboxed iframe)
+                const htmlContent = email.body_html || '<p style="color: #888;">No HTML content</p>';
+                iframeDoc.write('<base target="_blank">' + htmlContent);
                 iframeDoc.close();
 
                 document.getElementById('emailText').textContent = email.body_text || 'No text content';
