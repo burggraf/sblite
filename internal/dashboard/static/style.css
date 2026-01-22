@@ -849,7 +849,7 @@ small.text-muted {
 }
 
 .policy-tables-panel .table-list-item.active {
-    background: var(--primary);
+    background: var(--accent);
     color: white;
 }
 
@@ -860,7 +860,7 @@ small.text-muted {
 }
 
 .policy-badge {
-    background: var(--primary);
+    background: var(--accent);
     color: white;
     padding: 0.125rem 0.5rem;
     border-radius: 10px;
@@ -869,7 +869,7 @@ small.text-muted {
 
 .policy-tables-panel .table-list-item.active .policy-badge {
     background: white;
-    color: var(--primary);
+    color: var(--accent);
 }
 
 .rls-toggle {
@@ -928,7 +928,7 @@ small.text-muted {
 }
 
 .policy-command {
-    background: var(--primary);
+    background: var(--accent);
     color: white;
     padding: 0.125rem 0.5rem;
     border-radius: 4px;
@@ -2549,11 +2549,6 @@ small.text-muted {
     font-style: normal;
 }
 
-/* Storage Policy Modal Templates */
-.storage-policy-modal {
-    max-width: 550px;
-}
-
 .template-options {
     display: flex;
     flex-direction: column;
@@ -2570,7 +2565,7 @@ small.text-muted {
 }
 
 .template-option:hover {
-    border-color: var(--primary);
+    border-color: var(--accent);
     background: var(--hover);
 }
 
@@ -3747,8 +3742,8 @@ small.text-muted {
 }
 
 .tab-btn.active {
-    color: var(--primary);
-    border-bottom-color: var(--primary);
+    color: var(--accent);
+    border-bottom-color: var(--accent);
 }
 
 .tab-btn:disabled {

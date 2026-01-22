@@ -2497,7 +2497,7 @@ const App = {
     renderStoragePolicyModalOverlay() {
         return `
             <div class="modal-overlay" onclick="if(event.target===this)App.closeStoragePolicyModal()">
-                <div class="modal storage-policy-modal">${this.renderStoragePolicyModal()}</div>
+                <div class="modal modal-large">${this.renderStoragePolicyModal()}</div>
             </div>
         `;
     },
@@ -3205,77 +3205,79 @@ const App = {
 
         return `
             <div class="modal-header">
-                <h3>${isEdit ? 'Edit Policy' : 'New Storage Policy'}</h3>
+                <h3>${isEdit ? 'Edit Storage Policy' : 'New Storage Policy'}</h3>
                 <button class="btn-icon" onclick="App.closeStoragePolicyModal()">&times;</button>
             </div>
-            <div class="modal-body">
+            <div class="modal-body policy-modal-body">
                 ${sp.error ? `<div class="message message-error">${this.escapeHtml(sp.error)}</div>` : ''}
 
-                <div class="form-group">
-                    <label class="form-label">Policy Name</label>
-                    <input type="text" class="form-input" value="${this.escapeHtml(p.policy_name || '')}"
-                        placeholder="e.g., bucket_public_read"
-                        oninput="App.updateStoragePolicyField('policy_name', this.value)">
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Command</label>
-                    <select class="form-input" onchange="App.updateStoragePolicyField('command', this.value)">
-                        <option value="SELECT" ${p.command === 'SELECT' ? 'selected' : ''}>SELECT</option>
-                        <option value="INSERT" ${p.command === 'INSERT' ? 'selected' : ''}>INSERT</option>
-                        <option value="UPDATE" ${p.command === 'UPDATE' ? 'selected' : ''}>UPDATE</option>
-                        <option value="DELETE" ${p.command === 'DELETE' ? 'selected' : ''}>DELETE</option>
-                        <option value="ALL" ${p.command === 'ALL' ? 'selected' : ''}>ALL</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Use Template</label>
-                    <select class="form-input" onchange="App.applyStoragePolicyTemplate(this.value); this.value='';">
-                        <option value="">Select a template...</option>
-                        <option value="public_read">Public read (anyone can download)</option>
-                        <option value="authenticated_read">Authenticated read</option>
-                        <option value="authenticated_upload">Authenticated upload</option>
-                        <option value="owner_folder">Owner folder (users access own folder)</option>
-                    </select>
-                </div>
-
-                ${showUsing ? `
+                <div class="policy-form">
                     <div class="form-group">
-                        <label class="form-label">USING Expression</label>
-                        <div class="policy-expr-editor">
-                            <pre class="policy-expr-highlight" id="storage-using-highlight" aria-hidden="true">${this.highlightSql(p.using_expr || '')}</pre>
-                            <textarea class="policy-expr-input"
-                                id="storage-using-input"
-                                spellcheck="false"
-                                placeholder="bucket_id = 'my-bucket' AND auth.uid() IS NOT NULL"
-                                oninput="App.updateStoragePolicyField('using_expr', this.value); document.getElementById('storage-using-highlight').innerHTML = App.highlightSql(this.value);">${this.escapeHtml(p.using_expr || '')}</textarea>
-                        </div>
-                        <small class="text-muted">Filters which existing objects can be accessed</small>
+                        <label class="form-label">Policy Name</label>
+                        <input type="text" class="form-input" value="${this.escapeHtml(p.policy_name || '')}"
+                            placeholder="e.g., bucket_public_read"
+                            oninput="App.updateStoragePolicyField('policy_name', this.value)">
                     </div>
-                ` : ''}
 
-                ${showCheck ? `
                     <div class="form-group">
-                        <label class="form-label">CHECK Expression</label>
-                        <div class="policy-expr-editor">
-                            <pre class="policy-expr-highlight" id="storage-check-highlight" aria-hidden="true">${this.highlightSql(p.check_expr || '')}</pre>
-                            <textarea class="policy-expr-input"
-                                id="storage-check-input"
-                                spellcheck="false"
-                                placeholder="bucket_id = 'my-bucket' AND auth.uid() IS NOT NULL"
-                                oninput="App.updateStoragePolicyField('check_expr', this.value); document.getElementById('storage-check-highlight').innerHTML = App.highlightSql(this.value);">${this.escapeHtml(p.check_expr || '')}</textarea>
-                        </div>
-                        <small class="text-muted">Validates new or modified objects</small>
+                        <label class="form-label">Command</label>
+                        <select class="form-input" onchange="App.updateStoragePolicyField('command', this.value)">
+                            <option value="SELECT" ${p.command === 'SELECT' ? 'selected' : ''}>SELECT</option>
+                            <option value="INSERT" ${p.command === 'INSERT' ? 'selected' : ''}>INSERT</option>
+                            <option value="UPDATE" ${p.command === 'UPDATE' ? 'selected' : ''}>UPDATE</option>
+                            <option value="DELETE" ${p.command === 'DELETE' ? 'selected' : ''}>DELETE</option>
+                            <option value="ALL" ${p.command === 'ALL' ? 'selected' : ''}>ALL</option>
+                        </select>
                     </div>
-                ` : ''}
 
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" ${p.enabled ? 'checked' : ''}
-                            onchange="App.updateStoragePolicyField('enabled', this.checked)">
-                        Policy enabled
-                    </label>
+                    <div class="form-group">
+                        <label class="form-label">Use Template</label>
+                        <select class="form-input" onchange="App.applyStoragePolicyTemplate(this.value); this.value='';">
+                            <option value="">Select a template...</option>
+                            <option value="public_read">Public read (anyone can download)</option>
+                            <option value="authenticated_read">Authenticated read</option>
+                            <option value="authenticated_upload">Authenticated upload</option>
+                            <option value="owner_folder">Owner folder (users access own folder)</option>
+                        </select>
+                    </div>
+
+                    ${showUsing ? `
+                        <div class="form-group">
+                            <label class="form-label">USING Expression</label>
+                            <div class="policy-expr-editor">
+                                <pre class="policy-expr-highlight" id="storage-using-highlight" aria-hidden="true">${this.highlightSql(p.using_expr || '')}</pre>
+                                <textarea class="policy-expr-input"
+                                    id="storage-using-input"
+                                    spellcheck="false"
+                                    placeholder="bucket_id = 'my-bucket' AND auth.uid() IS NOT NULL"
+                                    oninput="App.updateStoragePolicyField('using_expr', this.value); document.getElementById('storage-using-highlight').innerHTML = App.highlightSql(this.value);">${this.escapeHtml(p.using_expr || '')}</textarea>
+                            </div>
+                            <small class="text-muted">Filters which existing objects can be accessed</small>
+                        </div>
+                    ` : ''}
+
+                    ${showCheck ? `
+                        <div class="form-group">
+                            <label class="form-label">CHECK Expression</label>
+                            <div class="policy-expr-editor">
+                                <pre class="policy-expr-highlight" id="storage-check-highlight" aria-hidden="true">${this.highlightSql(p.check_expr || '')}</pre>
+                                <textarea class="policy-expr-input"
+                                    id="storage-check-input"
+                                    spellcheck="false"
+                                    placeholder="bucket_id = 'my-bucket' AND auth.uid() IS NOT NULL"
+                                    oninput="App.updateStoragePolicyField('check_expr', this.value); document.getElementById('storage-check-highlight').innerHTML = App.highlightSql(this.value);">${this.escapeHtml(p.check_expr || '')}</textarea>
+                            </div>
+                            <small class="text-muted">Validates new or modified objects</small>
+                        </div>
+                    ` : ''}
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" ${p.enabled ? 'checked' : ''}
+                                onchange="App.updateStoragePolicyField('enabled', this.checked)">
+                            Policy enabled
+                        </label>
+                    </div>
                 </div>
 
                 <div class="policy-preview">
