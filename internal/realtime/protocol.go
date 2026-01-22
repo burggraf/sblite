@@ -196,12 +196,17 @@ func NewPostgresChangeMessage(topic, joinRef string, ids []int, event ChangeEven
 }
 
 // NewPresenceStateMessage creates a presence_state message
-func NewPresenceStateMessage(topic, joinRef string, state map[string]any) *Message {
+func NewPresenceStateMessage(topic, joinRef string, state map[string][]map[string]any) *Message {
+	// Convert to generic map for JSON serialization
+	payload := make(map[string]any)
+	for k, v := range state {
+		payload[k] = v
+	}
 	return &Message{
 		Event:   EventPresenceState,
 		Topic:   topic,
 		JoinRef: joinRef,
-		Payload: state,
+		Payload: payload,
 	}
 }
 
