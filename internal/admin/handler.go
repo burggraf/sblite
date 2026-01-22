@@ -392,6 +392,10 @@ func pgTypeToSQLite(pgType string) string {
 	case "bytea":
 		return "BLOB"
 	default:
+		// Handle vector types (e.g., "vector(1536)")
+		if types.IsVectorType(pgType) {
+			return "TEXT" // Vectors stored as JSON arrays in TEXT
+		}
 		return "TEXT"
 	}
 }

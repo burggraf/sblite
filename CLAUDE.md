@@ -242,6 +242,27 @@ Changes take effect immediately without server restart (hot-reload).
 | `/rest/v1/{table}` | DELETE | Delete rows matching filters |
 | `/rest/v1/rpc/{name}` | POST | Call RPC function |
 
+**Built-in RPC Functions:**
+
+| Function | Description |
+|----------|-------------|
+| `vector_search` | Similarity search on vector columns |
+
+**Vector Search Parameters:**
+
+```javascript
+const { data } = await supabase.rpc('vector_search', {
+  table_name: 'documents',        // Required: table with vectors
+  embedding_column: 'embedding',   // Required: vector column name
+  query_embedding: [0.1, 0.2, ...],// Required: query vector
+  match_count: 10,                 // Optional: max results (default 10)
+  match_threshold: 0.7,            // Optional: min similarity (default 0)
+  metric: 'cosine',                // Optional: cosine|l2|dot (default cosine)
+  select_columns: ['id', 'title'], // Optional: columns to return
+  filter: { category: 'tech' }     // Optional: additional WHERE conditions
+});
+```
+
 ### Storage API (`/storage/v1`)
 
 | Endpoint | Method | Description |
@@ -444,6 +465,7 @@ sblite tracks intended PostgreSQL types for SQLite-stored data, enabling clean m
 | `timestamptz` | TEXT | timestamptz | ISO 8601 UTC |
 | `jsonb` | TEXT | jsonb | json_valid() |
 | `bytea` | BLOB | bytea | Valid base64 |
+| `vector(N)` | TEXT | vector(N) | JSON array, dimension N |
 
 **Schema Metadata:**
 - Column types stored in `_columns` table
@@ -556,9 +578,10 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - Full-text search (SQLite FTS5)
 - PostgreSQL Functions (RPC) - SQL functions via supabase.rpc()
 - Realtime subscriptions (WebSocket) - Broadcast, Presence, Postgres Changes
+- Vector search (pgvector-compatible) - cosine, L2, dot product metrics
 
 ### Planned
-- Vector search (pgvector-compatible)
+- (no planned features at this time)
 
 See `docs/plans/SBLITE-TODO.md` for detailed tracking.
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/markb/sblite/internal/fts"
 	"github.com/markb/sblite/internal/schema"
+	"github.com/markb/sblite/internal/types"
 )
 
 // Exporter generates PostgreSQL DDL from sblite schema metadata.
@@ -52,6 +53,30 @@ func (e *Exporter) ExportDDL() (string, error) {
 	sb.WriteString("-- - Review default values and constraints\n")
 	sb.WriteString("\n")
 
+	// Check if any table has vector columns
+	hasVectorColumns := false
+	for _, tableName := range tables {
+		columns, err := e.schema.GetColumns(tableName)
+		if err != nil {
+			continue
+		}
+		for _, col := range columns {
+			if types.IsVectorType(col.PgType) {
+				hasVectorColumns = true
+				break
+			}
+		}
+		if hasVectorColumns {
+			break
+		}
+	}
+
+	// Add pgvector extension if needed
+	if hasVectorColumns {
+		sb.WriteString("-- Enable pgvector extension for vector similarity search\n")
+		sb.WriteString("CREATE EXTENSION IF NOT EXISTS vector;\n\n")
+	}
+
 	// Export each table
 	for i, tableName := range tables {
 		tableDDL, err := e.exportTable(tableName)
@@ -61,6 +86,18 @@ func (e *Exporter) ExportDDL() (string, error) {
 		sb.WriteString(tableDDL)
 		if i < len(tables)-1 {
 			sb.WriteString("\n")
+		}
+	}
+
+	// Export vector indexes if any
+	if hasVectorColumns {
+		vectorDDL, err := e.exportVectorIndexes(tables)
+		if err != nil {
+			return "", fmt.Errorf("failed to export vector indexes: %w", err)
+		}
+		if vectorDDL != "" {
+			sb.WriteString("\n")
+			sb.WriteString(vectorDDL)
 		}
 	}
 
@@ -74,6 +111,12 @@ func (e *Exporter) ExportDDL() (string, error) {
 			sb.WriteString("\n")
 			sb.WriteString(ftsDDL)
 		}
+	}
+
+	// Export vector_search function if needed
+	if hasVectorColumns {
+		sb.WriteString("\n")
+		sb.WriteString(e.exportVectorSearchFunction())
 	}
 
 	return sb.String(), nil
@@ -163,7 +206,12 @@ func sortColumns(columns map[string]schema.Column) []schema.Column {
 }
 
 // pgTypeToUpper converts a PostgreSQL type to uppercase for DDL output.
+// Handles special cases like vector types which should remain lowercase.
 func pgTypeToUpper(pgType string) string {
+	// Vector types should remain as "vector(N)" for pgvector compatibility
+	if types.IsVectorType(pgType) {
+		return pgType
+	}
 	return strings.ToUpper(pgType)
 }
 
@@ -274,4 +322,95 @@ func mapTokenizerToTSConfig(tokenizer string) string {
 	default:
 		return "simple"
 	}
+}
+
+// exportVectorIndexes generates HNSW indexes for vector columns.
+func (e *Exporter) exportVectorIndexes(tables []string) (string, error) {
+	var sb strings.Builder
+	hasIndexes := false
+
+	for _, tableName := range tables {
+		columns, err := e.schema.GetColumns(tableName)
+		if err != nil {
+			continue
+		}
+
+		for _, col := range columns {
+			if !types.IsVectorType(col.PgType) {
+				continue
+			}
+
+			if !hasIndexes {
+				sb.WriteString("-- Vector similarity indexes (HNSW for fast approximate nearest neighbor search)\n")
+				sb.WriteString("-- Note: HNSW indexes provide fast queries but slow inserts. Consider IVFFlat for write-heavy workloads.\n")
+				sb.WriteString("\n")
+				hasIndexes = true
+			}
+
+			// Generate HNSW index for cosine similarity (most common for embeddings)
+			indexName := fmt.Sprintf("%s_%s_hnsw_idx", tableName, col.ColumnName)
+			sb.WriteString(fmt.Sprintf("CREATE INDEX %s ON %s USING hnsw (%s vector_cosine_ops);\n",
+				indexName, tableName, col.ColumnName))
+		}
+	}
+
+	return sb.String(), nil
+}
+
+// exportVectorSearchFunction generates a PostgreSQL function compatible with sblite's vector_search.
+func (e *Exporter) exportVectorSearchFunction() string {
+	return `-- Vector search function compatible with sblite's vector_search RPC
+-- Usage: SELECT * FROM vector_search('table_name', 'embedding_column', query_vector, match_count, match_threshold, 'metric')
+CREATE OR REPLACE FUNCTION vector_search(
+    table_name text,
+    embedding_column text,
+    query_embedding vector,
+    match_count integer DEFAULT 10,
+    match_threshold float DEFAULT 0,
+    metric text DEFAULT 'cosine'
+)
+RETURNS SETOF jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+AS $$
+DECLARE
+    query text;
+    distance_op text;
+    similarity_expr text;
+BEGIN
+    -- Map metric to pgvector operator
+    CASE metric
+        WHEN 'cosine' THEN
+            distance_op := '<=>';
+            similarity_expr := '1 - (' || embedding_column || ' <=> $1)';
+        WHEN 'l2' THEN
+            distance_op := '<->';
+            similarity_expr := '-(' || embedding_column || ' <-> $1)';
+        WHEN 'dot' THEN
+            distance_op := '<#>';
+            similarity_expr := '(' || embedding_column || ' <#> $1) * -1';
+        ELSE
+            RAISE EXCEPTION 'Unknown metric: %', metric;
+    END CASE;
+
+    -- Build and execute dynamic query
+    query := format(
+        'SELECT to_jsonb(t.*) || jsonb_build_object(''similarity'', %s) AS result
+         FROM %I t
+         WHERE %I IS NOT NULL
+         AND CASE WHEN $2 > 0 THEN %s >= $2 ELSE true END
+         ORDER BY %I %s $1
+         LIMIT $3',
+        similarity_expr,
+        table_name,
+        embedding_column,
+        similarity_expr,
+        embedding_column,
+        distance_op
+    );
+
+    RETURN QUERY EXECUTE query USING query_embedding, match_threshold, match_count;
+END;
+$$;
+`
 }

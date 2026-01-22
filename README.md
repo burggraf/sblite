@@ -34,6 +34,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | API Docs Dashboard | :white_check_mark: |
 | Realtime subscriptions (WebSocket) | :white_check_mark: |
 | File storage | :white_check_mark: |
+| Vector search (pgvector-compatible) | :white_check_mark: |
 
 ## Quick Start
 
@@ -260,6 +261,7 @@ Enable with `--realtime` flag. Supports Broadcast, Presence, and Postgres Change
 - [Edge Functions](docs/edge-functions.md) - Serverless TypeScript/JavaScript functions with secrets and configuration
 - [API Docs Dashboard](docs/api-docs-dashboard.md) - Auto-generated API documentation with code examples
 - [Realtime](docs/realtime.md) - WebSocket subscriptions for Broadcast, Presence, and Postgres Changes
+- [Vector Search](docs/vector-search.md) - pgvector-compatible similarity search for AI/ML applications
 
 ### Design & Implementation
 - [Design Document](docs/plans/2026-01-16-supabase-lite-design.md) - Architecture, schema design, and roadmap

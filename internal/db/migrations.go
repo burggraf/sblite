@@ -119,14 +119,14 @@ CREATE INDEX IF NOT EXISTS idx_auth_verification_tokens_user ON auth_verificatio
 CREATE INDEX IF NOT EXISTS idx_auth_verification_tokens_type ON auth_verification_tokens(type);
 `
 
+// columnsSchema defines the _columns metadata table.
+// Note: pg_type validation is handled at the application level in types.IsValidType()
+// to support parameterized types like vector(1536).
 const columnsSchema = `
 CREATE TABLE IF NOT EXISTS _columns (
     table_name    TEXT NOT NULL,
     column_name   TEXT NOT NULL,
-    pg_type       TEXT NOT NULL CHECK (pg_type IN (
-                    'uuid', 'text', 'integer', 'numeric',
-                    'boolean', 'timestamptz', 'jsonb', 'bytea'
-                  )),
+    pg_type       TEXT NOT NULL,
     is_nullable   INTEGER DEFAULT 1,
     default_value TEXT,
     is_primary    INTEGER DEFAULT 0,
@@ -406,6 +406,35 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(defaultTemplates)
 	if err != nil {
 		return fmt.Errorf("failed to seed email templates: %w", err)
+	}
+
+	// Check if _columns table exists with old CHECK constraint that doesn't support vector types
+	// If so, recreate it without the constraint (data is preserved via temp table)
+	var hasOldConstraint int
+	row = db.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type='table' AND name='_columns' AND sql LIKE '%CHECK (pg_type IN%'
+	`)
+	if err := row.Scan(&hasOldConstraint); err == nil && hasOldConstraint > 0 {
+		// Migrate to new schema without CHECK constraint
+		_, _ = db.Exec(`
+			-- Create temp table with data
+			CREATE TABLE _columns_new (
+				table_name    TEXT NOT NULL,
+				column_name   TEXT NOT NULL,
+				pg_type       TEXT NOT NULL,
+				is_nullable   INTEGER DEFAULT 1,
+				default_value TEXT,
+				is_primary    INTEGER DEFAULT 0,
+				description   TEXT DEFAULT '',
+				created_at    TEXT DEFAULT (datetime('now')),
+				PRIMARY KEY (table_name, column_name)
+			);
+			INSERT INTO _columns_new SELECT * FROM _columns;
+			DROP TABLE _columns;
+			ALTER TABLE _columns_new RENAME TO _columns;
+			CREATE INDEX IF NOT EXISTS idx_columns_table ON _columns(table_name);
+		`)
 	}
 
 	_, err = db.Exec(columnsSchema)

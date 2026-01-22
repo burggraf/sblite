@@ -23,6 +23,7 @@ import (
 	"github.com/markb/sblite/internal/rpc"
 	"github.com/markb/sblite/internal/schema"
 	"github.com/markb/sblite/internal/storage"
+	"github.com/markb/sblite/internal/vector"
 )
 
 type Server struct {
@@ -61,6 +62,9 @@ type Server struct {
 	rpcExecutor    *rpc.Executor
 	rpcHandler     *rpc.Handler
 	rpcInterceptor *rpc.Interceptor
+
+	// Vector search
+	vectorSearcher *vector.Searcher
 
 	// Realtime fields
 	realtimeService *realtime.Service
@@ -127,6 +131,10 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 	s.rpcExecutor = rpc.NewExecutor(database.DB, s.rpcStore)
 	s.rpcHandler = rpc.NewHandler(s.rpcExecutor, s.rpcStore)
 	s.rpcInterceptor = rpc.NewInterceptor(s.rpcStore)
+
+	// Initialize vector searcher and wire to RPC handler
+	s.vectorSearcher = vector.NewSearcher(database.DB, rlsEnforcer, schemaInstance)
+	s.rpcHandler.SetVectorSearcher(s.vectorSearcher)
 
 	// Initialize dashboard handler
 	s.dashboardHandler = dashboard.NewHandler(database.DB, cfg.MigrationsDir)

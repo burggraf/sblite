@@ -29,12 +29,34 @@ var validators = map[PgType]Validator{
 // uuidRegex matches standard UUID format: 8-4-4-4-12 hex characters.
 var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+// VectorValidator is a function type for validating vector values.
+// It's set by the vector package to avoid import cycles.
+type VectorValidator func(value any, dim int) error
+
+// vectorValidator is set by the vector package during init.
+var vectorValidator VectorValidator
+
+// SetVectorValidator sets the vector validation function.
+// Called by the vector package during initialization.
+func SetVectorValidator(v VectorValidator) {
+	vectorValidator = v
+}
+
 // Validate checks if a value is valid for the given PostgreSQL type.
 // Nil values are always valid (nullability is checked separately).
 func Validate(pgType PgType, value any) error {
 	// Nil values are always valid
 	if value == nil {
 		return nil
+	}
+
+	// Check for vector type first (parameterized type)
+	if IsVectorType(string(pgType)) {
+		if vectorValidator == nil {
+			return fmt.Errorf("vector validation not configured")
+		}
+		dim, _ := GetVectorDimension(string(pgType))
+		return vectorValidator(value, dim)
 	}
 
 	validator, ok := validators[pgType]
