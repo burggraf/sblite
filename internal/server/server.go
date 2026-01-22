@@ -560,6 +560,11 @@ func (s *Server) EnableRealtime() {
 
 	s.realtimeService = realtime.NewService(s.db.DB, s.rlsService, cfg)
 
+	// Set notifier on REST handler
+	if s.restHandler != nil {
+		s.restHandler.SetRealtimeNotifier(s.realtimeService)
+	}
+
 	// Register WebSocket route
 	s.router.Get("/realtime/v1/websocket", s.realtimeService.HandleWebSocket)
 

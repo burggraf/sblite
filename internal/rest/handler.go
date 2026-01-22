@@ -18,6 +18,11 @@ import (
 	"github.com/markb/sblite/internal/types"
 )
 
+// RealtimeNotifier is called when data changes
+type RealtimeNotifier interface {
+	NotifyChange(schema, table, eventType string, oldRow, newRow map[string]any)
+}
+
 type Handler struct {
 	db       *db.DB
 	enforcer *rls.Enforcer
@@ -25,6 +30,7 @@ type Handler struct {
 	relExec  *RelationQueryExecutor
 	schema   *schema.Schema
 	fts      *fts.Manager
+	notifier RealtimeNotifier
 }
 
 func NewHandler(database *db.DB, enforcer *rls.Enforcer, s *schema.Schema) *Handler {
@@ -40,6 +46,11 @@ func NewHandler(database *db.DB, enforcer *rls.Enforcer, s *schema.Schema) *Hand
 		schema:   s,
 		fts:      fts.NewManager(database.DB),
 	}
+}
+
+// SetRealtimeNotifier sets the notifier for change events
+func (h *Handler) SetRealtimeNotifier(n RealtimeNotifier) {
+	h.notifier = n
 }
 
 // GetAuthContextFromRequest extracts auth context from request for RLS
@@ -610,6 +621,13 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 	if returnRepresentation && len(insertedIDs) > 0 {
 		results := h.selectByIDs(table, selectCols, insertedIDs)
 
+		// Notify realtime subscribers
+		if h.notifier != nil {
+			for _, row := range results {
+				h.notifier.NotifyChange("public", table, "INSERT", nil, row)
+			}
+		}
+
 		// Handle single object response for maybeSingle()/single()
 		if wantSingle {
 			if len(results) == 0 {
@@ -627,6 +645,15 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 
 		json.NewEncoder(w).Encode(results)
 		return
+	}
+
+	// Notify realtime subscribers even when not returning representation
+	// We need to fetch the inserted rows to notify
+	if h.notifier != nil && len(insertedIDs) > 0 {
+		results := h.selectByIDs(table, nil, insertedIDs)
+		for _, row := range results {
+			h.notifier.NotifyChange("public", table, "INSERT", nil, row)
+		}
 	}
 
 	json.NewEncoder(w).Encode(map[string]any{"inserted": true})
@@ -662,10 +689,24 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If returning representation, first get the IDs of rows to be updated
+	// Capture old rows before update (for realtime notifications and return=representation)
+	var oldRows []map[string]any
 	var affectedIDs []int64
-	if returnRepresentation {
-		affectedIDs = h.getMatchingIDsWithRLS(q)
+	if returnRepresentation || h.notifier != nil {
+		oldRows = h.selectMatchingWithRLS(q)
+		// Extract IDs from old rows
+		for _, row := range oldRows {
+			if id, ok := row["id"]; ok {
+				switch v := id.(type) {
+				case float64:
+					affectedIDs = append(affectedIDs, int64(v))
+				case int64:
+					affectedIDs = append(affectedIDs, v)
+				case int:
+					affectedIDs = append(affectedIDs, int64(v))
+				}
+			}
+		}
 	}
 
 	sqlStr, args := BuildUpdateQuery(q, data)
@@ -681,11 +722,35 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	if returnRepresentation {
 		if len(affectedIDs) > 0 {
 			results := h.selectByIDs(q.Table, q.Select, affectedIDs)
+
+			// Notify realtime subscribers
+			if h.notifier != nil {
+				for i, row := range results {
+					var oldRow map[string]any
+					if i < len(oldRows) {
+						oldRow = oldRows[i]
+					}
+					h.notifier.NotifyChange("public", q.Table, "UPDATE", oldRow, row)
+				}
+			}
+
 			json.NewEncoder(w).Encode(results)
 		} else {
 			json.NewEncoder(w).Encode([]map[string]any{})
 		}
 		return
+	}
+
+	// Notify realtime subscribers even when not returning representation
+	if h.notifier != nil && len(affectedIDs) > 0 {
+		results := h.selectByIDs(q.Table, nil, affectedIDs)
+		for i, row := range results {
+			var oldRow map[string]any
+			if i < len(oldRows) {
+				oldRow = oldRows[i]
+			}
+			h.notifier.NotifyChange("public", q.Table, "UPDATE", oldRow, row)
+		}
 	}
 
 	json.NewEncoder(w).Encode(map[string]any{"updated": true})
@@ -714,9 +779,9 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If returning representation, first get the data of rows to be deleted
+	// Get the data of rows to be deleted (for representation and realtime notifications)
 	var deletedRows []map[string]any
-	if returnRepresentation {
+	if returnRepresentation || h.notifier != nil {
 		deletedRows = h.selectMatchingWithRLS(q)
 	}
 
@@ -725,6 +790,13 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "delete_error", err.Error())
 		return
+	}
+
+	// Notify realtime subscribers
+	if h.notifier != nil {
+		for _, row := range deletedRows {
+			h.notifier.NotifyChange("public", q.Table, "DELETE", row, nil)
+		}
 	}
 
 	// Return representation if requested
