@@ -75,7 +75,18 @@ const App = {
                 testResult: null,
                 saving: false,
                 dirty: false,
-                originalBackend: 'local'
+                originalBackend: 'local',
+                policies: {
+                    loading: false,
+                    list: [],
+                    buckets: [],
+                    selectedBucket: null,
+                    showModal: false,
+                    modalStep: 'template',
+                    editingPolicy: null,
+                    template: null,
+                    error: null
+                }
             },
             mailSettings: {
                 mode: 'log',
