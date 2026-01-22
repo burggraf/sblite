@@ -66,7 +66,7 @@ func TestEmailService_SendMagicLink(t *testing.T) {
 		SiteURL: "https://example.com",
 	})
 
-	err := svc.SendMagicLink(context.Background(), "user@example.com", "token789")
+	err := svc.SendMagicLink(context.Background(), "user@example.com", "token789", "")
 	if err != nil {
 		t.Fatalf("SendMagicLink() error = %v", err)
 	}
