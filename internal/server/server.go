@@ -565,6 +565,11 @@ func (s *Server) EnableRealtime() {
 		s.restHandler.SetRealtimeNotifier(s.realtimeService)
 	}
 
+	// Set realtime service on dashboard handler for stats API
+	if s.dashboardHandler != nil {
+		s.dashboardHandler.SetRealtimeService(s.realtimeService)
+	}
+
 	// Register WebSocket route
 	s.router.Get("/realtime/v1/websocket", s.realtimeService.HandleWebSocket)
 

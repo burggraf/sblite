@@ -40,7 +40,7 @@ func (s *Service) Hub() *Hub {
 }
 
 // Stats returns realtime statistics
-func (s *Service) Stats() HubStats {
+func (s *Service) Stats() any {
 	return s.hub.Stats()
 }
 

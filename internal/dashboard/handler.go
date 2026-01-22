@@ -38,6 +38,11 @@ var staticFS embed.FS
 
 const sessionCookieName = "_sblite_session"
 
+// RealtimeStatsProvider provides realtime statistics
+type RealtimeStatsProvider interface {
+	Stats() any
+}
+
 // Handler serves the dashboard UI and API.
 type Handler struct {
 	db               *sql.DB
@@ -58,6 +63,7 @@ type Handler struct {
 	onSiteURLChange   func(string)
 	onStorageReload   func(*StorageConfig) error
 	onMailReload      func(*MailConfig) error
+	realtimeService   RealtimeStatsProvider
 }
 
 // ServerConfig holds server configuration for display in settings.
@@ -137,6 +143,11 @@ func (h *Handler) SetCatchMailer(cm *mail.CatchMailer) {
 	if cm != nil {
 		h.mailViewer = viewer.NewHandler(cm)
 	}
+}
+
+// SetRealtimeService sets the realtime service for stats
+func (h *Handler) SetRealtimeService(svc RealtimeStatsProvider) {
+	h.realtimeService = svc
 }
 
 // RegisterRoutes registers the dashboard routes.
@@ -323,6 +334,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/functions", h.handleAPIDocsListFunctions)
 			r.Get("/functions/{name}", h.handleAPIDocsGetFunction)
 			r.Patch("/functions/{name}/description", h.handleAPIDocsUpdateFunctionDescription)
+		})
+
+		// Realtime stats route (require auth)
+		r.Route("/realtime", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/stats", h.handleRealtimeStats)
 		})
 	})
 
@@ -5255,4 +5272,18 @@ func sqliteTypeToPGType(sqliteType string) string {
 	default:
 		return "text"
 	}
+}
+
+// handleRealtimeStats returns realtime connection statistics
+func (h *Handler) handleRealtimeStats(w http.ResponseWriter, r *http.Request) {
+	if h.realtimeService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "realtime not enabled",
+		})
+		return
+	}
+
+	stats := h.realtimeService.Stats()
+	json.NewEncoder(w).Encode(stats)
 }
