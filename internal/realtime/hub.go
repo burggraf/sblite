@@ -195,10 +195,3 @@ func (h *Hub) matchesSubscription(sub PostgresChangeSub, event ChangeEvent) bool
 	return true
 }
 
-// matchesFilter checks if an event matches a filter expression
-// TODO: This is a stub that returns true - will be implemented in Task 1.8
-func matchesFilter(filter string, newRow, oldRow map[string]any) bool {
-	// Stub implementation - always returns true for now
-	// Task 1.8 will implement proper filter parsing and evaluation
-	return true
-}
