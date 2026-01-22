@@ -341,6 +341,8 @@ Web dashboard accessible at `http://localhost:8080/_`
 | `/_/api/settings/storage` | GET | Get storage configuration |
 | `/_/api/settings/storage` | PATCH | Update storage configuration (hot-reload) |
 | `/_/api/settings/storage/test` | POST | Test S3 connection |
+| `/_/api/settings/mail` | GET | Get mail configuration |
+| `/_/api/settings/mail` | PATCH | Update mail configuration (hot-reload) |
 | `/_/api/functions` | GET | List all edge functions |
 | `/_/api/functions/status` | GET | Get edge runtime status |
 | `/_/api/functions/{name}` | GET | Get function details |

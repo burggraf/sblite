@@ -117,6 +117,17 @@ export SBLITE_SMTP_PORT=1025
 # No auth needed for local mail catchers
 ```
 
+## Dashboard Configuration
+
+Email settings can also be configured through the web dashboard at `/_` under Settings → Email.
+
+**Available settings:**
+- Email Mode (Log, Catch, SMTP)
+- From Address
+- SMTP Host, Port, Username, Password (when SMTP mode selected)
+
+Changes made through the dashboard take effect immediately without server restart (hot-reload). Dashboard settings take priority over CLI flags and environment variables.
+
 ## Email Types
 
 The system supports five email types for different authentication flows:
