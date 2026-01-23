@@ -164,6 +164,10 @@ jobs:
           # Process transitive dependencies in bundled dylibs
           # Run multiple passes until no new deps are found
           echo "=== Processing transitive dependencies ==="
+
+          # GCC lib directory for resolving @rpath references
+          GCC_LIB_DIR="${{ matrix.homebrew_prefix }}/opt/gcc/lib/gcc/current"
+
           PASS=1
           while true; do
             echo "--- Pass $PASS ---"
@@ -176,7 +180,7 @@ jobs:
                 # Fix the library's own ID (relative to itself, no libs/ prefix)
                 install_name_tool -id "@loader_path/$LIB_NAME" "$lib" 2>/dev/null || true
 
-                # Find Homebrew dependencies
+                # Find Homebrew dependencies (absolute paths)
                 LIB_DEPS=$(otool -L "$lib" | grep -E '${{ matrix.homebrew_prefix }}' | awk '{print $1}' || true)
                 for dep in $LIB_DEPS; do
                   if [ -f "$dep" ]; then
@@ -189,6 +193,25 @@ jobs:
                     fi
                     # Update reference (dylib to dylib, same folder, no libs/ prefix)
                     install_name_tool -change "$dep" "@loader_path/$DEP_NAME" "$lib"
+                  fi
+                done
+
+                # Find @rpath dependencies (commonly used by GCC libs)
+                RPATH_DEPS=$(otool -L "$lib" | grep '@rpath/' | awk '{print $1}' || true)
+                for rpath_ref in $RPATH_DEPS; do
+                  DEP_NAME=$(basename "$rpath_ref")
+                  # Try to find the actual file in GCC lib directory
+                  ACTUAL_PATH="$GCC_LIB_DIR/$DEP_NAME"
+                  if [ -f "$ACTUAL_PATH" ]; then
+                    if [ ! -f "$LIBS_DIR/$DEP_NAME" ]; then
+                      echo "  Bundling @rpath dep: $ACTUAL_PATH"
+                      cp "$ACTUAL_PATH" "$LIBS_DIR/$DEP_NAME"
+                      NEW_DEPS_FOUND=true
+                    fi
+                    # Update reference
+                    install_name_tool -change "$rpath_ref" "@loader_path/$DEP_NAME" "$lib"
+                  else
+                    echo "  Warning: Could not find $DEP_NAME for @rpath reference"
                   fi
                 done
               fi
