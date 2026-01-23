@@ -1,6 +1,8 @@
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ResultCard, type ScriptResult } from "./result-card"
 
+export type { ScriptResult }
+
 interface ResultsListProps {
   results: ScriptResult[]
   query: string
