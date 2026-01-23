@@ -18,23 +18,21 @@ jobs:
     strategy:
       matrix:
         include:
-          # Only linux-arm64 remaining - others already released
-          # Linux AMD64 - already released
-          # - os: linux
-          #   arch: amd64
-          #   runner: ubuntu-latest
-          #   target: x86_64-unknown-linux-gnu
+          # Linux AMD64 - rebuild with stripped binary
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
           # Linux ARM64 - native build on ARM runner
           - os: linux
             arch: arm64
             runner: ubuntu-24.04-arm64
             target: aarch64-unknown-linux-gnu
-          # macOS ARM64 - already released
+          # macOS builds already released (137-141MB, no stripping needed)
           # - os: darwin
           #   arch: arm64
           #   runner: macos-latest
           #   target: aarch64-apple-darwin
-          # macOS AMD64 - already released
           # - os: darwin
           #   arch: amd64
           #   runner: macos-15-large
@@ -77,6 +75,12 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.target }}/release/edge-runtime dist/edge-runtime-${{ inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}
           chmod +x dist/edge-runtime-${{ inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}
+
+      - name: Strip binary (reduce size)
+        run: |
+          echo "Before strip: $(du -h dist/edge-runtime-${{ inputs.version }}-${{ matrix.os }}-${{ matrix.arch }})"
+          strip dist/edge-runtime-${{ inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}
+          echo "After strip: $(du -h dist/edge-runtime-${{ inputs.version }}-${{ matrix.os }}-${{ matrix.arch }})"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
