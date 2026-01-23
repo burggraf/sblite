@@ -189,7 +189,8 @@ const App = {
             loading: false,
             offset: 0,
             hasMore: false,
-            pageSize: 100
+            pageSize: 100,
+            apiKey: null  // service_role key for TUS uploads
         },
         apiDocs: {
             page: 'intro',          // 'intro', 'auth', 'users-management', 'tables-intro', 'rpc-intro'
@@ -7156,9 +7157,17 @@ const App = {
         this.state.storage.loading = true;
         this.render();
         try {
-            const res = await fetch('/_/api/storage/buckets');
-            if (!res.ok) throw new Error('Failed to load buckets');
-            this.state.storage.buckets = await res.json();
+            // Fetch buckets and API key in parallel
+            const [bucketsRes, apiKeysRes] = await Promise.all([
+                fetch('/_/api/storage/buckets'),
+                fetch('/_/api/apikeys')
+            ]);
+            if (!bucketsRes.ok) throw new Error('Failed to load buckets');
+            this.state.storage.buckets = await bucketsRes.json();
+            if (apiKeysRes.ok) {
+                const keys = await apiKeysRes.json();
+                this.state.storage.apiKey = keys.service_role_key;
+            }
         } catch (err) {
             this.state.error = err.message;
             this.state.storage.buckets = [];
@@ -8056,31 +8065,10 @@ const App = {
         const folderPath = currentPath + trimmedName + '/';
 
         try {
-            // Create folder by uploading a placeholder .gitkeep file using XHR (same as file uploads)
+            // Create folder by uploading a placeholder .gitkeep file using TUS
             const placeholder = new File([''], '.gitkeep', { type: 'application/octet-stream' });
-            const formData = new FormData();
-            formData.append('bucket', selectedBucket.name);
-            formData.append('path', folderPath);
-            formData.append('file', placeholder);
-
-            await new Promise((resolve, reject) => {
-                const xhr = new XMLHttpRequest();
-                xhr.addEventListener('load', () => {
-                    if (xhr.status >= 200 && xhr.status < 300) {
-                        resolve();
-                    } else {
-                        let errorMsg = 'Failed to create folder';
-                        try {
-                            const errData = JSON.parse(xhr.responseText);
-                            errorMsg = errData.message || errData.error || errorMsg;
-                        } catch {}
-                        reject(new Error(errorMsg));
-                    }
-                });
-                xhr.addEventListener('error', () => reject(new Error('Network error')));
-                xhr.open('POST', '/_/api/storage/objects/upload');
-                xhr.send(formData);
-            });
+            const dummyUploadItem = { progress: 0 };
+            await this.uploadWithTUS(selectedBucket.name, folderPath, placeholder, dummyUploadItem);
 
             await this.loadObjects();
             this.showToast(`Folder "${trimmedName}" created`, 'success');
@@ -8124,15 +8112,10 @@ const App = {
         this.state.storage.uploading.push(...uploadItems);
         this.render();
 
-        // Upload files sequentially (keeps progress tracking simple)
+        // Upload files sequentially using TUS (keeps progress tracking simple)
         for (const uploadItem of uploadItems) {
             try {
-                const formData = new FormData();
-                formData.append('bucket', bucketName);
-                formData.append('path', uploadPath);
-                formData.append('file', uploadItem.file);
-
-                await this.uploadWithProgress(formData, uploadItem);
+                await this.uploadWithTUS(bucketName, uploadPath, uploadItem.file, uploadItem);
                 uploadItem.status = 'complete';
                 uploadItem.progress = 100;
             } catch (err) {
@@ -8160,40 +8143,100 @@ const App = {
     // Throttle render calls during upload progress
     _lastProgressRender: 0,
 
-    uploadWithProgress(formData, uploadItem) {
-        return new Promise((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            xhr.upload.addEventListener('progress', (e) => {
-                if (e.lengthComputable) {
-                    uploadItem.progress = Math.round((e.loaded / e.total) * 100);
-                    // Throttle progress renders to max 10 per second
-                    const now = Date.now();
-                    if (now - this._lastProgressRender > 100) {
-                        this._lastProgressRender = now;
-                        this.render();
-                    }
-                }
-            });
-            xhr.addEventListener('load', () => {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    try {
-                        resolve(JSON.parse(xhr.responseText));
-                    } catch {
-                        resolve({});
-                    }
-                } else {
-                    let errorMsg = 'Upload failed';
-                    try {
-                        const errData = JSON.parse(xhr.responseText);
-                        errorMsg = errData.message || errData.error || errorMsg;
-                    } catch {}
-                    reject(new Error(errorMsg));
-                }
-            });
-            xhr.addEventListener('error', () => reject(new Error('Upload failed - network error')));
-            xhr.open('POST', '/_/api/storage/objects/upload');
-            xhr.send(formData);
+    // TUS resumable upload implementation
+    async uploadWithTUS(bucketName, objectPath, file, uploadItem) {
+        const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+        const apiKey = this.state.storage.apiKey;
+
+        if (!apiKey) {
+            throw new Error('API key not available for upload');
+        }
+
+        // Base64 encode metadata values
+        const b64 = (str) => btoa(unescape(encodeURIComponent(str)));
+        const metadata = [
+            `bucketName ${b64(bucketName)}`,
+            `objectName ${b64(objectPath + file.name)}`,
+            `contentType ${b64(file.type || 'application/octet-stream')}`
+        ].join(',');
+
+        // Step 1: Create TUS session
+        const createRes = await fetch('/storage/v1/upload/resumable', {
+            method: 'POST',
+            headers: {
+                'Tus-Resumable': '1.0.0',
+                'Upload-Length': file.size.toString(),
+                'Upload-Metadata': metadata,
+                'Authorization': `Bearer ${apiKey}`,
+                'x-upsert': 'true'
+            }
         });
+
+        if (!createRes.ok) {
+            let errorMsg = 'Failed to create upload session';
+            try {
+                const errData = await createRes.json();
+                errorMsg = errData.message || errData.error || errorMsg;
+            } catch {}
+            throw new Error(errorMsg);
+        }
+
+        const uploadUrl = createRes.headers.get('Location');
+        if (!uploadUrl) {
+            throw new Error('No upload location returned');
+        }
+
+        // Step 2: Upload chunks
+        let offset = 0;
+        while (offset < file.size) {
+            const chunk = file.slice(offset, offset + CHUNK_SIZE);
+            const chunkSize = chunk.size;
+
+            // Use XHR for progress tracking on each chunk
+            const newOffset = await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const totalProgress = ((offset + e.loaded) / file.size) * 100;
+                        uploadItem.progress = Math.round(totalProgress);
+                        // Throttle progress renders
+                        const now = Date.now();
+                        if (now - this._lastProgressRender > 100) {
+                            this._lastProgressRender = now;
+                            this.render();
+                        }
+                    }
+                });
+
+                xhr.addEventListener('load', () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        const newOffset = parseInt(xhr.getResponseHeader('Upload-Offset'), 10);
+                        resolve(newOffset);
+                    } else {
+                        let errorMsg = 'Chunk upload failed';
+                        try {
+                            const errData = JSON.parse(xhr.responseText);
+                            errorMsg = errData.message || errData.error || errorMsg;
+                        } catch {}
+                        reject(new Error(errorMsg));
+                    }
+                });
+
+                xhr.addEventListener('error', () => reject(new Error('Upload failed - network error')));
+
+                xhr.open('PATCH', uploadUrl);
+                xhr.setRequestHeader('Tus-Resumable', '1.0.0');
+                xhr.setRequestHeader('Upload-Offset', offset.toString());
+                xhr.setRequestHeader('Content-Type', 'application/offset+octet-stream');
+                xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
+                xhr.send(chunk);
+            });
+
+            offset = newOffset;
+        }
+
+        return { success: true };
     },
 
     renderUploadProgress() {

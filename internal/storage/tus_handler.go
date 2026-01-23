@@ -226,6 +226,15 @@ func (h *TUSHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle zero-byte uploads - finalize immediately since no PATCH will be sent
+	if uploadLength == 0 {
+		_, err := h.service.FinalizeUpload(r.Context(), session.ID, h.storageSvc)
+		if err != nil {
+			h.tusError(w, err)
+			return
+		}
+	}
+
 	// Set response headers
 	h.setTUSHeaders(w)
 	w.Header().Set("Location", "/storage/v1/upload/resumable/"+session.ID)
