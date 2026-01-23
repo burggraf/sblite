@@ -43,6 +43,10 @@ GOOGLE_API_KEY=<your-gemini-key>
 ./sblite db push --db test_apps/vector-feld/data.db --migrations-dir test_apps/vector-feld/migrations
 ```
 
+This creates two tables:
+- `scripts` - Dialogue lines with vector embeddings
+- `episode_info` - Episode metadata (title, air date, writers, director)
+
 ### 4. Set up the embedding edge function
 
 The app uses an edge function to generate embeddings server-side, keeping your API key secure.
@@ -61,16 +65,19 @@ The app uses an edge function to generate embeddings server-side, keeping your A
 ./sblite serve --db test_apps/vector-feld/data.db --functions --functions-dir test_apps/vector-feld/functions
 ```
 
-### 6. Import Seinfeld scripts
+### 6. Import data
 
 In a new terminal:
 
 ```bash
 cd test_apps/vector-feld
-pnpm import
-```
 
-This downloads ~54,600 dialogue lines from the Seinfeld scripts dataset.
+# Import ~54,600 dialogue lines
+pnpm import
+
+# Import 174 episode info records
+pnpm import:episodes
+```
 
 ### 7. Generate embeddings
 
@@ -91,6 +98,13 @@ pnpm dev
 ```
 
 Open http://localhost:5173 to use the app.
+
+## Features
+
+- **Semantic Search**: Search by topic/concept rather than exact keywords
+- **Episode Info**: Each result shows the episode title and air date
+- **Context Modal**: Click any result to see surrounding dialogue lines from the same episode, with the matched line highlighted
+- **Episode Details**: The context modal shows episode title, air date, director, and writers
 
 ## Architecture
 
@@ -118,6 +132,12 @@ Open http://localhost:5173 to use the app.
 │  │   vector_search     │    │ - Computes cosine similarity       │  │
 │  │                     │◀───│ - Returns top N matches            │  │
 │  └─────────────────────┘    └────────────────────────────────────┘  │
+│                                                                      │
+│  ┌─────────────────────┐    ┌────────────────────────────────────┐  │
+│  │ /rest/v1/           │───▶│ episode_info table                 │  │
+│  │   episode_info      │    │ - Title, air date, writers, etc.   │  │
+│  │                     │◀───│ - Indexed by seid for fast lookup  │  │
+│  └─────────────────────┘    └────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
                                                        │
                                                        ▼
@@ -135,7 +155,33 @@ Open http://localhost:5173 to use the app.
 4. Embedding vector is returned to the browser
 5. Frontend calls `supabase.rpc('vector_search', {...})` with the embedding
 6. sblite computes cosine similarity against all stored vectors
-7. Top matches are returned and displayed as cards
+7. Top matches are returned and displayed as cards with episode info
+8. Clicking a result fetches surrounding dialogue and episode details
+
+## Database Schema
+
+### scripts
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Primary key |
+| character | TEXT | Character name |
+| dialogue | TEXT | The dialogue line |
+| episode_no | INTEGER | Episode number within season |
+| seid | TEXT | Season/episode ID (e.g., S02E11) |
+| season | INTEGER | Season number |
+| embedding | VECTOR(768) | Gemini embedding vector |
+
+### episode_info
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Primary key |
+| season | INTEGER | Season number |
+| episode_no | INTEGER | Episode number within season |
+| title | TEXT | Episode title |
+| air_date | TEXT | Original air date |
+| writers | TEXT | Episode writers |
+| director | TEXT | Episode director |
+| seid | TEXT | Season/episode ID (indexed) |
 
 ## Edge Function
 
@@ -145,6 +191,16 @@ The `embed` function (`functions/embed/index.ts`) handles embedding generation s
 - Uses `GOOGLE_API_KEY` secret (never exposed to browser)
 - Calls Gemini `text-embedding-004` with `taskType: "RETRIEVAL_QUERY"`
 - Returns `{ embedding: number[] }` (768 dimensions)
+
+## Scripts
+
+| Script | Command | Description |
+|--------|---------|-------------|
+| import | `pnpm import` | Import dialogue lines from scripts.csv |
+| import:episodes | `pnpm import:episodes` | Import episode info from episode_info.csv |
+| embed | `pnpm embed` | Generate embeddings for all dialogue lines |
+| dev | `pnpm dev` | Start development server |
+| build | `pnpm build` | Build for production |
 
 ## Tech Stack
 
