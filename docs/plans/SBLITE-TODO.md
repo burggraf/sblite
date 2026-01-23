@@ -4,7 +4,7 @@ This document tracks main app features that haven't been implemented yet. Refere
 
 ## Major Features
 
-### Vector Search (pgvector-compatible)
+### ~~Vector Search (pgvector-compatible)~~ ✅ COMPLETE
 AI/ML similarity search for embeddings, RAG applications, and recommendations.
 
 ```javascript
@@ -14,20 +14,25 @@ const { data } = await supabase.rpc('vector_search', {
   embedding_column: 'embedding',
   query_embedding: [0.1, 0.2, ...],
   match_count: 10,
-  match_threshold: 0.7
+  match_threshold: 0.7,
+  metric: 'cosine'  // or 'l2', 'dot'
 });
 ```
 
-**Implementation approach:**
-- Store vectors as JSON arrays in TEXT columns
-- New `vector(n)` type in type system for validation/export
-- Built-in RPC functions (`vector_search`, `vector_match`)
-- Distance metrics: cosine, L2, dot product
-- Brute force search initially, optional HNSW index for performance
-- Export generates pgvector DDL and data conversion
+**Implemented:**
+- `vector(N)` type in type system with dimension validation
+- Built-in `vector_search` RPC function
+- Distance metrics: cosine similarity, L2 (Euclidean), dot product
+- Configurable match count and similarity threshold
+- Optional column selection and filtering
+- Dashboard UI for creating vector columns
+- PostgreSQL DDL export with pgvector syntax
+- Demo app: `test_apps/vector-feld` (Seinfeld script search with Gemini embeddings)
 
-**Complexity:** Medium-Large
-**Priority:** Medium (enables AI/ML use cases)
+**Architecture:**
+- Vectors stored as JSON arrays in TEXT columns
+- Brute-force similarity search (streaming, memory-efficient)
+- ~100-500ms latency for 50k vectors
 
 See `docs/plans/2026-01-18-vector-search-design.md` for full design.
 
@@ -219,7 +224,7 @@ TOTP-based second factor.
 | Feature | Priority | Effort | Status |
 |---------|----------|--------|--------|
 | PostgreSQL functions (RPC) | Medium | Medium-Very Large | ✅ Complete (SQL functions) |
-| Vector search | Medium | Medium-Large | Pending |
+| Vector search | Medium | Medium-Large | ✅ Complete |
 | Realtime subscriptions | Medium | Large | ✅ Complete |
 | File storage | Medium | Large | ✅ Complete |
 | Edge functions | Medium | Large | ✅ Complete |
@@ -233,7 +238,7 @@ TOTP-based second factor.
 
 ## Notes
 
-- sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth + Storage + Realtime + Edge Functions + RPC)
-- Vector search is the remaining major feature gap vs full Supabase
+- sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth + Storage + Realtime + Edge Functions + RPC + Vector Search)
+- All major Supabase features are now implemented
 - Remaining auth gaps (phone auth, MFA) are for enterprise/advanced use cases
 - All core Supabase client SDK features are now supported
