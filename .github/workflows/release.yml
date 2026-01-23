@@ -64,6 +64,80 @@ jobs:
         run: |
           go build -ldflags="-s -w" -o sblite${{ matrix.ext }} .
 
+      # macOS Code Signing and Notarization
+      - name: Import Code Signing Certificate
+        if: matrix.os == 'darwin'
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          # Set keychain as default and allow codesign access
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Clean up certificate file
+          rm -f $RUNNER_TEMP/certificate.p12
+
+      - name: Sign macOS Binary
+        if: matrix.os == 'darwin'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Sign with Developer ID Application certificate
+          codesign --force --options runtime \
+            --sign "Developer ID Application: ($APPLE_TEAM_ID)" \
+            --timestamp \
+            sblite
+
+          # Verify signature
+          codesign --verify --verbose sblite
+          codesign -dv --verbose=4 sblite
+
+      - name: Notarize macOS Binary
+        if: matrix.os == 'darwin'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Create ZIP for notarization (notarytool requires archive)
+          zip sblite-notarize.zip sblite
+
+          # Submit for notarization and wait
+          xcrun notarytool submit sblite-notarize.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          # Clean up notarization zip
+          rm -f sblite-notarize.zip
+
+      - name: Cleanup Keychain
+        if: matrix.os == 'darwin' && always()
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+
       - name: Create archive (Unix)
         if: matrix.os != 'windows'
         run: |

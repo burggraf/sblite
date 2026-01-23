@@ -48,6 +48,104 @@ Check the [Releases page](https://github.com/burggraf/sblite/releases) to verify
 - `checksums.txt` is included
 - Release notes are generated
 
+## macOS Code Signing Setup
+
+macOS binaries are signed and notarized to avoid Gatekeeper warnings. This requires an Apple Developer account and GitHub repository secrets.
+
+### Prerequisites
+
+1. **Apple Developer Program membership** ($99/year)
+2. **Developer ID Application certificate** from Apple Developer portal
+
+### Creating the Certificate
+
+1. Open **Keychain Access** on your Mac
+2. Go to **Keychain Access → Certificate Assistant → Request a Certificate from a Certificate Authority**
+3. Enter your email and name, select "Saved to disk"
+4. Log in to [Apple Developer Portal](https://developer.apple.com/account)
+5. Go to **Certificates, Identifiers & Profiles → Certificates**
+6. Click **+** to create a new certificate
+7. Select **Developer ID Application** (for distributing outside App Store)
+8. Upload your certificate signing request
+9. Download the certificate and double-click to install in Keychain
+
+### Exporting as P12
+
+1. Open **Keychain Access**
+2. Find your "Developer ID Application" certificate
+3. Right-click → **Export**
+4. Choose **Personal Information Exchange (.p12)** format
+5. Set a strong password (you'll need this for GitHub secrets)
+6. Save the file
+
+### Creating App-Specific Password
+
+1. Go to [appleid.apple.com](https://appleid.apple.com)
+2. Sign in and go to **Sign-In and Security → App-Specific Passwords**
+3. Click **Generate an app-specific password**
+4. Name it "sblite-notarization"
+5. Copy the generated password
+
+### Finding Your Team ID
+
+1. Go to [Apple Developer Portal](https://developer.apple.com/account)
+2. Click **Membership Details** in the sidebar
+3. Your Team ID is listed there (10-character alphanumeric)
+
+### Configuring GitHub Secrets
+
+Go to your repository **Settings → Secrets and variables → Actions** and add:
+
+| Secret | Value |
+|--------|-------|
+| `APPLE_CERTIFICATE_P12` | Base64-encoded .p12 file: `base64 -i certificate.p12 \| pbcopy` |
+| `APPLE_CERTIFICATE_PASSWORD` | Password you set when exporting the .p12 |
+| `APPLE_TEAM_ID` | Your 10-character Team ID |
+| `APPLE_ID` | Your Apple ID email address |
+| `APPLE_APP_PASSWORD` | App-specific password from appleid.apple.com |
+
+### Testing Locally
+
+You can test signing locally before pushing:
+
+```bash
+# Build the binary
+go build -o sblite .
+
+# Sign with your Developer ID
+codesign --force --options runtime \
+  --sign "Developer ID Application: Your Name (TEAM_ID)" \
+  --timestamp \
+  sblite
+
+# Verify signature
+codesign --verify --verbose sblite
+
+# Create zip for notarization
+zip sblite.zip sblite
+
+# Submit for notarization
+xcrun notarytool submit sblite.zip \
+  --apple-id "your@email.com" \
+  --password "app-specific-password" \
+  --team-id "TEAM_ID" \
+  --wait
+```
+
+### Troubleshooting
+
+**"No identity found"**
+- Ensure the certificate is installed in your login keychain
+- Run `security find-identity -v -p codesigning` to list available identities
+
+**Notarization rejected**
+- Check the notarization log: `xcrun notarytool log <submission-id> --apple-id ... --password ... --team-id ...`
+- Common issues: hardened runtime not enabled, unsigned embedded binaries
+
+**Certificate expired**
+- Certificates are valid for 5 years
+- Create a new certificate and update the GitHub secret
+
 ## Building Edge Runtime
 
 The edge runtime is built from [supabase/edge-runtime](https://github.com/supabase/edge-runtime) source. This is a manual process since the runtime version changes infrequently.
