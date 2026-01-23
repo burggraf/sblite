@@ -64,7 +64,7 @@ jobs:
           name: edge-runtime-linux-${{ matrix.arch }}
           path: dist/edge-runtime-${{ inputs.version }}-linux-${{ matrix.arch }}
 
-  # Build macOS binaries natively (no Docker available for macOS)
+  # Build macOS binaries natively with bundled dylibs for portability
   build-macos:
     name: Build macOS ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
@@ -75,10 +75,12 @@ jobs:
           - arch: arm64
             runner: macos-latest
             target: aarch64-apple-darwin
+            homebrew_prefix: /opt/homebrew
           # macOS AMD64 (Intel)
           - arch: amd64
             runner: macos-15-large
             target: x86_64-apple-darwin
+            homebrew_prefix: /usr/local
 
     steps:
       - name: Checkout edge-runtime
@@ -94,10 +96,7 @@ jobs:
 
       - name: Install macOS dependencies
         run: |
-          # Note: We intentionally do NOT install openblas/libomp via Homebrew
-          # to ensure the binary doesn't dynamically link against them.
-          # The build should use system Accelerate framework instead.
-          echo "Building without Homebrew openblas to ensure portable binary"
+          brew install openblas libomp
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
@@ -120,25 +119,106 @@ jobs:
           strip dist/edge-runtime-${{ inputs.version }}-darwin-${{ matrix.arch }}
           echo "After strip: $(du -h dist/edge-runtime-${{ inputs.version }}-darwin-${{ matrix.arch }})"
 
-      - name: Verify macOS dependencies are portable
+      - name: Bundle dylibs for portability
         run: |
           BINARY="dist/edge-runtime-${{ inputs.version }}-darwin-${{ matrix.arch }}"
-          echo "Checking dynamic dependencies..."
+          LIBS_DIR="dist/libs"
+          mkdir -p "$LIBS_DIR"
+
+          echo "=== Original dependencies ==="
           otool -L "$BINARY"
 
-          # Check for any Homebrew dependencies - these would break portability
-          if otool -L "$BINARY" | grep -qE '/opt/homebrew|/usr/local/opt'; then
-            echo "::error::Binary has Homebrew dependencies that will break portability!"
-            otool -L "$BINARY" | grep -E '/opt/homebrew|/usr/local/opt'
-            exit 1
+          # Find all Homebrew dependencies
+          HOMEBREW_DEPS=$(otool -L "$BINARY" | grep -E '${{ matrix.homebrew_prefix }}' | awk '{print $1}' || true)
+
+          if [ -z "$HOMEBREW_DEPS" ]; then
+            echo "No Homebrew dependencies found - binary is already portable"
+            exit 0
           fi
-          echo "✓ Binary is portable - no Homebrew dependencies found"
+
+          echo "=== Bundling Homebrew dependencies ==="
+          echo "$HOMEBREW_DEPS"
+
+          # Process each dependency
+          for dep in $HOMEBREW_DEPS; do
+            if [ -f "$dep" ]; then
+              DYLIB_NAME=$(basename "$dep")
+              echo "Bundling: $dep -> $LIBS_DIR/$DYLIB_NAME"
+
+              # Copy the dylib
+              cp "$dep" "$LIBS_DIR/$DYLIB_NAME"
+
+              # Update the binary to use @loader_path
+              install_name_tool -change "$dep" "@loader_path/libs/$DYLIB_NAME" "$BINARY"
+            fi
+          done
+
+          # Process transitive dependencies in bundled dylibs
+          echo "=== Processing transitive dependencies ==="
+          for lib in "$LIBS_DIR"/*.dylib; do
+            if [ -f "$lib" ]; then
+              LIB_NAME=$(basename "$lib")
+              echo "Checking transitive deps for: $LIB_NAME"
+
+              # Fix the library's own ID
+              install_name_tool -id "@loader_path/libs/$LIB_NAME" "$lib"
+
+              # Find and fix its Homebrew dependencies
+              LIB_DEPS=$(otool -L "$lib" | grep -E '${{ matrix.homebrew_prefix }}' | awk '{print $1}' || true)
+              for dep in $LIB_DEPS; do
+                if [ -f "$dep" ]; then
+                  DEP_NAME=$(basename "$dep")
+                  # Copy if not already bundled
+                  if [ ! -f "$LIBS_DIR/$DEP_NAME" ]; then
+                    echo "  Bundling transitive: $dep"
+                    cp "$dep" "$LIBS_DIR/$DEP_NAME"
+                    install_name_tool -id "@loader_path/libs/$DEP_NAME" "$LIBS_DIR/$DEP_NAME"
+                  fi
+                  # Update reference
+                  install_name_tool -change "$dep" "@loader_path/libs/$DEP_NAME" "$lib"
+                fi
+              done
+            fi
+          done
+
+          # Sign the modified binary and dylibs (required on macOS)
+          echo "=== Code signing ==="
+          codesign --force --sign - "$BINARY"
+          for lib in "$LIBS_DIR"/*.dylib; do
+            if [ -f "$lib" ]; then
+              codesign --force --sign - "$lib"
+            fi
+          done
+
+          echo "=== Final dependencies ==="
+          otool -L "$BINARY"
+
+          echo "=== Bundled libraries ==="
+          ls -la "$LIBS_DIR"
+
+      - name: Create tarball with bundled libs
+        run: |
+          cd dist
+          TARBALL="edge-runtime-${{ inputs.version }}-darwin-${{ matrix.arch }}.tar.gz"
+          if [ -d "libs" ] && [ "$(ls -A libs 2>/dev/null)" ]; then
+            # Bundle binary + libs
+            tar -czf "$TARBALL" \
+              "edge-runtime-${{ inputs.version }}-darwin-${{ matrix.arch }}" \
+              libs/
+            echo "Created tarball with bundled libraries"
+          else
+            # Just the binary
+            tar -czf "$TARBALL" \
+              "edge-runtime-${{ inputs.version }}-darwin-${{ matrix.arch }}"
+            echo "Created tarball with binary only"
+          fi
+          ls -la "$TARBALL"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: edge-runtime-darwin-${{ matrix.arch }}
-          path: dist/edge-runtime-${{ inputs.version }}-darwin-${{ matrix.arch }}
+          path: dist/edge-runtime-${{ inputs.version }}-darwin-${{ matrix.arch }}.tar.gz
 
   # Create release with all platform binaries
   release:
@@ -176,20 +256,34 @@ jobs:
             Based on [supabase/edge-runtime](https://github.com/supabase/edge-runtime) ${{ inputs.version }}.
 
             ## Platforms
-            - `darwin-arm64` - macOS Apple Silicon (built from source)
-            - `darwin-amd64` - macOS Intel (built from source)
+            - `darwin-arm64.tar.gz` - macOS Apple Silicon (with bundled dylibs)
+            - `darwin-amd64.tar.gz` - macOS Intel (with bundled dylibs)
             - `linux-arm64` - Linux ARM64 (extracted from official Docker image)
             - `linux-amd64` - Linux x86_64 (extracted from official Docker image)
 
+            ## Installation
+
+            **Linux:**
+            ```bash
+            chmod +x edge-runtime-${{ inputs.version }}-linux-amd64
+            ./edge-runtime-${{ inputs.version }}-linux-amd64 --help
+            ```
+
+            **macOS:**
+            ```bash
+            tar -xzf edge-runtime-${{ inputs.version }}-darwin-arm64.tar.gz
+            ./edge-runtime-${{ inputs.version }}-darwin-arm64 --help
+            ```
+            Note: Keep the `libs/` folder in the same directory as the binary.
+
             ## Verification
-            Verify downloads using checksums.txt:
             ```bash
             sha256sum -c checksums.txt
             ```
 
             ## Source
-            - Linux binaries: Extracted from `ghcr.io/supabase/edge-runtime:${{ inputs.version }}`
-            - macOS binaries: Built from source without Homebrew dependencies
+            - Linux: Extracted from `ghcr.io/supabase/edge-runtime:${{ inputs.version }}`
+            - macOS: Built from source with bundled openblas/libomp dylibs
           files: |
             release/edge-runtime-*
             release/checksums.txt
