@@ -520,7 +520,16 @@ func (h *Handler) requireAuth(next http.Handler) http.Handler {
 }
 
 func (h *Handler) handleListTables(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Query(`SELECT DISTINCT table_name FROM _columns ORDER BY table_name`)
+	// Query sqlite_master for all user tables, filtering out internal tables
+	rows, err := h.db.Query(`
+		SELECT name FROM sqlite_master
+		WHERE type='table'
+		AND name NOT LIKE '\_%' ESCAPE '\'
+		AND name NOT LIKE 'auth\_%' ESCAPE '\'
+		AND name NOT LIKE 'storage\_%' ESCAPE '\'
+		AND name != 'sqlite_sequence'
+		ORDER BY name
+	`)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -553,6 +562,11 @@ func (h *Handler) handleGetTableSchema(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
 		return
+	}
+
+	// Auto-register columns if table exists but isn't in _columns
+	if err := h.ensureTableRegistered(tableName); err != nil {
+		// Log but don't fail - table might not exist yet
 	}
 
 	// First, get actual columns from SQLite table schema using PRAGMA
@@ -678,6 +692,76 @@ func sqliteTypeToPgType(sqliteType string) string {
 	default:
 		return "text"
 	}
+}
+
+// ensureTableRegistered checks if a table has column metadata in _columns,
+// and if not, auto-registers columns by inferring types from SQLite schema.
+// This allows tables created via migrations or SQL browser to appear in the dashboard.
+func (h *Handler) ensureTableRegistered(tableName string) error {
+	// Get existing columns for this table from _columns
+	existingCols := make(map[string]bool)
+	rows, err := h.db.Query(`SELECT column_name FROM _columns WHERE table_name = ?`, tableName)
+	if err != nil {
+		return fmt.Errorf("failed to query _columns: %w", err)
+	}
+	for rows.Next() {
+		var colName string
+		if err := rows.Scan(&colName); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan column name: %w", err)
+		}
+		existingCols[colName] = true
+	}
+	rows.Close()
+
+	// Get actual columns from SQLite PRAGMA
+	pragmaRows, err := h.db.Query(fmt.Sprintf(`PRAGMA table_info("%s")`, tableName))
+	if err != nil {
+		return fmt.Errorf("failed to get table info: %w", err)
+	}
+	defer pragmaRows.Close()
+
+	// Prepare insert statement for missing columns
+	insertStmt, err := h.db.Prepare(`
+		INSERT INTO _columns (table_name, column_name, pg_type, is_nullable, default_value, is_primary, description)
+		VALUES (?, ?, ?, ?, ?, ?, '')
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare insert: %w", err)
+	}
+	defer insertStmt.Close()
+
+	// Register any columns not already in _columns
+	for pragmaRows.Next() {
+		var cid int
+		var name, sqliteType string
+		var notnull, pk int
+		var dfltValue sql.NullString
+		if err := pragmaRows.Scan(&cid, &name, &sqliteType, &notnull, &dfltValue, &pk); err != nil {
+			continue
+		}
+
+		// Skip if already registered
+		if existingCols[name] {
+			continue
+		}
+
+		// Infer PostgreSQL type
+		pgType := sqliteTypeToPgType(sqliteType)
+
+		// Insert into _columns
+		var defaultVal interface{}
+		if dfltValue.Valid {
+			defaultVal = dfltValue.String
+		}
+		_, err = insertStmt.Exec(tableName, name, pgType, notnull == 0, defaultVal, pk != 0)
+		if err != nil {
+			// Log but don't fail - column might have been added by another request
+			continue
+		}
+	}
+
+	return nil
 }
 
 // CreateTableRequest defines the request body for creating a table
@@ -880,6 +964,11 @@ func (h *Handler) handleSelectData(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Table name required"})
 		return
+	}
+
+	// Auto-register columns if table exists but isn't in _columns
+	if err := h.ensureTableRegistered(tableName); err != nil {
+		// Log but don't fail - table might not exist yet
 	}
 
 	limit := 25
