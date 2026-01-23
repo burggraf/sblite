@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 
+	"github.com/markb/sblite/internal/log"
 	"golang.org/x/crypto/acme/autocert"
 )
 
@@ -81,4 +83,63 @@ func HTTPRedirectHandler(domain string) http.Handler {
 		target := "https://" + domain + r.URL.RequestURI()
 		http.Redirect(w, r, target, http.StatusMovedPermanently)
 	})
+}
+
+// ListenAndServeTLS starts the server with HTTPS using Let's Encrypt autocert.
+// It starts two servers:
+// 1. HTTPS server on httpsAddr for main traffic
+// 2. HTTP server on httpAddr for ACME challenges and HTTP->HTTPS redirects
+func (s *Server) ListenAndServeTLS(httpsAddr, httpAddr string, cfg HTTPSConfig) error {
+	// Create certificate directory if needed
+	if err := os.MkdirAll(cfg.CertDir, 0700); err != nil {
+		return fmt.Errorf("failed to create certificate directory: %w", err)
+	}
+
+	// Create autocert manager
+	s.autocertMgr = NewAutocertManager(cfg.Domain, cfg.CertDir)
+
+	// Create HTTPS server
+	s.httpsServer = &http.Server{
+		Addr:      httpsAddr,
+		Handler:   s.router,
+		TLSConfig: NewTLSConfig(s.autocertMgr),
+	}
+
+	// Create HTTP server for ACME challenges + redirects
+	s.httpRedirect = &http.Server{
+		Addr:    httpAddr,
+		Handler: s.autocertMgr.HTTPHandler(HTTPRedirectHandler(cfg.Domain)),
+	}
+
+	// Start HTTP server in background
+	httpErrCh := make(chan error, 1)
+	go func() {
+		log.Info("starting HTTP server for ACME challenges", "addr", httpAddr)
+		if err := s.httpRedirect.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			httpErrCh <- err
+		}
+		close(httpErrCh)
+	}()
+
+	// Start HTTPS server (blocks)
+	log.Info("starting HTTPS server", "addr", httpsAddr, "domain", cfg.Domain)
+	if err := s.httpsServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+		// Cleanup HTTP redirect server
+		if s.httpRedirect != nil {
+			s.httpRedirect.Close()
+		}
+		return err
+	}
+
+	// Check if HTTP server had an error (non-blocking)
+	select {
+	case err := <-httpErrCh:
+		if err != nil {
+			return fmt.Errorf("HTTP server error: %w", err)
+		}
+	default:
+		// HTTP server still running, which is fine after graceful shutdown
+	}
+
+	return nil
 }
