@@ -1,6 +1,8 @@
 package functions
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/markb/sblite/internal/log"
 )
@@ -107,10 +110,22 @@ func (d *Downloader) BinaryPath() string {
 }
 
 // DownloadURL returns the GitHub release download URL for the current platform.
+// macOS binaries are distributed as .tar.gz (with bundled dylibs), Linux as raw binaries.
 func (d *Downloader) DownloadURL() string {
 	platform := fmt.Sprintf("%s-%s", runtime.GOOS, runtime.GOARCH)
-	return fmt.Sprintf("%s/edge-runtime-%s/edge-runtime-%s-%s",
+	baseURL := fmt.Sprintf("%s/edge-runtime-%s/edge-runtime-%s-%s",
 		GitHubReleaseBaseURL, d.version, d.version, platform)
+
+	// macOS binaries are tarballs with bundled dylibs
+	if runtime.GOOS == "darwin" {
+		return baseURL + ".tar.gz"
+	}
+	return baseURL
+}
+
+// isTarball returns true if the current platform uses tarball distribution.
+func (d *Downloader) isTarball() bool {
+	return runtime.GOOS == "darwin"
 }
 
 // GetChecksum returns the expected checksum for the current platform and version.
@@ -211,6 +226,8 @@ func (d *Downloader) EnsureBinary() (string, error) {
 }
 
 // Download downloads the edge-runtime binary from GitHub releases.
+// For macOS, this downloads and extracts a tarball with bundled dylibs.
+// For Linux, this downloads a raw binary.
 func (d *Downloader) Download() error {
 	// Ensure download directory exists
 	if err := os.MkdirAll(d.downloadDir, 0755); err != nil {
@@ -243,9 +260,14 @@ func (d *Downloader) Download() error {
 		totalBytes = d.GetEstimatedSize()
 	}
 
-	// Create temporary file
-	binaryPath := d.BinaryPath()
-	tmpPath := binaryPath + ".tmp"
+	// Download to temporary file
+	var tmpPath string
+	if d.isTarball() {
+		tmpPath = filepath.Join(d.downloadDir, "edge-runtime.tar.gz.tmp")
+	} else {
+		tmpPath = d.BinaryPath() + ".tmp"
+	}
+
 	out, err := os.Create(tmpPath)
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
@@ -282,24 +304,122 @@ func (d *Downloader) Download() error {
 
 	out.Close()
 
-	// Verify checksum if available
+	// Verify checksum if available (checksum is for the downloaded file, tarball or binary)
 	if expected := d.GetChecksum(); expected != "" {
 		if err := verifyChecksum(tmpPath, expected); err != nil {
 			return fmt.Errorf("checksum verification failed: %w", err)
 		}
 	}
 
-	// Move to final location
-	if err := os.Rename(tmpPath, binaryPath); err != nil {
-		return fmt.Errorf("failed to move binary: %w", err)
+	// Handle tarball vs raw binary
+	if d.isTarball() {
+		if err := d.extractTarball(tmpPath); err != nil {
+			return fmt.Errorf("failed to extract tarball: %w", err)
+		}
+		os.Remove(tmpPath)
+	} else {
+		// Move to final location
+		binaryPath := d.BinaryPath()
+		if err := os.Rename(tmpPath, binaryPath); err != nil {
+			return fmt.Errorf("failed to move binary: %w", err)
+		}
+
+		// Make executable
+		if err := os.Chmod(binaryPath, 0755); err != nil {
+			return fmt.Errorf("failed to make binary executable: %w", err)
+		}
 	}
 
-	// Make executable
+	log.Info("edge runtime downloaded successfully", "path", d.BinaryPath())
+	return nil
+}
+
+// extractTarball extracts a .tar.gz file containing the edge-runtime binary and libs.
+func (d *Downloader) extractTarball(tarballPath string) error {
+	f, err := os.Open(tarballPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	gzr, err := gzip.NewReader(f)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+	binaryName := fmt.Sprintf("edge-runtime-%s", d.version)
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read tar entry: %w", err)
+		}
+
+		// Sanitize the path to prevent directory traversal
+		name := header.Name
+		if strings.Contains(name, "..") {
+			continue
+		}
+
+		// Determine target path
+		var targetPath string
+		if strings.HasPrefix(name, "libs/") || name == "libs" {
+			// Extract libs to download directory
+			targetPath = filepath.Join(d.downloadDir, name)
+		} else if strings.Contains(name, "edge-runtime") {
+			// Rename the binary to our standard name
+			targetPath = filepath.Join(d.downloadDir, binaryName)
+		} else {
+			continue
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(targetPath, 0755); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", targetPath, err)
+			}
+		case tar.TypeReg:
+			// Ensure parent directory exists
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+				return fmt.Errorf("failed to create parent directory: %w", err)
+			}
+
+			outFile, err := os.Create(targetPath)
+			if err != nil {
+				return fmt.Errorf("failed to create file %s: %w", targetPath, err)
+			}
+
+			if _, err := io.Copy(outFile, tr); err != nil {
+				outFile.Close()
+				return fmt.Errorf("failed to extract file %s: %w", targetPath, err)
+			}
+			outFile.Close()
+
+			// Set permissions
+			if err := os.Chmod(targetPath, os.FileMode(header.Mode)); err != nil {
+				return fmt.Errorf("failed to set permissions on %s: %w", targetPath, err)
+			}
+
+			log.Debug("extracted", "file", targetPath)
+		}
+	}
+
+	// Verify binary was extracted
+	binaryPath := d.BinaryPath()
+	if _, err := os.Stat(binaryPath); err != nil {
+		return fmt.Errorf("binary not found after extraction: %s", binaryPath)
+	}
+
+	// Ensure binary is executable
 	if err := os.Chmod(binaryPath, 0755); err != nil {
 		return fmt.Errorf("failed to make binary executable: %w", err)
 	}
 
-	log.Info("edge runtime downloaded successfully", "path", binaryPath)
 	return nil
 }
 
