@@ -2,9 +2,13 @@
 package server
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
+	"net/http"
 	"strings"
+
+	"golang.org/x/crypto/acme/autocert"
 )
 
 // HTTPSConfig holds HTTPS/TLS configuration.
@@ -49,4 +53,32 @@ func ValidateDomain(domain string) error {
 	}
 
 	return nil
+}
+
+// NewAutocertManager creates an autocert.Manager configured for the given domain.
+// Certificates are cached in the specified directory.
+func NewAutocertManager(domain, certDir string) *autocert.Manager {
+	return &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(domain),
+		Cache:      autocert.DirCache(certDir),
+	}
+}
+
+// NewTLSConfig creates a TLS config using the autocert manager.
+func NewTLSConfig(manager *autocert.Manager) *tls.Config {
+	return &tls.Config{
+		GetCertificate: manager.GetCertificate,
+		NextProtos:     []string{"h2", "http/1.1"}, // Enable HTTP/2
+	}
+}
+
+// HTTPRedirectHandler returns a handler that redirects HTTP requests to HTTPS.
+// ACME challenges (/.well-known/acme-challenge/) are not handled by this handler
+// and should be wrapped by autocert.Manager.HTTPHandler().
+func HTTPRedirectHandler(domain string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := "https://" + domain + r.URL.RequestURI()
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+	})
 }

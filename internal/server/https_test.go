@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http/httptest"
 	"testing"
 )
 
@@ -66,4 +67,34 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestHTTPRedirectHandler(t *testing.T) {
+	handler := HTTPRedirectHandler("example.com")
+
+	tests := []struct {
+		path         string
+		wantLocation string
+		wantCode     int
+	}{
+		{"/", "https://example.com/", 301},
+		{"/api/v1/users", "https://example.com/api/v1/users", 301},
+		{"/path?query=1", "https://example.com/path?query=1", 301},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "http://example.com"+tt.path, nil)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantCode {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantCode)
+			}
+			if loc := rec.Header().Get("Location"); loc != tt.wantLocation {
+				t.Errorf("Location = %q, want %q", loc, tt.wantLocation)
+			}
+		})
+	}
 }
