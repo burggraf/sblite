@@ -297,6 +297,23 @@ TOTP-based second factor.
 | Image transformations | Low | High | Pending (storage enhancement) |
 | Resumable uploads (TUS) | Low | Medium | ✅ Complete |
 
+## Build/Release
+
+### Version in Binary
+The `--version` flag shows "dev" instead of the actual release version.
+
+```bash
+./sblite --version
+sblite version dev  # Should show v0.2.12
+```
+
+**Fix:** Inject version via `-ldflags` during build in the release workflow.
+
+**Complexity:** Small
+**Priority:** Low
+
+---
+
 ## Notes
 
 - sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth + Storage + Realtime + Edge Functions + RPC + Vector Search)
