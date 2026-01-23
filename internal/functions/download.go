@@ -24,9 +24,8 @@ const (
 	GitHubReleaseBaseURL = "https://github.com/burggraf/sblite/releases/download"
 )
 
-// SHA256 checksums for each platform binary, keyed by version then platform.
+// SHA256 checksums for each platform's .tar.gz file, keyed by version then platform.
 // These are updated when EdgeRuntimeVersion changes by running the edge-runtime workflow.
-// macOS checksums are for .tar.gz files, Linux checksums are for raw binaries.
 var edgeRuntimeChecksums = map[string]map[string]string{
 	"v1.67.4": {
 		"darwin-amd64": "8abc954501d64cf77bae9a83c691905ebdc10b55f5143f2c1b7bd4aaf8259afa",
@@ -110,22 +109,11 @@ func (d *Downloader) BinaryPath() string {
 }
 
 // DownloadURL returns the GitHub release download URL for the current platform.
-// macOS binaries are distributed as .tar.gz (with bundled dylibs), Linux as raw binaries.
+// All platforms use .tar.gz for consistency and smaller downloads.
 func (d *Downloader) DownloadURL() string {
 	platform := fmt.Sprintf("%s-%s", runtime.GOOS, runtime.GOARCH)
-	baseURL := fmt.Sprintf("%s/edge-runtime-%s/edge-runtime-%s-%s",
+	return fmt.Sprintf("%s/edge-runtime-%s/edge-runtime-%s-%s.tar.gz",
 		GitHubReleaseBaseURL, d.version, d.version, platform)
-
-	// macOS binaries are tarballs with bundled dylibs
-	if runtime.GOOS == "darwin" {
-		return baseURL + ".tar.gz"
-	}
-	return baseURL
-}
-
-// isTarball returns true if the current platform uses tarball distribution.
-func (d *Downloader) isTarball() bool {
-	return runtime.GOOS == "darwin"
 }
 
 // GetChecksum returns the expected checksum for the current platform and version.
@@ -226,8 +214,8 @@ func (d *Downloader) EnsureBinary() (string, error) {
 }
 
 // Download downloads the edge-runtime binary from GitHub releases.
-// For macOS, this downloads and extracts a tarball with bundled dylibs.
-// For Linux, this downloads a raw binary.
+// All platforms use .tar.gz distribution for consistency.
+// macOS tarballs include bundled dylibs in a libs/ directory.
 func (d *Downloader) Download() error {
 	// Ensure download directory exists
 	if err := os.MkdirAll(d.downloadDir, 0755); err != nil {
@@ -261,12 +249,7 @@ func (d *Downloader) Download() error {
 	}
 
 	// Download to temporary file
-	var tmpPath string
-	if d.isTarball() {
-		tmpPath = filepath.Join(d.downloadDir, "edge-runtime.tar.gz.tmp")
-	} else {
-		tmpPath = d.BinaryPath() + ".tmp"
-	}
+	tmpPath := filepath.Join(d.downloadDir, "edge-runtime.tar.gz.tmp")
 
 	out, err := os.Create(tmpPath)
 	if err != nil {
@@ -304,31 +287,18 @@ func (d *Downloader) Download() error {
 
 	out.Close()
 
-	// Verify checksum if available (checksum is for the downloaded file, tarball or binary)
+	// Verify checksum if available
 	if expected := d.GetChecksum(); expected != "" {
 		if err := verifyChecksum(tmpPath, expected); err != nil {
 			return fmt.Errorf("checksum verification failed: %w", err)
 		}
 	}
 
-	// Handle tarball vs raw binary
-	if d.isTarball() {
-		if err := d.extractTarball(tmpPath); err != nil {
-			return fmt.Errorf("failed to extract tarball: %w", err)
-		}
-		os.Remove(tmpPath)
-	} else {
-		// Move to final location
-		binaryPath := d.BinaryPath()
-		if err := os.Rename(tmpPath, binaryPath); err != nil {
-			return fmt.Errorf("failed to move binary: %w", err)
-		}
-
-		// Make executable
-		if err := os.Chmod(binaryPath, 0755); err != nil {
-			return fmt.Errorf("failed to make binary executable: %w", err)
-		}
+	// Extract tarball
+	if err := d.extractTarball(tmpPath); err != nil {
+		return fmt.Errorf("failed to extract tarball: %w", err)
 	}
+	os.Remove(tmpPath)
 
 	log.Info("edge runtime downloaded successfully", "path", d.BinaryPath())
 	return nil

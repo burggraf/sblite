@@ -58,11 +58,19 @@ jobs:
             ghcr.io/supabase/edge-runtime:${{ inputs.version }} \
             ldd "/dist/edge-runtime-${{ inputs.version }}-linux-${{ matrix.arch }}" || true
 
+      - name: Create tarball
+        run: |
+          cd dist
+          TARBALL="edge-runtime-${{ inputs.version }}-linux-${{ matrix.arch }}.tar.gz"
+          tar -czf "$TARBALL" "edge-runtime-${{ inputs.version }}-linux-${{ matrix.arch }}"
+          rm "edge-runtime-${{ inputs.version }}-linux-${{ matrix.arch }}"
+          ls -la "$TARBALL"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: edge-runtime-linux-${{ matrix.arch }}
-          path: dist/edge-runtime-${{ inputs.version }}-linux-${{ matrix.arch }}
+          path: dist/edge-runtime-${{ inputs.version }}-linux-${{ matrix.arch }}.tar.gz
 
   # Build macOS binaries natively with bundled dylibs for portability
   build-macos:
@@ -256,25 +264,23 @@ jobs:
             Based on [supabase/edge-runtime](https://github.com/supabase/edge-runtime) ${{ inputs.version }}.
 
             ## Platforms
+            All binaries distributed as `.tar.gz` for consistency and smaller downloads.
+
             - `darwin-arm64.tar.gz` - macOS Apple Silicon (with bundled dylibs)
             - `darwin-amd64.tar.gz` - macOS Intel (with bundled dylibs)
-            - `linux-arm64` - Linux ARM64 (extracted from official Docker image)
-            - `linux-amd64` - Linux x86_64 (extracted from official Docker image)
+            - `linux-arm64.tar.gz` - Linux ARM64 (from official Docker image)
+            - `linux-amd64.tar.gz` - Linux x86_64 (from official Docker image)
 
             ## Installation
 
-            **Linux:**
             ```bash
-            chmod +x edge-runtime-${{ inputs.version }}-linux-amd64
-            ./edge-runtime-${{ inputs.version }}-linux-amd64 --help
-            ```
+            # Extract
+            tar -xzf edge-runtime-${{ inputs.version }}-<platform>.tar.gz
 
-            **macOS:**
-            ```bash
-            tar -xzf edge-runtime-${{ inputs.version }}-darwin-arm64.tar.gz
-            ./edge-runtime-${{ inputs.version }}-darwin-arm64 --help
+            # Run
+            ./edge-runtime-${{ inputs.version }}-<platform> --help
             ```
-            Note: Keep the `libs/` folder in the same directory as the binary.
+            Note: On macOS, keep the `libs/` folder in the same directory as the binary.
 
             ## Verification
             ```bash
