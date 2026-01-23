@@ -75,11 +75,9 @@ func (fp *FunctionsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // modifyProxyResponse modifies the response from edge runtime.
+// Note: CORS headers are handled by the global chi CORS middleware in server.go,
+// so we don't add them here to avoid duplicate headers.
 func modifyProxyResponse(resp *http.Response) error {
-	// Add CORS headers if not present
-	if resp.Header.Get("Access-Control-Allow-Origin") == "" {
-		resp.Header.Set("Access-Control-Allow-Origin", "*")
-	}
 	return nil
 }
 

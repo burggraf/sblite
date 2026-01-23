@@ -491,7 +491,18 @@ func (s *Server) EnableFunctions(cfg *functions.Config) error {
 	s.dashboardHandler.SetFunctionsService(svc)
 
 	// Register routes
+	// Note: We need to clear the Content-Type header set by the global middleware,
+	// because the edge function response will have its own Content-Type and we
+	// don't want duplicates (which breaks JSON parsing in clients).
 	s.router.Route("/functions/v1", func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Delete the Content-Type header set by global middleware
+				// The edge function's response will provide its own
+				w.Header().Del("Content-Type")
+				next.ServeHTTP(w, r)
+			})
+		})
 		s.functionsHandler.RegisterRoutes(r)
 	})
 

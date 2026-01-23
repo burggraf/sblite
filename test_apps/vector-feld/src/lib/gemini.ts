@@ -1,9 +1,17 @@
-import { GoogleGenerativeAI } from "@google/generative-ai"
-
-const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GOOGLE_API_KEY || "")
+import { supabase } from "./supabase"
 
 export async function embedText(text: string): Promise<number[]> {
-  const model = genAI.getGenerativeModel({ model: "text-embedding-004" })
-  const result = await model.embedContent(text)
-  return result.embedding.values
+  const { data, error } = await supabase.functions.invoke("embed", {
+    body: { text },
+  })
+
+  if (error) {
+    throw new Error(`Embedding failed: ${error.message}`)
+  }
+
+  if (!data?.embedding) {
+    throw new Error("No embedding returned from function")
+  }
+
+  return data.embedding
 }
