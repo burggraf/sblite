@@ -13,10 +13,10 @@ sblite uses GitHub Actions for automated builds:
 
 | Platform | sblite | Edge Runtime |
 |----------|--------|--------------|
-| macOS Apple Silicon (darwin-arm64) | Yes | Yes |
-| macOS Intel (darwin-amd64) | Yes | Yes |
-| Linux x86_64 (linux-amd64) | Yes | Yes |
-| Linux ARM64 (linux-arm64) | Yes | Yes |
+| macOS Apple Silicon (darwin-arm64) | Yes | Yes (tarball with bundled dylibs) |
+| macOS Intel (darwin-amd64) | Yes | Yes (tarball with bundled dylibs) |
+| Linux x86_64 (linux-amd64) | Yes | Yes (tarball from Docker) |
+| Linux ARM64 (linux-arm64) | Yes | Yes (tarball from Docker) |
 | Windows x86_64 (windows-amd64) | Yes | Docker only |
 | Windows ARM64 (windows-arm64) | Yes | Docker only |
 
@@ -29,17 +29,18 @@ Update the version in relevant files if needed (e.g., `CLAUDE.md`, dashboard ver
 ### 2. Create and Push Tag
 
 ```bash
-git tag v0.2.7
-git push origin v0.2.7
+git tag v0.2.12
+git push origin v0.2.12
 ```
 
 ### 3. Wait for Build
 
 The GitHub Actions workflow will automatically:
 1. Build binaries for all 6 platforms
-2. Create ZIP archives for each platform
-3. Generate SHA256 checksums
-4. Create a GitHub release with all assets
+2. Sign and notarize macOS binaries
+3. Create ZIP archives for each platform
+4. Generate SHA256 checksums
+5. Create a GitHub release with all assets
 
 ### 4. Verify Release
 
@@ -148,7 +149,12 @@ xcrun notarytool submit sblite.zip \
 
 ## Building Edge Runtime
 
-The edge runtime is built from [supabase/edge-runtime](https://github.com/supabase/edge-runtime) source. This is a manual process since the runtime version changes infrequently.
+The edge runtime is obtained differently for each platform:
+
+- **Linux**: Extracted from the official [Supabase Docker image](https://ghcr.io/supabase/edge-runtime)
+- **macOS**: Built from source with bundled dynamic libraries (openblas, libomp, libgfortran, libgcc_s, libquadmath)
+
+All platforms are distributed as `.tar.gz` archives for consistency and smaller download sizes.
 
 ### 1. Trigger the Build Workflow
 
@@ -159,26 +165,60 @@ The edge runtime is built from [supabase/edge-runtime](https://github.com/supaba
 
 ### 2. Wait for Builds
 
-The workflow builds on native runners for each platform:
-- `ubuntu-latest` → linux-amd64
-- `ubuntu-24.04-arm64` → linux-arm64
-- `macos-latest` → darwin-arm64
-- `macos-13` → darwin-amd64
+The workflow:
 
-Build time is approximately 20-30 minutes (Rust compilation).
+**Linux builds** (fast, ~2 minutes):
+- Pulls the official Docker image for each architecture
+- Extracts the edge-runtime binary
+- Creates a `.tar.gz` archive
 
-### 3. Verify Release
+**macOS builds** (slow, ~30-40 minutes):
+- Installs build dependencies (openblas, libomp via Homebrew)
+- Builds edge-runtime from source using Rust/Cargo
+- Bundles all Homebrew dylibs using `install_name_tool`
+- Rewrites library paths to use `@loader_path` for portability
+- Verifies no unresolved dependencies remain (fails build if any found)
+- Code signs the binary and bundled dylibs
+- Creates a `.tar.gz` archive containing binary + `libs/` folder
+
+### 3. macOS Dylib Bundling Details
+
+The edge-runtime has native dependencies that must be bundled for portability:
+
+```
+edge-runtime-v1.67.4-darwin-arm64.tar.gz
+├── edge-runtime-v1.67.4-darwin-arm64   # Main binary
+└── libs/
+    ├── libopenblas.0.dylib             # Linear algebra
+    ├── libomp.dylib                    # OpenMP threading
+    ├── libgfortran.5.dylib             # Fortran runtime
+    ├── libgcc_s.1.1.dylib              # GCC runtime
+    └── libquadmath.0.dylib             # Quad precision math
+```
+
+The workflow uses `install_name_tool` to rewrite library paths:
+- Main binary references: `@loader_path/libs/<lib>`
+- Dylib-to-dylib references: `@loader_path/<lib>` (same folder)
+
+A verification step at the end ensures no unresolved dependencies remain - the build **fails** if any Homebrew or `@rpath` references are not properly bundled.
+
+### 4. Verify Release
 
 Check the releases page for `edge-runtime-v1.67.4` containing:
-- 4 binary files (one per platform)
+- 4 `.tar.gz` files (one per platform)
 - `checksums.txt`
 
-### 4. Update sblite Checksums
+### 5. Update sblite Checksums
 
 After the edge runtime release is created, update sblite to use the new checksums:
 
-1. Download `checksums.txt` from the release
+1. Get checksums from the release:
+```bash
+curl -sL "https://github.com/burggraf/sblite/releases/download/edge-runtime-v1.67.4/checksums.txt"
+```
+
 2. Edit `internal/functions/download.go`
+
 3. Update the `edgeRuntimeChecksums` map:
 
 ```go
@@ -198,7 +238,14 @@ var edgeRuntimeChecksums = map[string]map[string]string{
 const EdgeRuntimeVersion = "v1.67.4"
 ```
 
-5. Commit and create a new sblite release
+5. Commit, tag, and push to create a new sblite release:
+```bash
+git add internal/functions/download.go
+git commit -m "chore: update edge-runtime checksums for vX.Y.Z"
+git push
+git tag v0.2.13
+git push origin v0.2.13
+```
 
 ## Upgrading Edge Runtime Version
 
@@ -206,12 +253,26 @@ To upgrade to a new edge runtime version:
 
 1. Check [supabase/edge-runtime releases](https://github.com/supabase/edge-runtime/releases) for the latest version
 2. Run the edge-runtime build workflow with the new version
-3. Wait for all 4 platform builds to complete
+3. Wait for all 4 platform builds to complete (verify they pass)
 4. Update `internal/functions/download.go`:
    - Change `EdgeRuntimeVersion` constant
    - Add new version entry to `edgeRuntimeChecksums`
 5. Test locally on your platform
 6. Create a new sblite release
+
+## How sblite Downloads Edge Runtime
+
+When a user runs `sblite serve --functions`:
+
+1. sblite checks if edge-runtime is already installed at `<db-dir>/edge-runtime/`
+2. If not found, downloads the `.tar.gz` for the current platform
+3. Verifies the SHA256 checksum
+4. Extracts the tarball:
+   - Binary: `<db-dir>/edge-runtime/edge-runtime-v1.67.4`
+   - Libs (macOS): `<db-dir>/edge-runtime/libs/*.dylib`
+5. Starts the edge-runtime process
+
+The download code is in `internal/functions/download.go`.
 
 ## Dashboard Runtime Installer
 
@@ -220,10 +281,10 @@ When users access the Edge Functions page in the dashboard and the runtime is no
 ### Supported Platforms (macOS, Linux)
 
 The dashboard shows a "Download & Install Runtime" button that:
-1. Downloads the binary from GitHub releases
+1. Downloads the `.tar.gz` from GitHub releases
 2. Shows progress bar during download
 3. Verifies SHA256 checksum
-4. Installs to `<db-dir>/edge-runtime/`
+4. Extracts to `<db-dir>/edge-runtime/`
 
 ### Windows
 
@@ -238,25 +299,25 @@ docker run -d -p 9000:9000 \
 
 ## Release Artifacts
 
-### sblite Release (e.g., v0.2.7)
+### sblite Release (e.g., v0.2.12)
 
 ```
-sblite-v0.2.7-darwin-arm64.zip
-sblite-v0.2.7-darwin-amd64.zip
-sblite-v0.2.7-linux-arm64.zip
-sblite-v0.2.7-linux-amd64.zip
-sblite-v0.2.7-windows-arm64.zip
-sblite-v0.2.7-windows-amd64.zip
+sblite-v0.2.12-darwin-arm64.zip
+sblite-v0.2.12-darwin-amd64.zip
+sblite-v0.2.12-linux-arm64.zip
+sblite-v0.2.12-linux-amd64.zip
+sblite-v0.2.12-windows-arm64.zip
+sblite-v0.2.12-windows-amd64.zip
 checksums.txt
 ```
 
 ### Edge Runtime Release (e.g., edge-runtime-v1.67.4)
 
 ```
-edge-runtime-v1.67.4-darwin-arm64
-edge-runtime-v1.67.4-darwin-amd64
-edge-runtime-v1.67.4-linux-arm64
-edge-runtime-v1.67.4-linux-amd64
+edge-runtime-v1.67.4-darwin-arm64.tar.gz   # Binary + libs/ folder
+edge-runtime-v1.67.4-darwin-amd64.tar.gz   # Binary + libs/ folder
+edge-runtime-v1.67.4-linux-arm64.tar.gz    # Binary only
+edge-runtime-v1.67.4-linux-amd64.tar.gz    # Binary only
 checksums.txt
 ```
 
@@ -268,18 +329,31 @@ checksums.txt
 - Check Go version compatibility (requires Go 1.25+)
 - Verify no CGO dependencies were introduced
 
-**Edge runtime builds fail:**
-- Check Rust toolchain installation on runners
+**Edge runtime macOS builds fail with "unresolved dependencies":**
+- The verification step detected libraries that weren't bundled
+- Check the build logs for which library is missing
+- Add the missing library's search path to the workflow's `SEARCH_PATHS` array
+- The workflow searches: gcc, openblas, libomp, gfortran directories
+
+**Edge runtime macOS builds fail during Rust compilation:**
+- Check if openblas/libomp installed correctly via Homebrew
 - Verify supabase/edge-runtime tag exists
-- Review build logs for missing dependencies
+- Review build logs for missing Rust dependencies
 
 ### Checksum Mismatches
 
 If users report checksum errors:
-1. Download the binary manually
-2. Run `sha256sum <binary>`
+1. Download the `.tar.gz` manually
+2. Run `sha256sum <file>`
 3. Compare with `checksums.txt` in the release
 4. If different, the release may be corrupted - rebuild
+
+### macOS "Library not loaded" Errors
+
+If users see errors like `Library not loaded: @loader_path/libs/libfoo.dylib`:
+1. The tarball extraction may have failed
+2. Ask user to delete `<db-dir>/edge-runtime/` and let sblite re-download
+3. If persists, a new dylib dependency was added - rebuild edge-runtime
 
 ### Platform Not Supported
 
@@ -309,7 +383,18 @@ GOOS=darwin GOARCH=arm64 go build -o sblite-darwin-arm64 .
 git clone https://github.com/supabase/edge-runtime
 cd edge-runtime
 git checkout v1.67.4
+
+# Install dependencies (macOS)
+brew install openblas libomp
+
+# Build
 cargo build --release
 
 # Binary at target/release/edge-runtime
+# Note: On macOS, you'll need to bundle dylibs manually for portability
 ```
+
+## Workflow Files
+
+- **sblite releases**: `.github/workflows/release.yml`
+- **edge-runtime releases**: `.github/workflows/edge-runtime.yml`
