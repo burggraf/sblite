@@ -26,13 +26,13 @@ const (
 
 // SHA256 checksums for each platform binary, keyed by version then platform.
 // These are updated when EdgeRuntimeVersion changes by running the edge-runtime workflow.
-// To get checksums: download binaries and run `sha256sum <file>`
+// macOS checksums are for .tar.gz files, Linux checksums are for raw binaries.
 var edgeRuntimeChecksums = map[string]map[string]string{
 	"v1.67.4": {
-		"darwin-amd64": "c31ad1bb0081c7368de0864a9673eac46d20f6bf8888450f177eeb12a4d7db70",
-		"darwin-arm64": "f7614de93d4e0d0175a899dc0f1f877335364e92df5f637941a22743c020b815",
-		"linux-amd64":  "e9a6fffdffd655b694d7897cd3c462d3c8e1afce67e1b8a3892b5beb99d988f7",
-		"linux-arm64":  "", // Coming soon - ARM runner was unavailable
+		"darwin-amd64": "8abc954501d64cf77bae9a83c691905ebdc10b55f5143f2c1b7bd4aaf8259afa",
+		"darwin-arm64": "9ee58351e31acf56dde7181ce3b7ef536dff34a3a1ea0430c63a214e716dbb40",
+		"linux-amd64":  "a4a8983892b9033a9a2f5a4acbcd741de644d3aa3cb7655204689cb289460524",
+		"linux-arm64":  "c9647fbc4b972f3e947eaeb2dcf440d6cb449b4ed1441bcd146b10b2b4b0d952",
 	},
 }
 
