@@ -1,3 +1,6 @@
+import { config } from "dotenv"
+config({ path: ".env.local" })
+
 import { createClient } from "@supabase/supabase-js"
 import { GoogleGenerativeAI } from "@google/generative-ai"
 
