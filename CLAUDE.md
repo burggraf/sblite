@@ -120,6 +120,10 @@ go build -o sblite .
 ./sblite serve --host 0.0.0.0       # Bind to all interfaces
 ./sblite serve --db /path/to/data.db  # Custom database path
 
+# Start server with HTTPS (Let's Encrypt)
+./sblite serve --https example.com
+./sblite serve --https example.com --functions  # With edge functions
+
 # Run Go tests
 go test ./...
 
@@ -160,6 +164,33 @@ npm test         # Run all tests (server must be running)
 | `SBLITE_HOST` | `0.0.0.0` | Server bind address |
 | `SBLITE_PORT` | `8080` | Server port |
 | `SBLITE_DB_PATH` | `./data.db` | SQLite database path |
+| `SBLITE_HTTPS_DOMAIN` | (none) | Domain for automatic Let's Encrypt HTTPS |
+| `SBLITE_HTTP_PORT` | `80` | HTTP port for ACME challenges (with HTTPS) |
+
+### HTTPS Configuration
+
+sblite supports automatic HTTPS via Let's Encrypt:
+
+```bash
+# Enable HTTPS with automatic certificate
+./sblite serve --https example.com
+
+# Custom ports (non-standard)
+./sblite serve --https example.com --port 8443 --http-port 8080
+```
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `--https` | `SBLITE_HTTPS_DOMAIN` | (none) | Domain for Let's Encrypt HTTPS |
+| `--http-port` | `SBLITE_HTTP_PORT` | `80` | HTTP port for ACME challenges |
+
+**Requirements:**
+- Valid public domain (not localhost or IP)
+- Ports 80 and 443 accessible from internet
+- DNS pointing to server
+
+**Certificate Storage:**
+Certificates are cached in `<db-dir>/certs/` and renewed automatically.
 
 ### Logging Configuration
 

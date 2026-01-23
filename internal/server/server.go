@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/markb/sblite/internal/schema"
 	"github.com/markb/sblite/internal/storage"
 	"github.com/markb/sblite/internal/vector"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 type Server struct {
@@ -72,6 +74,11 @@ type Server struct {
 
 	// HTTP server for graceful shutdown
 	httpServer *http.Server
+
+	// HTTPS fields
+	httpsServer  *http.Server
+	httpRedirect *http.Server
+	autocertMgr  *autocert.Manager
 
 	// Dashboard store for auth settings
 	dashboardStore *dashboard.Store
@@ -418,12 +425,35 @@ func (s *Server) ListenAndServe(addr string) error {
 	return s.httpServer.ListenAndServe()
 }
 
-// Shutdown gracefully shuts down the HTTP server.
+// Shutdown gracefully shuts down the HTTP server(s).
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.httpServer == nil {
-		return nil
+	var errs []error
+
+	// Shutdown HTTPS server if running
+	if s.httpsServer != nil {
+		if err := s.httpsServer.Shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("HTTPS server: %w", err))
+		}
 	}
-	return s.httpServer.Shutdown(ctx)
+
+	// Shutdown HTTP redirect server if running
+	if s.httpRedirect != nil {
+		if err := s.httpRedirect.Shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("HTTP redirect server: %w", err))
+		}
+	}
+
+	// Shutdown main HTTP server if running (non-TLS mode)
+	if s.httpServer != nil {
+		if err := s.httpServer.Shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("HTTP server: %w", err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("shutdown errors: %v", errs)
+	}
+	return nil
 }
 
 // handleOpenAPI generates and returns the OpenAPI 3.0 specification for the REST API.

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,6 +44,32 @@ var serveCmd = &cobra.Command{
 		if jwtSecret == "" {
 			jwtSecret = "super-secret-jwt-key-please-change-in-production"
 			log.Warn("using default JWT secret, set SBLITE_JWT_SECRET in production")
+		}
+
+		// HTTPS configuration
+		httpsDomain, _ := cmd.Flags().GetString("https")
+		httpPort, _ := cmd.Flags().GetInt("http-port")
+
+		// Check environment variable for HTTPS domain
+		if httpsDomain == "" {
+			httpsDomain = os.Getenv("SBLITE_HTTPS_DOMAIN")
+		}
+		if !cmd.Flags().Changed("http-port") {
+			if envPort := os.Getenv("SBLITE_HTTP_PORT"); envPort != "" {
+				if p, err := strconv.Atoi(envPort); err == nil {
+					httpPort = p
+				} else {
+					log.Warn("invalid SBLITE_HTTP_PORT, using default", "value", envPort, "error", err)
+				}
+			}
+		}
+
+		// Validate HTTPS domain if provided
+		httpsEnabled := httpsDomain != ""
+		if httpsEnabled {
+			if err := server.ValidateDomain(httpsDomain); err != nil {
+				return err
+			}
 		}
 
 		// Check if database exists
@@ -116,11 +143,17 @@ var serveCmd = &cobra.Command{
 			anonKey := auth.GenerateAPIKey(jwtSecret, "anon")
 			serviceKey := auth.GenerateAPIKey(jwtSecret, "service_role")
 
+			// Determine base URL (HTTPS if enabled)
+			baseURL := "http://" + addr
+			if httpsEnabled {
+				baseURL = "https://" + httpsDomain
+			}
+
 			cfg := &functions.Config{
 				FunctionsDir:   functionsDir,
 				RuntimePort:    functionsPort,
 				JWTSecret:      jwtSecret,
-				BaseURL:        "http://" + addr,
+				BaseURL:        baseURL,
 				SblitePort:     port,
 				AnonKey:        anonKey,
 				ServiceKey:     serviceKey,
@@ -179,8 +212,41 @@ var serveCmd = &cobra.Command{
 		}()
 
 		// Start HTTP server (blocks until shutdown)
-		if err := srv.ListenAndServe(addr); err != nil && err != http.ErrServerClosed {
-			return err
+		if httpsEnabled {
+			// Determine certificate directory (alongside database)
+			certDir := filepath.Join(filepath.Dir(dbPath), "certs")
+
+			// Determine addresses
+			httpsAddr := fmt.Sprintf("%s:%d", host, port)
+			httpAddr := fmt.Sprintf("%s:%d", host, httpPort)
+
+			// Override port to 443 if using default
+			if port == 8080 {
+				httpsAddr = fmt.Sprintf("%s:443", host)
+				port = 443 // Update for logging
+			}
+
+			httpsCfg := server.HTTPSConfig{
+				Domain:   httpsDomain,
+				CertDir:  certDir,
+				HTTPAddr: httpAddr,
+			}
+
+			log.Info("starting server with HTTPS",
+				"https_addr", httpsAddr,
+				"http_addr", httpAddr,
+				"domain", httpsDomain,
+				"auth_api", "https://"+httpsDomain+"/auth/v1",
+				"rest_api", "https://"+httpsDomain+"/rest/v1",
+			)
+
+			if err := srv.ListenAndServeTLS(httpsAddr, httpAddr, httpsCfg); err != nil && err != http.ErrServerClosed {
+				return err
+			}
+		} else {
+			if err := srv.ListenAndServe(addr); err != nil && err != http.ErrServerClosed {
+				return err
+			}
 		}
 		return nil
 	},
@@ -444,4 +510,8 @@ func init() {
 
 	// Realtime flags
 	serveCmd.Flags().Bool("realtime", false, "Enable realtime WebSocket support")
+
+	// HTTPS flags
+	serveCmd.Flags().String("https", "", "Domain for automatic Let's Encrypt HTTPS")
+	serveCmd.Flags().Int("http-port", 80, "HTTP port for ACME challenges (only used with --https)")
 }
