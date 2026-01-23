@@ -162,30 +162,47 @@ jobs:
           done
 
           # Process transitive dependencies in bundled dylibs
+          # Run multiple passes until no new deps are found
           echo "=== Processing transitive dependencies ==="
-          for lib in "$LIBS_DIR"/*.dylib; do
-            if [ -f "$lib" ]; then
-              LIB_NAME=$(basename "$lib")
-              echo "Checking transitive deps for: $LIB_NAME"
+          PASS=1
+          while true; do
+            echo "--- Pass $PASS ---"
+            NEW_DEPS_FOUND=false
 
-              # Fix the library's own ID
-              install_name_tool -id "@loader_path/libs/$LIB_NAME" "$lib"
+            for lib in "$LIBS_DIR"/*.dylib; do
+              if [ -f "$lib" ]; then
+                LIB_NAME=$(basename "$lib")
 
-              # Find and fix its Homebrew dependencies
-              LIB_DEPS=$(otool -L "$lib" | grep -E '${{ matrix.homebrew_prefix }}' | awk '{print $1}' || true)
-              for dep in $LIB_DEPS; do
-                if [ -f "$dep" ]; then
-                  DEP_NAME=$(basename "$dep")
-                  # Copy if not already bundled
-                  if [ ! -f "$LIBS_DIR/$DEP_NAME" ]; then
-                    echo "  Bundling transitive: $dep"
-                    cp "$dep" "$LIBS_DIR/$DEP_NAME"
-                    install_name_tool -id "@loader_path/libs/$DEP_NAME" "$LIBS_DIR/$DEP_NAME"
+                # Fix the library's own ID (relative to itself, no libs/ prefix)
+                install_name_tool -id "@loader_path/$LIB_NAME" "$lib" 2>/dev/null || true
+
+                # Find Homebrew dependencies
+                LIB_DEPS=$(otool -L "$lib" | grep -E '${{ matrix.homebrew_prefix }}' | awk '{print $1}' || true)
+                for dep in $LIB_DEPS; do
+                  if [ -f "$dep" ]; then
+                    DEP_NAME=$(basename "$dep")
+                    # Copy if not already bundled
+                    if [ ! -f "$LIBS_DIR/$DEP_NAME" ]; then
+                      echo "  Bundling transitive: $dep"
+                      cp "$dep" "$LIBS_DIR/$DEP_NAME"
+                      NEW_DEPS_FOUND=true
+                    fi
+                    # Update reference (dylib to dylib, same folder, no libs/ prefix)
+                    install_name_tool -change "$dep" "@loader_path/$DEP_NAME" "$lib"
                   fi
-                  # Update reference
-                  install_name_tool -change "$dep" "@loader_path/libs/$DEP_NAME" "$lib"
-                fi
-              done
+                done
+              fi
+            done
+
+            if [ "$NEW_DEPS_FOUND" = false ]; then
+              echo "No new dependencies found, done."
+              break
+            fi
+
+            PASS=$((PASS + 1))
+            if [ $PASS -gt 10 ]; then
+              echo "Warning: Too many passes, breaking"
+              break
             fi
           done
 
