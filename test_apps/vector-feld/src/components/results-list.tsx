@@ -1,7 +1,8 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { ResultCard, type ScriptResult } from "./result-card"
+import { ResultCard, type ScriptResult, type EpisodeInfo } from "./result-card"
 import { ContextModal } from "./context-modal"
+import { supabase } from "@/lib/supabase"
 
 export type { ScriptResult }
 
@@ -13,6 +14,37 @@ interface ResultsListProps {
 export function ResultsList({ results, query }: ResultsListProps) {
   const [selectedResult, setSelectedResult] = useState<ScriptResult | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  const [episodeInfoMap, setEpisodeInfoMap] = useState<Record<string, EpisodeInfo>>({})
+
+  // Fetch episode info for all unique seids
+  useEffect(() => {
+    if (results.length === 0) {
+      setEpisodeInfoMap({})
+      return
+    }
+
+    const uniqueSeids = [...new Set(results.map((r) => r.seid))]
+
+    async function fetchEpisodeInfo() {
+      const { data, error } = await supabase
+        .from("episode_info")
+        .select("seid, title, air_date")
+        .in("seid", uniqueSeids)
+
+      if (error) {
+        console.error("Error fetching episode info:", error)
+        return
+      }
+
+      const infoMap: Record<string, EpisodeInfo> = {}
+      for (const ep of data || []) {
+        infoMap[ep.seid] = { title: ep.title, air_date: ep.air_date }
+      }
+      setEpisodeInfoMap(infoMap)
+    }
+
+    fetchEpisodeInfo()
+  }, [results])
 
   const handleResultClick = (result: ScriptResult) => {
     setSelectedResult(result)
@@ -38,6 +70,7 @@ export function ResultsList({ results, query }: ResultsListProps) {
             <ResultCard
               key={result.id}
               result={result}
+              episodeInfo={episodeInfoMap[result.seid]}
               onClick={() => handleResultClick(result)}
             />
           ))}
