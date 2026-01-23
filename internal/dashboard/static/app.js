@@ -8167,7 +8167,7 @@ const App = {
                 'Tus-Resumable': '1.0.0',
                 'Upload-Length': file.size.toString(),
                 'Upload-Metadata': metadata,
-                'Authorization': `Bearer ${apiKey}`,
+                'apikey': apiKey,
                 'x-upsert': 'true'
             }
         });
@@ -8229,7 +8229,7 @@ const App = {
                 xhr.setRequestHeader('Tus-Resumable', '1.0.0');
                 xhr.setRequestHeader('Upload-Offset', offset.toString());
                 xhr.setRequestHeader('Content-Type', 'application/offset+octet-stream');
-                xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
+                xhr.setRequestHeader('apikey', apiKey);
                 xhr.send(chunk);
             });
 
