@@ -12,13 +12,20 @@ export interface ScriptResult {
 
 interface ResultCardProps {
   result: ScriptResult
+  onClick?: () => void
 }
 
-export function ResultCard({ result }: ResultCardProps) {
+export function ResultCard({ result, onClick }: ResultCardProps) {
   const similarityPercent = Math.round(result.similarity * 100)
 
   return (
-    <Card>
+    <Card
+      className={onClick ? "cursor-pointer hover:bg-accent/50 transition-colors" : ""}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => e.key === "Enter" && onClick() : undefined}
+    >
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
