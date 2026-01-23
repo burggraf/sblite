@@ -28,8 +28,8 @@ const (
 // These are updated when EdgeRuntimeVersion changes by running the edge-runtime workflow.
 var edgeRuntimeChecksums = map[string]map[string]string{
 	"v1.67.4": {
-		"darwin-amd64": "9c725bdb15793269117b57844f211fe37a5836067bd4439c787273b6bf4a2e4d",
-		"darwin-arm64": "d996ad50bddd9bf6b3a40761d3b12d5dd3848b5a1c6f5cba65c56362efa6dc44",
+		"darwin-amd64": "8aa59d8681cafed994efc449e23e971d315b3943f2d0f6901ffe5de61f09fc26",
+		"darwin-arm64": "f526f8720cf8ed46f4fd2dd7f228e7f2bd595179baa89ecbfbeb295f73c44328",
 		"linux-amd64":  "64ed2ce9c89fd7aaa2717c8711197809c2ecee0ea7a3d2889d407bad2469a328",
 		"linux-arm64":  "4e52028e1b782a7d08a2c064468157d5be47940ec4224491ccca352f201920b0",
 	},
