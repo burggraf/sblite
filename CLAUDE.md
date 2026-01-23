@@ -469,9 +469,32 @@ sblite tracks intended PostgreSQL types for SQLite-stored data, enabling clean m
 
 **Schema Metadata:**
 - Column types stored in `_columns` table
-- Tables created via Admin API automatically register metadata
+- Tables created via Admin API or Dashboard UI automatically register metadata
+- Tables created via SQL (migrations, SQL browser) are auto-registered on first access
 - REST API validates writes against registered schemas
 - `sblite migrate export` generates PostgreSQL DDL from metadata
+
+**Auto-Registration:**
+
+Tables created outside the Admin API (via migrations or SQL browser) are automatically registered in `_columns` when first accessed through the dashboard. The system:
+
+1. Lists all user tables from `sqlite_master` (filters out internal `_*`, `auth_*`, `storage_*` tables)
+2. On first schema/data access, runs `PRAGMA table_info` to get column information
+3. Infers PostgreSQL types from SQLite types and inserts into `_columns`
+4. Preserves any existing metadata (won't overwrite manually set types)
+
+**Type Inference:**
+
+| SQLite Type | Inferred PostgreSQL Type |
+|-------------|--------------------------|
+| INTEGER/INT | integer |
+| TEXT/CHAR/CLOB | text |
+| BLOB | bytea |
+| REAL/FLOAT/DOUBLE | numeric |
+| BOOLEAN/BOOL | boolean |
+| (other) | text |
+
+For special types like `vector(N)`, the system defaults to `text`. Users can manually edit the type in the dashboard schema editor after auto-registration.
 
 ### Migration System
 
