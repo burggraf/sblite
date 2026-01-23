@@ -36,7 +36,7 @@ jobs:
           # macOS AMD64 - native build on Intel runner
           - os: darwin
             arch: amd64
-            runner: macos-13
+            runner: macos-15-large
             target: x86_64-apple-darwin
 
     steps:
