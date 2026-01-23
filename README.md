@@ -263,6 +263,9 @@ Enable with `--realtime` flag. Supports Broadcast, Presence, and Postgres Change
 - [Realtime](docs/realtime.md) - WebSocket subscriptions for Broadcast, Presence, and Postgres Changes
 - [Vector Search](docs/vector-search.md) - pgvector-compatible similarity search for AI/ML applications
 
+### Operations
+- [Release Guide](docs/RELEASES.md) - Creating releases, building edge runtime, and platform support
+
 ### Design & Implementation
 - [Design Document](docs/plans/2026-01-16-supabase-lite-design.md) - Architecture, schema design, and roadmap
 - [Phase 1 Implementation Plan](docs/plans/2026-01-16-phase1-foundation.md) - Foundation implementation details
