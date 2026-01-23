@@ -18,27 +18,26 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux AMD64 - native build (testing first)
+          # Linux AMD64 - native build
           - os: linux
             arch: amd64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          # TODO: Enable after linux-amd64 works
-          # # Linux ARM64 - native build on ARM runner
-          # - os: linux
-          #   arch: arm64
-          #   runner: ubuntu-24.04-arm64
-          #   target: aarch64-unknown-linux-gnu
-          # # macOS ARM64 - native build on Apple Silicon
-          # - os: darwin
-          #   arch: arm64
-          #   runner: macos-latest
-          #   target: aarch64-apple-darwin
-          # # macOS AMD64 - native build on Intel runner
-          # - os: darwin
-          #   arch: amd64
-          #   runner: macos-15-large
-          #   target: x86_64-apple-darwin
+          # Linux ARM64 - native build on ARM runner
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm64
+            target: aarch64-unknown-linux-gnu
+          # macOS ARM64 - native build on Apple Silicon
+          - os: darwin
+            arch: arm64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+          # macOS AMD64 - native build on Intel runner
+          - os: darwin
+            arch: amd64
+            runner: macos-15-large
+            target: x86_64-apple-darwin
 
     steps:
       - name: Checkout edge-runtime
