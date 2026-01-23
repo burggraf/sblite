@@ -233,7 +233,7 @@ func (rm *RuntimeManager) ensureBinary() (string, error) {
 	// Check configured download location first
 	downloader := NewDownloader(downloadDir)
 	defaultPath := downloader.BinaryPath()
-	if _, err := os.Stat(defaultPath); err == nil {
+	if info, err := os.Stat(defaultPath); err == nil && info.Mode().IsRegular() {
 		return defaultPath, nil
 	}
 
@@ -245,7 +245,7 @@ func (rm *RuntimeManager) ensureBinary() (string, error) {
 	}
 
 	for _, path := range commonPaths {
-		if _, err := os.Stat(path); err == nil {
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
 			return path, nil
 		}
 	}
