@@ -35,6 +35,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | Realtime subscriptions (WebSocket) | :white_check_mark: |
 | File storage | :white_check_mark: |
 | Vector search (pgvector-compatible) | :white_check_mark: |
+| Built-in HTTPS (Let's Encrypt) | :white_check_mark: |
 
 ## Quick Start
 
@@ -59,6 +60,7 @@ go build -o sblite
 ./sblite serve --realtime             # Enable WebSocket realtime subscriptions
 ./sblite serve --mail-mode=catch      # Development: captures emails, web UI at /_/mail
 ./sblite serve --mail-mode=smtp       # Production: sends real emails via SMTP
+./sblite serve --https example.com    # HTTPS with automatic Let's Encrypt certificate
 ```
 
 ### Access the Dashboard
@@ -139,6 +141,20 @@ await supabase.from('todos').delete().eq('id', 1)
 | `SBLITE_SMTP_PASS` | - | SMTP password |
 
 See [Email System Documentation](docs/EMAIL.md) for detailed configuration and usage.
+
+### HTTPS Settings
+
+| Environment Variable | CLI Flag | Default | Description |
+|---------------------|----------|---------|-------------|
+| `SBLITE_HTTPS_DOMAIN` | `--https` | - | Domain for automatic Let's Encrypt HTTPS |
+| `SBLITE_HTTP_PORT` | `--http-port` | `80` | HTTP port for ACME challenges |
+
+**Requirements:**
+- Valid public domain (not localhost or IP address)
+- Ports 80 and 443 accessible from the internet
+- DNS pointing to your server
+
+See [HTTPS Documentation](docs/https.md) for detailed configuration and troubleshooting.
 
 ### Logging Settings
 
@@ -250,6 +266,7 @@ Enable with `--realtime` flag. Supports Broadcast, Presence, and Postgres Change
 ## Documentation
 
 ### Guides
+- [HTTPS with Let's Encrypt](docs/https.md) - Automatic TLS certificates, configuration, and troubleshooting
 - [Authentication](docs/AUTH.md) - Email confirmation, password recovery, magic links, and session management
 - [OAuth Authentication](docs/OAUTH.md) - Google and GitHub OAuth setup, API reference, and troubleshooting
 - [Email System](docs/EMAIL.md) - Complete guide to email modes, configuration, and authentication flows
