@@ -51,7 +51,7 @@ GOOGLE_API_KEY=<your-gemini-key>
 pnpm import
 ```
 
-This downloads ~1,100 dialogue lines from the Seinfeld scripts dataset.
+This downloads ~54,600 dialogue lines from the Seinfeld scripts dataset.
 
 ### 5. Generate embeddings
 
@@ -61,7 +61,7 @@ pnpm embed
 
 This generates vector embeddings for each dialogue line using Gemini text-embedding-004.
 
-**Note:** With the free tier rate limit (15 req/min), this takes ~80 minutes for ~1,100 rows. The script is resumable - if interrupted, just run it again.
+**Note:** With the free tier rate limit, this takes a while for ~54,600 rows. The script is resumable - if interrupted, just run it again.
 
 ### 6. Run the app
 
