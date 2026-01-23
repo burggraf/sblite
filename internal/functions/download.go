@@ -26,20 +26,19 @@ const (
 // To get checksums: download binaries and run `sha256sum <file>`
 var edgeRuntimeChecksums = map[string]map[string]string{
 	"v1.67.4": {
-		// Placeholder checksums - update after running edge-runtime build workflow
-		"darwin-amd64": "",
-		"darwin-arm64": "",
-		"linux-amd64":  "",
-		"linux-arm64":  "",
+		"darwin-amd64": "c31ad1bb0081c7368de0864a9673eac46d20f6bf8888450f177eeb12a4d7db70",
+		"darwin-arm64": "f7614de93d4e0d0175a899dc0f1f877335364e92df5f637941a22743c020b815",
+		"linux-amd64":  "e9a6fffdffd655b694d7897cd3c462d3c8e1afce67e1b8a3892b5beb99d988f7",
+		"linux-arm64":  "", // Coming soon - ARM runner was unavailable
 	},
 }
 
 // Approximate binary sizes in bytes for progress estimation (updated after builds).
 var edgeRuntimeSizes = map[string]int64{
-	"darwin-amd64": 50 * 1024 * 1024, // ~50MB estimated
-	"darwin-arm64": 50 * 1024 * 1024,
-	"linux-amd64":  50 * 1024 * 1024,
-	"linux-arm64":  50 * 1024 * 1024,
+	"darwin-amd64": 148 * 1024 * 1024,  // ~148MB
+	"darwin-arm64": 144 * 1024 * 1024,  // ~144MB
+	"linux-amd64":  1020 * 1024 * 1024, // ~1GB (includes debug symbols)
+	"linux-arm64":  1020 * 1024 * 1024, // ~1GB estimated
 }
 
 // ProgressCallback is called during download with progress updates.
