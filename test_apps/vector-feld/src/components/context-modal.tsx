@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -15,6 +16,15 @@ interface DialogueLine {
   dialogue: string
 }
 
+interface EpisodeInfo {
+  title: string
+  air_date: string | null
+  writers: string | null
+  director: string | null
+  season: number
+  episode_no: number
+}
+
 interface ContextModalProps {
   result: ScriptResult | null
   open: boolean
@@ -25,6 +35,7 @@ const CONTEXT_LINES = 5 // Number of lines before and after
 
 export function ContextModal({ result, open, onOpenChange }: ContextModalProps) {
   const [lines, setLines] = useState<DialogueLine[]>([])
+  const [episodeInfo, setEpisodeInfo] = useState<EpisodeInfo | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -36,18 +47,33 @@ export function ContextModal({ result, open, onOpenChange }: ContextModalProps) 
       setError(null)
 
       try {
-        // Get lines from the same episode, ordered by id
-        // We need lines with id around result.id that have the same seid
-        const { data, error: queryError } = await supabase
-          .from("scripts")
-          .select("id, character, dialogue")
-          .eq("seid", result!.seid)
-          .gte("id", result!.id - CONTEXT_LINES * 10) // Cast wider net since ids may not be sequential within episode
-          .lte("id", result!.id + CONTEXT_LINES * 10)
-          .order("id", { ascending: true })
+        // Fetch lines and episode info in parallel
+        const [linesResult, episodeResult] = await Promise.all([
+          supabase
+            .from("scripts")
+            .select("id, character, dialogue")
+            .eq("seid", result!.seid)
+            .gte("id", result!.id - CONTEXT_LINES * 10)
+            .lte("id", result!.id + CONTEXT_LINES * 10)
+            .order("id", { ascending: true }),
+          supabase
+            .from("episode_info")
+            .select("title, air_date, writers, director, season, episode_no")
+            .eq("seid", result!.seid)
+            .limit(1)
+            .single(),
+        ])
 
-        if (queryError) throw queryError
+        if (linesResult.error) throw linesResult.error
 
+        // Set episode info (may be null if not found)
+        if (!episodeResult.error && episodeResult.data) {
+          setEpisodeInfo(episodeResult.data)
+        } else {
+          setEpisodeInfo(null)
+        }
+
+        const data = linesResult.data
         if (!data || data.length === 0) {
           setLines([{ id: result!.id, character: result!.character, dialogue: result!.dialogue }])
           return
@@ -56,7 +82,6 @@ export function ContextModal({ result, open, onOpenChange }: ContextModalProps) 
         // Find the target line index and extract context
         const targetIndex = data.findIndex((line) => line.id === result!.id)
         if (targetIndex === -1) {
-          // Target not found in result, add it
           setLines([{ id: result!.id, character: result!.character, dialogue: result!.dialogue }])
           return
         }
@@ -83,10 +108,34 @@ export function ContextModal({ result, open, onOpenChange }: ContextModalProps) 
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <span>Episode Context</span>
-            <Badge variant="outline">{result.seid}</Badge>
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
+            {episodeInfo ? (
+              <>
+                <span>"{episodeInfo.title}"</span>
+                <Badge variant="outline">{result.seid}</Badge>
+              </>
+            ) : (
+              <>
+                <span>Episode Context</span>
+                <Badge variant="outline">{result.seid}</Badge>
+              </>
+            )}
           </DialogTitle>
+          {episodeInfo && (
+            <DialogDescription className="text-xs space-y-1">
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {episodeInfo.air_date && (
+                  <span>Aired: {episodeInfo.air_date}</span>
+                )}
+                {episodeInfo.director && (
+                  <span>Director: {episodeInfo.director}</span>
+                )}
+              </div>
+              {episodeInfo.writers && (
+                <div>Writers: {episodeInfo.writers}</div>
+              )}
+            </DialogDescription>
+          )}
         </DialogHeader>
 
         <div className="overflow-y-auto flex-1 -mx-6 px-6">
