@@ -206,6 +206,14 @@ func (rm *RuntimeManager) Port() int {
 	return rm.config.Port
 }
 
+// DownloadDir returns the directory where the edge runtime binary is stored.
+func (rm *RuntimeManager) DownloadDir() string {
+	if rm.config.EdgeRuntimeDir != "" {
+		return rm.config.EdgeRuntimeDir
+	}
+	return DefaultDownloadDir(rm.config.DBPath)
+}
+
 // ensureBinary ensures the edge runtime binary is available.
 func (rm *RuntimeManager) ensureBinary() (string, error) {
 	// If explicit path is provided, use it

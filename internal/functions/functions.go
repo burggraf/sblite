@@ -311,6 +311,14 @@ func (s *Service) FunctionsDir() string {
 	return s.functionsDir
 }
 
+// RuntimeDir returns the directory where the edge runtime binary is stored.
+func (s *Service) RuntimeDir() string {
+	if s.runtime != nil {
+		return s.runtime.DownloadDir()
+	}
+	return DefaultDownloadDir("")
+}
+
 // Store returns the functions store (for secrets/config management).
 func (s *Service) Store() *Store {
 	return s.store

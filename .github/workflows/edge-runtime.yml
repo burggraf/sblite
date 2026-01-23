@@ -1,0 +1,128 @@
+name: Build Edge Runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Edge runtime version (e.g., v1.67.4)'
+        required: true
+        default: 'v1.67.4'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          # Linux AMD64 - native build
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          # Linux ARM64 - native build on ARM runner
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm64
+            target: aarch64-unknown-linux-gnu
+          # macOS ARM64 - native build on Apple Silicon
+          - os: darwin
+            arch: arm64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+          # macOS AMD64 - native build on Intel runner
+          - os: darwin
+            arch: amd64
+            runner: macos-13
+            target: x86_64-apple-darwin
+
+    steps:
+      - name: Checkout edge-runtime
+        uses: actions/checkout@v4
+        with:
+          repository: supabase/edge-runtime
+          ref: ${{ inputs.version }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}-${{ matrix.arch }}
+
+      - name: Build edge-runtime
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare binary
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/edge-runtime dist/edge-runtime-${{ inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}
+          chmod +x dist/edge-runtime-${{ inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edge-runtime-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/edge-runtime-${{ inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -type f -name 'edge-runtime-*' -exec mv {} release/ \;
+          ls -la release/
+
+      - name: Generate checksums
+        working-directory: release
+        run: |
+          sha256sum edge-runtime-* > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: edge-runtime-${{ inputs.version }}
+          name: Edge Runtime ${{ inputs.version }}
+          draft: false
+          prerelease: false
+          body: |
+            Pre-built edge-runtime binaries for sblite.
+
+            Built from [supabase/edge-runtime](https://github.com/supabase/edge-runtime) ${{ inputs.version }}.
+
+            ## Platforms
+            - `darwin-arm64` - macOS Apple Silicon
+            - `darwin-amd64` - macOS Intel
+            - `linux-arm64` - Linux ARM64
+            - `linux-amd64` - Linux x86_64
+
+            ## Verification
+            Verify downloads using checksums.txt:
+            ```bash
+            sha256sum -c checksums.txt
+            ```
+          files: |
+            release/edge-runtime-*
+            release/checksums.txt

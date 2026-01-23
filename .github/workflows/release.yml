@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          # Linux builds (cross-compile from ubuntu)
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            ext: ''
+          - os: linux
+            arch: arm64
+            runner: ubuntu-latest
+            ext: ''
+          # Windows builds (cross-compile from ubuntu)
+          - os: windows
+            arch: amd64
+            runner: ubuntu-latest
+            ext: '.exe'
+          - os: windows
+            arch: arm64
+            runner: ubuntu-latest
+            ext: '.exe'
+          # macOS builds (native on macos runners)
+          - os: darwin
+            arch: arm64
+            runner: macos-latest
+            ext: ''
+          - os: darwin
+            arch: amd64
+            runner: macos-latest
+            ext: ''
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags="-s -w" -o sblite${{ matrix.ext }} .
+
+      - name: Create archive (Unix)
+        if: matrix.os != 'windows'
+        run: |
+          zip sblite-${{ steps.version.outputs.VERSION }}-${{ matrix.os }}-${{ matrix.arch }}.zip sblite${{ matrix.ext }}
+
+      - name: Create archive (Windows)
+        if: matrix.os == 'windows'
+        run: |
+          zip sblite-${{ steps.version.outputs.VERSION }}-${{ matrix.os }}-${{ matrix.arch }}.zip sblite${{ matrix.ext }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sblite-${{ matrix.os }}-${{ matrix.arch }}
+          path: sblite-${{ steps.version.outputs.VERSION }}-${{ matrix.os }}-${{ matrix.arch }}.zip
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -name '*.zip' -exec mv {} release/ \;
+          ls -la release/
+
+      - name: Generate checksums
+        working-directory: release
+        run: |
+          sha256sum *.zip > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: sblite ${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            release/*.zip
+            release/checksums.txt
+          generate_release_notes: true

@@ -281,6 +281,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Use(h.requireAuth)
 			r.Get("/", h.handleListFunctions)
 			r.Get("/status", h.handleGetFunctionsStatus)
+			r.Get("/runtime-info", h.handleGetRuntimeInfo)
+			r.Post("/runtime-install", h.handleInstallRuntime)
 			r.Post("/{name}", h.handleCreateFunction)
 			r.Get("/{name}", h.handleGetFunction)
 			r.Delete("/{name}", h.handleDeleteFunction)
@@ -3773,6 +3775,110 @@ func (h *Handler) handleGetFunctionsStatus(w http.ResponseWriter, r *http.Reques
 		"status":        status,
 		"runtime_port":  h.functionsService.RuntimePort(),
 		"functions_dir": h.functionsService.FunctionsDir(),
+	})
+}
+
+// handleGetRuntimeInfo returns information about the edge runtime for the current platform.
+func (h *Handler) handleGetRuntimeInfo(w http.ResponseWriter, r *http.Request) {
+	// Get the download directory from functionsService if available, otherwise use default
+	var downloadDir string
+	if h.functionsService != nil {
+		downloadDir = h.functionsService.RuntimeDir()
+	} else {
+		downloadDir = functions.DefaultDownloadDir(h.serverConfig.DBPath)
+	}
+
+	info := functions.GetRuntimeInfo(downloadDir)
+
+	// Add running status if functions service is enabled
+	if h.functionsService != nil {
+		info.Installed = info.Installed || h.functionsService.IsRunning()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
+}
+
+// handleInstallRuntime downloads and installs the edge runtime with progress reporting via SSE.
+func (h *Handler) handleInstallRuntime(w http.ResponseWriter, r *http.Request) {
+	// Set up SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "SSE not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Helper to send SSE events
+	sendEvent := func(data map[string]interface{}) {
+		jsonData, _ := json.Marshal(data)
+		fmt.Fprintf(w, "data: %s\n\n", jsonData)
+		flusher.Flush()
+	}
+
+	// Check if platform is supported
+	if !functions.IsSupported() {
+		sendEvent(map[string]interface{}{
+			"status": "error",
+			"error":  functions.UnsupportedPlatformError().Error(),
+		})
+		return
+	}
+
+	// Get download directory
+	var downloadDir string
+	if h.functionsService != nil {
+		downloadDir = h.functionsService.RuntimeDir()
+	} else {
+		downloadDir = functions.DefaultDownloadDir(h.serverConfig.DBPath)
+	}
+
+	// Create downloader with progress callback
+	downloader := functions.NewDownloader(downloadDir)
+	downloader.SetProgressCallback(func(bytesDownloaded, totalBytes int64) {
+		progress := 0
+		if totalBytes > 0 {
+			progress = int(bytesDownloaded * 100 / totalBytes)
+		}
+		sendEvent(map[string]interface{}{
+			"status":           "downloading",
+			"progress":         progress,
+			"bytes_downloaded": bytesDownloaded,
+			"total_bytes":      totalBytes,
+		})
+	})
+
+	// Send initial status
+	sendEvent(map[string]interface{}{
+		"status":   "starting",
+		"progress": 0,
+	})
+
+	// Perform download
+	binaryPath, err := downloader.EnsureBinary()
+	if err != nil {
+		sendEvent(map[string]interface{}{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	// Send verification status
+	sendEvent(map[string]interface{}{
+		"status":   "verifying",
+		"progress": 95,
+	})
+
+	// Send completion
+	sendEvent(map[string]interface{}{
+		"status":   "complete",
+		"progress": 100,
+		"path":     binaryPath,
 	})
 }
 

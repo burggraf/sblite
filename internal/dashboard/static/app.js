@@ -154,6 +154,10 @@ const App = {
             list: [],
             selected: null,
             status: null,  // Edge runtime status
+            runtimeInfo: null,  // Runtime installation info
+            installing: false,  // Runtime installation in progress
+            installProgress: 0,  // Installation progress (0-100)
+            installStatus: null,  // Installation status message
             loading: false,
             config: null,  // Selected function config
             secrets: [],
@@ -6141,10 +6145,11 @@ const App = {
         this.render();
 
         try {
-            // Load functions list, status, and API keys in parallel
+            // Load functions list, status, runtime info, and API keys in parallel
             const requests = [
                 fetch('/_/api/functions'),
-                fetch('/_/api/functions/status')
+                fetch('/_/api/functions/status'),
+                fetch('/_/api/functions/runtime-info')
             ];
 
             // Also load API keys if not already loaded (for test console)
@@ -6153,7 +6158,7 @@ const App = {
             }
 
             const responses = await Promise.all(requests);
-            const [functionsRes, statusRes] = responses;
+            const [functionsRes, statusRes, runtimeInfoRes] = responses;
 
             if (functionsRes.ok) {
                 const data = await functionsRes.json();
@@ -6176,9 +6181,13 @@ const App = {
                 this.state.functions.status = { enabled: false };
             }
 
+            if (runtimeInfoRes.ok) {
+                this.state.functions.runtimeInfo = await runtimeInfoRes.json();
+            }
+
             // Handle API keys response
-            if (responses.length > 2 && responses[2].ok) {
-                this.state.apiConsole.apiKeys = await responses[2].json();
+            if (responses.length > 3 && responses[3].ok) {
+                this.state.apiConsole.apiKeys = await responses[3].json();
             }
         } catch (e) {
             this.state.error = 'Failed to load functions';
@@ -6761,7 +6770,7 @@ const App = {
 
     // Functions view rendering
     renderFunctionsView() {
-        const { loading, status, list, selected, config, secrets, secretsLoading } = this.state.functions;
+        const { loading, status, runtimeInfo, list, selected, config, secrets, secretsLoading } = this.state.functions;
 
         if (loading) {
             return '<div class="loading">Loading...</div>';
@@ -6770,6 +6779,11 @@ const App = {
         // Check if functions are enabled
         if (!status || !status.enabled) {
             return this.renderFunctionsDisabledView();
+        }
+
+        // Check if runtime needs to be installed
+        if (runtimeInfo && !runtimeInfo.installed && status.status !== 'running') {
+            return this.renderRuntimeInstallerView();
         }
 
         // Two-column layout like tables view
@@ -6800,6 +6814,165 @@ const App = {
                 </div>
             </div>
         `;
+    },
+
+    renderRuntimeInstallerView() {
+        const { runtimeInfo, installing, installProgress, installStatus } = this.state.functions;
+
+        // Windows/unsupported platform - show Docker instructions
+        if (runtimeInfo && !runtimeInfo.available && runtimeInfo.fallback === 'docker') {
+            return `
+                <div class="card-title">Edge Functions</div>
+                <div class="card">
+                    <div class="empty-state">
+                        <div class="empty-icon">🐳</div>
+                        <h3>Docker Required</h3>
+                        <p>Edge functions on ${runtimeInfo.platform} require Docker.</p>
+                        <p>Run this command to start the edge runtime:</p>
+                        <div class="docker-command-box">
+                            <pre class="code-block">${this.escapeHtml(runtimeInfo.docker_command)}</pre>
+                            <button class="btn btn-secondary btn-sm" onclick="App.copyDockerCommand()">Copy Command</button>
+                        </div>
+                        <p class="text-muted" style="margin-top: 1rem;">After starting Docker, restart sblite with <code>--functions</code> flag.</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Unsupported platform without fallback
+        if (runtimeInfo && !runtimeInfo.available) {
+            return `
+                <div class="card-title">Edge Functions</div>
+                <div class="card">
+                    <div class="empty-state">
+                        <div class="empty-icon">⚠️</div>
+                        <h3>Platform Not Supported</h3>
+                        <p>Edge functions are not available on ${runtimeInfo.platform}.</p>
+                        <p class="text-muted">Supported platforms: Linux (amd64, arm64), macOS (amd64, arm64)</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Show installer UI
+        const sizeDisplay = runtimeInfo?.size_bytes
+            ? `${Math.round(runtimeInfo.size_bytes / 1024 / 1024)} MB`
+            : '~50 MB';
+
+        return `
+            <div class="card-title">Edge Functions</div>
+            <div class="card">
+                <div class="empty-state runtime-installer">
+                    <div class="empty-icon">⚡</div>
+                    <h3>Runtime Required</h3>
+                    <p>The edge runtime needs to be installed to run functions.</p>
+
+                    <div class="runtime-info">
+                        <div class="info-row">
+                            <span class="info-label">Platform:</span>
+                            <span class="info-value">${runtimeInfo?.platform || 'Unknown'}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Version:</span>
+                            <span class="info-value">${runtimeInfo?.version || 'Unknown'}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Size:</span>
+                            <span class="info-value">${sizeDisplay}</span>
+                        </div>
+                    </div>
+
+                    ${installing ? `
+                        <div class="install-progress">
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: ${installProgress}%"></div>
+                            </div>
+                            <div class="progress-text">${installStatus || 'Downloading...'} ${installProgress}%</div>
+                        </div>
+                    ` : `
+                        <button class="btn btn-primary btn-lg" onclick="App.installRuntime()">
+                            Download & Install Runtime
+                        </button>
+                    `}
+
+                    <p class="text-muted" style="margin-top: 1rem;">
+                        Edge functions allow you to run serverless TypeScript/JavaScript code.
+                    </p>
+                </div>
+            </div>
+        `;
+    },
+
+    copyDockerCommand() {
+        const { runtimeInfo } = this.state.functions;
+        if (runtimeInfo?.docker_command) {
+            navigator.clipboard.writeText(runtimeInfo.docker_command);
+            this.showNotification('Command copied to clipboard', 'success');
+        }
+    },
+
+    async installRuntime() {
+        this.state.functions.installing = true;
+        this.state.functions.installProgress = 0;
+        this.state.functions.installStatus = 'Starting...';
+        this.render();
+
+        try {
+            const response = await fetch('/_/api/functions/runtime-install', {
+                method: 'POST',
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            this.state.functions.installProgress = data.progress || 0;
+
+                            if (data.status === 'downloading') {
+                                const mb = Math.round((data.bytes_downloaded || 0) / 1024 / 1024);
+                                const totalMb = Math.round((data.total_bytes || 0) / 1024 / 1024);
+                                this.state.functions.installStatus = `Downloading... ${mb} MB / ${totalMb} MB`;
+                            } else if (data.status === 'verifying') {
+                                this.state.functions.installStatus = 'Verifying checksum...';
+                            } else if (data.status === 'complete') {
+                                this.state.functions.installStatus = 'Installation complete!';
+                                this.state.functions.installing = false;
+                                this.showNotification('Edge runtime installed successfully', 'success');
+                                // Reload functions to refresh state
+                                setTimeout(() => this.loadFunctions(), 1000);
+                            } else if (data.status === 'error') {
+                                throw new Error(data.error || 'Installation failed');
+                            }
+
+                            this.render();
+                        } catch (parseErr) {
+                            console.error('Failed to parse SSE data:', parseErr);
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            this.state.functions.installing = false;
+            this.state.functions.installStatus = null;
+            this.showNotification(`Installation failed: ${err.message}`, 'error');
+            this.render();
+        }
     },
 
     renderFunctionsList() {

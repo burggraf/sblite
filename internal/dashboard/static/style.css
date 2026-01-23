@@ -2643,6 +2643,87 @@ small.text-muted {
     background: var(--warning);
 }
 
+/* Runtime Installer */
+.runtime-installer {
+    max-width: 500px;
+    margin: 0 auto;
+}
+
+.runtime-info {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1.5rem 0;
+    text-align: left;
+}
+
+.runtime-info .info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.runtime-info .info-row:last-child {
+    border-bottom: none;
+}
+
+.runtime-info .info-label {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.runtime-info .info-value {
+    font-family: var(--font-mono);
+    color: var(--text);
+}
+
+.install-progress {
+    width: 100%;
+    margin: 1.5rem 0;
+}
+
+.progress-bar {
+    height: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--primary);
+    transition: width 0.3s ease;
+}
+
+.progress-text {
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+.btn-lg {
+    padding: 0.875rem 2rem;
+    font-size: 1rem;
+}
+
+.docker-command-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+.docker-command-box .code-block {
+    margin: 0 0 1rem 0;
+    text-align: left;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
 .functions-items {
     flex: 1;
     overflow-y: auto;
