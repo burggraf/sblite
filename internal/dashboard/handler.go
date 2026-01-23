@@ -555,41 +555,103 @@ func (h *Handler) handleGetTableSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.db.Query(`SELECT column_name, pg_type, is_nullable, default_value, is_primary
-		FROM _columns WHERE table_name = ? ORDER BY column_name`, tableName)
+	// First, get actual columns from SQLite table schema using PRAGMA
+	pragmaRows, err := h.db.Query(fmt.Sprintf(`PRAGMA table_info("%s")`, tableName))
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to get schema"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to get table info"})
 		return
 	}
-	defer rows.Close()
 
-	var columns []map[string]interface{}
-	for rows.Next() {
+	// Build a map of actual columns from PRAGMA with their order
+	type pragmaColumn struct {
+		cid        int
+		name       string
+		sqliteType string
+		notnull    bool
+		dfltValue  sql.NullString
+		pk         bool
+	}
+	var pragmaCols []pragmaColumn
+	for pragmaRows.Next() {
+		var col pragmaColumn
+		var pkInt int
+		var notnullInt int
+		if err := pragmaRows.Scan(&col.cid, &col.name, &col.sqliteType, &notnullInt, &col.dfltValue, &pkInt); err != nil {
+			continue
+		}
+		col.notnull = notnullInt != 0
+		col.pk = pkInt != 0
+		pragmaCols = append(pragmaCols, col)
+	}
+	pragmaRows.Close()
+
+	if len(pragmaCols) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Table not found"})
+		return
+	}
+
+	// Get metadata from _columns table (may not have all columns)
+	metaRows, err := h.db.Query(`SELECT column_name, pg_type, is_nullable, default_value, is_primary
+		FROM _columns WHERE table_name = ?`, tableName)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to get schema metadata"})
+		return
+	}
+	defer metaRows.Close()
+
+	// Build a map of _columns metadata by column name
+	metaMap := make(map[string]map[string]interface{})
+	for metaRows.Next() {
 		var name, pgType string
 		var nullable, primary bool
 		var defaultVal sql.NullString
-		if err := rows.Scan(&name, &pgType, &nullable, &defaultVal, &primary); err != nil {
+		if err := metaRows.Scan(&name, &pgType, &nullable, &defaultVal, &primary); err != nil {
 			continue
 		}
-		col := map[string]interface{}{
-			"name":     name,
+		meta := map[string]interface{}{
 			"type":     pgType,
 			"nullable": nullable,
 			"primary":  primary,
 		}
 		if defaultVal.Valid {
-			col["default"] = defaultVal.String
+			meta["default"] = defaultVal.String
 		}
-		columns = append(columns, col)
+		metaMap[name] = meta
 	}
 
-	if len(columns) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Table not found"})
-		return
+	// Merge: use PRAGMA for column order and existence, _columns for type metadata
+	var columns []map[string]interface{}
+	for _, pc := range pragmaCols {
+		col := map[string]interface{}{
+			"name":     pc.name,
+			"nullable": !pc.notnull,
+			"primary":  pc.pk,
+		}
+
+		// Use _columns metadata if available, otherwise infer from SQLite type
+		if meta, ok := metaMap[pc.name]; ok {
+			col["type"] = meta["type"]
+			col["nullable"] = meta["nullable"]
+			col["primary"] = meta["primary"]
+			if dflt, ok := meta["default"]; ok {
+				col["default"] = dflt
+			}
+		} else {
+			// Infer PostgreSQL type from SQLite type
+			col["type"] = sqliteTypeToPgType(pc.sqliteType)
+		}
+
+		if pc.dfltValue.Valid && col["default"] == nil {
+			col["default"] = pc.dfltValue.String
+		}
+
+		columns = append(columns, col)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -597,6 +659,25 @@ func (h *Handler) handleGetTableSchema(w http.ResponseWriter, r *http.Request) {
 		"name":    tableName,
 		"columns": columns,
 	})
+}
+
+// sqliteTypeToPgType converts SQLite type affinity to a reasonable PostgreSQL type
+func sqliteTypeToPgType(sqliteType string) string {
+	sqliteType = strings.ToUpper(strings.TrimSpace(sqliteType))
+	switch {
+	case strings.Contains(sqliteType, "INT"):
+		return "integer"
+	case strings.Contains(sqliteType, "CHAR"), strings.Contains(sqliteType, "CLOB"), strings.Contains(sqliteType, "TEXT"):
+		return "text"
+	case strings.Contains(sqliteType, "BLOB"):
+		return "bytea"
+	case strings.Contains(sqliteType, "REAL"), strings.Contains(sqliteType, "FLOA"), strings.Contains(sqliteType, "DOUB"):
+		return "numeric"
+	case sqliteType == "BOOLEAN" || sqliteType == "BOOL":
+		return "boolean"
+	default:
+		return "text"
+	}
 }
 
 // CreateTableRequest defines the request body for creating a table
