@@ -92,6 +92,8 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    # Skip auto-release when only building subset of platforms
+    if: false
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
