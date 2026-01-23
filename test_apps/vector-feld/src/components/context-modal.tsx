@@ -122,18 +122,20 @@ export function ContextModal({ result, open, onOpenChange }: ContextModalProps) 
             )}
           </DialogTitle>
           {episodeInfo && (
-            <DialogDescription className="text-xs space-y-1">
-              <div className="flex flex-wrap gap-x-4 gap-y-1">
-                {episodeInfo.air_date && (
-                  <span>Aired: {episodeInfo.air_date}</span>
-                )}
-                {episodeInfo.director && (
-                  <span>Director: {episodeInfo.director}</span>
+            <DialogDescription asChild>
+              <div className="text-xs text-muted-foreground space-y-1">
+                <span className="flex flex-wrap gap-x-4 gap-y-1">
+                  {episodeInfo.air_date && (
+                    <span>Aired: {episodeInfo.air_date}</span>
+                  )}
+                  {episodeInfo.director && (
+                    <span>Director: {episodeInfo.director}</span>
+                  )}
+                </span>
+                {episodeInfo.writers && (
+                  <span className="block">Writers: {episodeInfo.writers}</span>
                 )}
               </div>
-              {episodeInfo.writers && (
-                <div>Writers: {episodeInfo.writers}</div>
-              )}
             </DialogDescription>
           )}
         </DialogHeader>
