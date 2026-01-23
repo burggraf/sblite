@@ -47,8 +47,9 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Storage - Public Access | 6 | 6 | 0 | 0 |
 | Storage - RLS | 11 | 11 | 0 | 0 |
 | Storage - Signed URLs | 12 | 12 | 0 | 0 |
+| Storage - Resumable Uploads | 14 | 14 | 0 | 0 |
 | Dashboard - Storage | 16 | 16 | 0 | 0 |
-| **TOTAL** | **457** | **399** | **0** | **57** |
+| **TOTAL** | **471** | **413** | **0** | **57** |
 
 *Last tested: 2026-01-18*
 
@@ -1001,6 +1002,38 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ API: update bucket (PUT /_/api/storage/buckets/:id)
 - ✅ API: delete bucket (DELETE /_/api/storage/buckets/:id)
 - ✅ API: list objects (POST /_/api/storage/objects/list)
+
+### `tests/storage/resumable-uploads.test.ts`
+
+**TUS Protocol - OPTIONS**
+- ✅ should return TUS capabilities
+
+**TUS Protocol - Create Session (POST)**
+- ✅ should create an upload session
+- ✅ should reject request without Tus-Resumable header
+- ✅ should reject request without Upload-Length
+- ✅ should reject request without required metadata
+
+**TUS Protocol - Query Progress (HEAD)**
+- ✅ should return upload progress
+- ✅ should return 404 for non-existent session
+
+**TUS Protocol - Upload Chunks (PATCH)**
+- ✅ should upload a chunk and update offset
+- ✅ should complete upload when all chunks received
+- ✅ should reject offset mismatch
+
+**TUS Protocol - Cancel Upload (DELETE)**
+- ✅ should cancel and cleanup upload session
+
+**TUS Protocol - Resume Upload**
+- ✅ should resume upload from last offset
+
+**TUS Protocol - Upsert**
+- ✅ should support x-upsert header for overwriting
+
+**TUS Protocol - Large Files**
+- ✅ should handle multi-chunk uploads
 
 ---
 

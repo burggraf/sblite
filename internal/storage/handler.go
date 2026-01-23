@@ -19,6 +19,7 @@ type Handler struct {
 	rlsService  *rls.Service
 	rlsEnforcer *rls.Enforcer
 	jwtSecret   string
+	tusHandler  *TUSHandler
 }
 
 // NewHandler creates a new storage handler.
@@ -31,10 +32,23 @@ func (h *Handler) SetJWTSecret(secret string) {
 	h.jwtSecret = secret
 }
 
+// EnableTUS initializes and enables TUS resumable uploads.
+// uploadsDir is the directory for temporary upload files.
+func (h *Handler) EnableTUS(uploadsDir string) {
+	tusService := h.service.InitTUS(uploadsDir, 0)
+	h.tusHandler = NewTUSHandler(tusService, h.service, h.jwtSecret)
+	if h.rlsService != nil && h.rlsEnforcer != nil {
+		h.tusHandler.SetRLSEnforcer(h.rlsService, h.rlsEnforcer)
+	}
+}
+
 // SetRLSEnforcer sets the RLS service and enforcer for storage operations.
 func (h *Handler) SetRLSEnforcer(rlsService *rls.Service, rlsEnforcer *rls.Enforcer) {
 	h.rlsService = rlsService
 	h.rlsEnforcer = rlsEnforcer
+	if h.tusHandler != nil {
+		h.tusHandler.SetRLSEnforcer(rlsService, rlsEnforcer)
+	}
 }
 
 // RegisterRoutes registers all storage routes on the given router.
@@ -49,6 +63,11 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Delete("/{bucketId}", h.DeleteBucket)
 		r.Post("/{bucketId}/empty", h.EmptyBucket)
 	})
+
+	// TUS resumable upload routes (if enabled)
+	if h.tusHandler != nil {
+		h.tusHandler.RegisterRoutes(r)
+	}
 
 	// Object routes
 	r.Route("/object", func(r chi.Router) {

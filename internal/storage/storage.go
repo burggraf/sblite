@@ -10,10 +10,11 @@ import (
 
 // Service provides storage operations.
 type Service struct {
-	db      *sql.DB
-	backend backend.Backend
-	ctx     context.Context
-	mu      sync.RWMutex
+	db         *sql.DB
+	backend    backend.Backend
+	ctx        context.Context
+	mu         sync.RWMutex
+	tusService *TUSService
 }
 
 // Config holds configuration for the storage service.
@@ -32,6 +33,9 @@ type Config struct {
 	S3SecretKey       string
 	S3ForcePathStyle  bool
 	S3UseSSL          bool
+
+	// TUS resumable uploads configuration
+	TUSMaxSize int64 // Maximum upload size for TUS (0 = unlimited)
 }
 
 // NewService creates a new storage service.
@@ -144,4 +148,36 @@ func (s *Service) Reconfigure(cfg Config) error {
 	}
 
 	return nil
+}
+
+// InitTUS initializes the TUS resumable upload service.
+// uploadsDir is the directory for temporary upload files.
+func (s *Service) InitTUS(uploadsDir string, maxSize int64) *TUSService {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.tusService != nil {
+		return s.tusService
+	}
+
+	cfg := DefaultTUSConfig()
+	if maxSize > 0 {
+		cfg.MaxSize = maxSize
+	}
+
+	s.tusService = NewTUSService(s.db, s.backend, cfg, uploadsDir)
+	return s.tusService
+}
+
+// TUSService returns the TUS service, initializing it if needed.
+func (s *Service) TUSService(uploadsDir string) *TUSService {
+	s.mu.RLock()
+	if s.tusService != nil {
+		svc := s.tusService
+		s.mu.RUnlock()
+		return svc
+	}
+	s.mu.RUnlock()
+
+	return s.InitTUS(uploadsDir, 0)
 }

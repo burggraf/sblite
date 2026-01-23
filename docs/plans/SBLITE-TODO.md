@@ -114,7 +114,13 @@ See `docs/STORAGE.md` for documentation.
 
 **Remaining (optional enhancements):**
 - Image transformations (resize, format conversion, quality) - Complexity: High
-- Resumable uploads via TUS protocol - Complexity: Medium
+
+**TUS Resumable Uploads:** ✅ COMPLETE
+- TUS 1.0.0 protocol implementation
+- Endpoints: `/storage/v1/upload/resumable`
+- Features: creation, termination, chunked uploads
+- 24-hour session expiry with automatic cleanup
+- RLS enforcement on session creation
 
 ---
 
@@ -234,7 +240,7 @@ TOTP-based second factor.
 | Phone auth | Low | Medium | Pending |
 | MFA | Low | Medium | Pending |
 | Image transformations | Low | High | Pending (storage enhancement) |
-| Resumable uploads (TUS) | Low | Medium | Pending (storage enhancement) |
+| Resumable uploads (TUS) | Low | Medium | ✅ Complete |
 
 ## Notes
 

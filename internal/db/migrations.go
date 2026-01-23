@@ -318,6 +318,31 @@ CREATE INDEX IF NOT EXISTS idx_storage_objects_owner ON storage_objects(owner_id
 CREATE INDEX IF NOT EXISTS idx_storage_objects_bucket_name ON storage_objects(bucket_id, name);
 `
 
+// TUS resumable uploads schema for tracking in-progress uploads
+const resumableUploadsSchema = `
+-- Resumable uploads: tracks TUS protocol upload sessions
+CREATE TABLE IF NOT EXISTS _resumable_uploads (
+    id            TEXT PRIMARY KEY,
+    bucket_id     TEXT NOT NULL,
+    object_name   TEXT NOT NULL,
+    owner_id      TEXT,
+    upload_length INTEGER NOT NULL,
+    upload_offset INTEGER NOT NULL DEFAULT 0,
+    content_type  TEXT,
+    cache_control TEXT,
+    metadata      TEXT DEFAULT '{}' CHECK (json_valid(metadata)),
+    upsert        INTEGER DEFAULT 0,
+    temp_path     TEXT,
+    s3_upload_id  TEXT,
+    created_at    TEXT DEFAULT (datetime('now')),
+    expires_at    TEXT NOT NULL,
+    UNIQUE(bucket_id, object_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_resumable_uploads_expires ON _resumable_uploads(expires_at);
+CREATE INDEX IF NOT EXISTS idx_resumable_uploads_bucket ON _resumable_uploads(bucket_id, object_name);
+`
+
 const defaultTemplates = `
 INSERT OR IGNORE INTO auth_email_templates (id, type, subject, body_html, body_text, updated_at) VALUES
 ('tpl-confirmation', 'confirmation', 'Confirm your email',
@@ -470,6 +495,11 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(storageSchema)
 	if err != nil {
 		return fmt.Errorf("failed to run storage schema migration: %w", err)
+	}
+
+	_, err = db.Exec(resumableUploadsSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run resumable uploads schema migration: %w", err)
 	}
 
 	// Enable RLS by default on storage_objects table (matches Supabase behavior)

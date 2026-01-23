@@ -282,6 +282,11 @@ const { data } = await supabase.rpc('vector_search', {
 | `/storage/v1/object/public/{bucket}/*` | GET | Download from public bucket (no auth) |
 | `/storage/v1/object/copy` | POST | Copy a file |
 | `/storage/v1/object/move` | POST | Move/rename a file |
+| `/storage/v1/upload/resumable` | OPTIONS | TUS capabilities |
+| `/storage/v1/upload/resumable` | POST | Create TUS upload session |
+| `/storage/v1/upload/resumable/*` | HEAD | Query upload progress |
+| `/storage/v1/upload/resumable/*` | PATCH | Upload chunk |
+| `/storage/v1/upload/resumable/*` | DELETE | Cancel upload |
 
 ### Functions API (`/functions/v1`)
 
@@ -594,6 +599,7 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - API Console for interactive API testing
 - SQL Browser for database queries
 - File storage API (Supabase-compatible, local and S3 backends)
+- TUS resumable uploads (Supabase-compatible)
 - Storage RLS policies (storage.filename, storage.foldername, storage.extension helpers)
 - Edge Functions (Supabase-compatible, TypeScript/JavaScript)
 - Functions secrets management (encrypted storage)

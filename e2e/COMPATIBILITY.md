@@ -287,6 +287,7 @@ These Supabase features are not applicable to sblite:
 | Email verification flows | ✅ | Magic link, password reset, invite |
 | Mail catch mode | ✅ | Development email capture |
 | Storage API | ✅ | Buckets, objects, signed URLs, RLS, local/S3 backends |
+| Resumable Uploads | ✅ | TUS 1.0.0 protocol (creation, termination, chunked uploads) |
 | Edge Functions | ✅ | Supabase Edge Runtime, secrets, per-function config |
 | Full-text search | ✅ | SQLite FTS5 with auto-sync triggers |
 | OAuth providers | ✅ | Google, GitHub with PKCE support |
@@ -322,12 +323,15 @@ These Supabase features are not applicable to sblite:
 - [x] OAuth providers (Google, GitHub with PKCE)
 - [x] Anonymous sign-in with credential linking
 
+### Phase 6 (Completed)
+
+- [x] Resumable uploads via TUS protocol (creation, termination, chunked uploads)
+
 ### Future Consideration
 
 - [ ] Realtime simulation (WebSocket-based)
 - [ ] Additional OAuth providers (Apple, Azure, Discord, etc.)
 - [ ] Image transformations for storage (resize, crop, format conversion)
-- [ ] Resumable uploads via TUS protocol
 - [ ] Phone authentication (SMS OTP)
 - [ ] Multi-factor authentication (TOTP)
 

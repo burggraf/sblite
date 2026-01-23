@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -181,6 +182,13 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 		s.storageHandler.SetRLSEnforcer(rlsService, rlsEnforcer)
 		// Pass JWT secret for signed URL generation
 		s.storageHandler.SetJWTSecret(cfg.JWTSecret)
+		// Enable TUS resumable uploads
+		uploadsDir := storageCfg.LocalPath
+		if uploadsDir == "" {
+			uploadsDir = "./storage"
+		}
+		uploadsDir += "/.uploads"
+		s.storageHandler.EnableTUS(uploadsDir)
 		// Set storage service on dashboard handler for management UI
 		s.dashboardHandler.SetStorageService(storageService)
 		// Register storage reload callback for hot-reload via dashboard
@@ -601,4 +609,16 @@ func (s *Server) EnableRealtime() {
 // RealtimeService returns the realtime service (may be nil)
 func (s *Server) RealtimeService() *realtime.Service {
 	return s.realtimeService
+}
+
+// StartTUSCleanup starts the TUS expired upload cleanup routine.
+func (s *Server) StartTUSCleanup(ctx context.Context) {
+	if s.storageService == nil {
+		return
+	}
+	tusService := s.storageService.TUSService("")
+	if tusService != nil {
+		tusService.StartCleanupRoutine(ctx, 1*time.Hour)
+		log.Info("TUS upload cleanup routine started")
+	}
 }

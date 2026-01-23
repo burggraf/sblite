@@ -124,6 +124,16 @@ All endpoints are mounted at `/storage/v1`.
 | `/storage/v1/object/upload/sign/{bucket}/*` | POST | Create signed upload URL |
 | `/storage/v1/object/upload/sign/{bucket}/*` | PUT | Upload via signed URL (no auth) |
 
+### Resumable Uploads (TUS Protocol)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/storage/v1/upload/resumable` | OPTIONS | Get TUS capabilities |
+| `/storage/v1/upload/resumable` | POST | Create upload session |
+| `/storage/v1/upload/resumable/*` | HEAD | Query upload progress |
+| `/storage/v1/upload/resumable/*` | PATCH | Upload chunk |
+| `/storage/v1/upload/resumable/*` | DELETE | Cancel upload |
+
 ## Usage with @supabase/supabase-js
 
 ### Creating a Bucket
@@ -451,6 +461,153 @@ curl -X POST http://localhost:8080/_/api/policies \
     "using_expr": "owner_id = auth.uid()"
   }'
 ```
+
+## Resumable Uploads (TUS Protocol)
+
+sblite supports the TUS 1.0.0 protocol for resumable file uploads, providing the same API as Supabase Storage.
+
+### Overview
+
+- **TUS Protocol 1.0.0** compliant
+- **Resumable** - Resume interrupted uploads from last successful chunk
+- **Chunked** - Upload large files in smaller pieces
+- **24-hour sessions** - Upload sessions expire after 24 hours
+- **RLS enforcement** - Access control checked at session creation
+
+### TUS Extensions Supported
+
+- `creation` - Create new upload sessions
+- `termination` - Cancel and cleanup uploads
+
+### Headers
+
+**Request Headers:**
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `Tus-Resumable` | Yes | Must be `1.0.0` |
+| `Upload-Length` | POST | Total file size in bytes |
+| `Upload-Offset` | PATCH | Current byte offset |
+| `Upload-Metadata` | POST | Base64-encoded key-value pairs |
+| `Content-Type` | PATCH | Must be `application/offset+octet-stream` |
+| `x-upsert` | POST | Set to `true` to overwrite existing files |
+
+**Response Headers:**
+
+| Header | Description |
+|--------|-------------|
+| `Tus-Resumable` | Always `1.0.0` |
+| `Tus-Version` | Supported versions (`1.0.0`) |
+| `Tus-Extension` | Supported extensions |
+| `Upload-Offset` | Current byte position |
+| `Upload-Length` | Total file size |
+| `Location` | Upload session URL (POST response) |
+
+### Upload Metadata
+
+The `Upload-Metadata` header contains comma-separated key-value pairs where values are base64-encoded:
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `bucketName` | Yes | Target bucket name |
+| `objectName` | Yes | File path within bucket |
+| `contentType` | No | MIME type (e.g., `text/plain`) |
+| `cacheControl` | No | Cache-Control header value |
+
+Example: `bucketName dGVzdA==,objectName ZmlsZS50eHQ=,contentType dGV4dC9wbGFpbg==`
+
+### Usage with tus-js-client
+
+```typescript
+import * as tus from 'tus-js-client'
+
+const upload = new tus.Upload(file, {
+  endpoint: 'http://localhost:8080/storage/v1/upload/resumable',
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+  },
+  metadata: {
+    bucketName: 'my-bucket',
+    objectName: 'path/to/file.txt',
+    contentType: 'text/plain',
+  },
+  chunkSize: 5 * 1024 * 1024, // 5MB chunks
+  onError: (error) => console.error('Upload failed:', error),
+  onProgress: (bytesUploaded, bytesTotal) => {
+    const percentage = ((bytesUploaded / bytesTotal) * 100).toFixed(2)
+    console.log(`${percentage}%`)
+  },
+  onSuccess: () => console.log('Upload complete!')
+})
+
+upload.start()
+```
+
+### Usage with Raw HTTP
+
+**1. Create upload session:**
+
+```bash
+curl -X POST http://localhost:8080/storage/v1/upload/resumable \
+  -H "Tus-Resumable: 1.0.0" \
+  -H "Upload-Length: 1000000" \
+  -H "Upload-Metadata: bucketName dGVzdA==,objectName ZmlsZS50eHQ=" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Response headers include:
+# Location: /storage/v1/upload/resumable/{upload-id}
+# Upload-Offset: 0
+```
+
+**2. Query upload progress:**
+
+```bash
+curl -I http://localhost:8080/storage/v1/upload/resumable/{upload-id} \
+  -H "Tus-Resumable: 1.0.0" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Response headers:
+# Upload-Offset: 500000
+# Upload-Length: 1000000
+```
+
+**3. Upload chunk:**
+
+```bash
+curl -X PATCH http://localhost:8080/storage/v1/upload/resumable/{upload-id} \
+  -H "Tus-Resumable: 1.0.0" \
+  -H "Upload-Offset: 0" \
+  -H "Content-Type: application/offset+octet-stream" \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-binary @chunk.bin
+```
+
+**4. Cancel upload:**
+
+```bash
+curl -X DELETE http://localhost:8080/storage/v1/upload/resumable/{upload-id} \
+  -H "Tus-Resumable: 1.0.0" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Error Responses
+
+| Status | Condition |
+|--------|-----------|
+| 400 | Invalid metadata or request |
+| 403 | Access denied by RLS policy |
+| 404 | Upload session or bucket not found |
+| 409 | Offset mismatch (resume from wrong position) |
+| 410 | Session expired |
+| 412 | Missing `Tus-Resumable` header |
+| 413 | File size exceeds bucket limit |
+| 415 | MIME type not allowed for bucket |
+
+### Session Cleanup
+
+- Upload sessions expire after **24 hours**
+- Expired sessions are automatically cleaned up hourly
+- Partial uploads and temp files are deleted on expiry
 
 ## Limitations
 

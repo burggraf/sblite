@@ -151,6 +151,9 @@ var serveCmd = &cobra.Command{
 			log.Info("realtime enabled", "realtime_api", "ws://"+addr+"/realtime/v1")
 		}
 
+		// Start TUS cleanup routine for expired resumable uploads
+		srv.StartTUSCleanup(ctx)
+
 		// Handle graceful shutdown for all modes
 		go func() {
 			sigCh := make(chan os.Signal, 1)
