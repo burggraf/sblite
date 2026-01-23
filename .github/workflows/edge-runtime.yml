@@ -55,7 +55,7 @@ jobs:
         if: matrix.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libssl-dev
+          sudo apt-get install -y build-essential pkg-config libssl-dev libopenblas-dev
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
