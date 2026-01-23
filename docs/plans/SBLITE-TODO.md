@@ -2,6 +2,60 @@
 
 This document tracks main app features that haven't been implemented yet. Reference: `e2e/COMPATIBILITY.md`, `docs/plans/2026-01-16-supabase-lite-design.md`
 
+## Future: sblite-hub (Multi-Tenant Control Plane)
+
+A control plane for managing thousands of sblite instances across organizations and projects. Enables multi-tenancy at the org level with scale-to-zero capability.
+
+**Design:** `docs/plans/2026-01-23-sblite-hub-design.md`
+**Implementation Plan:** `docs/plans/2026-01-23-sblite-hub-implementation.md`
+
+### Key Features
+- **Multi-tenancy:** Organizations with multiple projects, per-project roles (owner/admin/developer/viewer)
+- **Scale-to-zero:** Idle instances automatically shut down, wake on demand
+- **Hybrid deployment:** Shared org instances + dedicated instances for high-traffic projects
+- **Pluggable orchestration:** Process, Docker, and Kubernetes backends
+- **Dogfooding:** Hub uses its own sblite instance for control plane data
+
+### Implementation Phases
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1. Foundation | Module, config, store layer, serve command | Planned |
+| 2. Project Management | Org/project/member API handlers | Planned |
+| 3. Proxy & Routing | Subdomain routing, reverse proxy, multi-project sblite mode | Planned |
+| 4. Scale-to-Zero | Orchestrator interface, process impl, idle detection, wake-up | Planned |
+| 5. Docker | DockerOrchestrator, docker-compose example | Planned |
+| 6. Dashboard | Hub web UI for org/project management | Planned |
+| 7. Kubernetes | KubernetesOrchestrator, Helm chart | Planned |
+| 8. Production | Multi-hub federation, PostgreSQL support, rate limiting | Planned |
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     sblite-hub                          │
+│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐  │
+│  │  Dashboard  │  │  Proxy/Router│  │  Orchestrator │  │
+│  └─────────────┘  └──────────────┘  └───────────────┘  │
+│                          │                              │
+│  ┌───────────────────────▼────────────────────────┐    │
+│  │  Internal sblite instance (dogfooding)          │    │
+│  └─────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+                          │
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+   ┌────────────┐  ┌────────────┐  ┌────────────┐
+   │  sblite    │  │  sblite    │  │  sblite    │
+   │  Org A     │  │  Org B     │  │  Dedicated │
+   └────────────┘  └────────────┘  └────────────┘
+```
+
+**Priority:** Future
+**Effort:** Very Large (8 phases, ~32 tasks)
+
+---
+
 ## Major Features
 
 ### ~~Vector Search (pgvector-compatible)~~ ✅ COMPLETE
@@ -229,6 +283,7 @@ TOTP-based second factor.
 
 | Feature | Priority | Effort | Status |
 |---------|----------|--------|--------|
+| **sblite-hub (multi-tenant control plane)** | Future | Very Large | Planned |
 | PostgreSQL functions (RPC) | Medium | Medium-Very Large | ✅ Complete (SQL functions) |
 | Vector search | Medium | Medium-Large | ✅ Complete |
 | Realtime subscriptions | Medium | Large | ✅ Complete |
