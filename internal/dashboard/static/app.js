@@ -1018,11 +1018,19 @@ const App = {
             return;
         }
 
+        // Format vector types as vector(N)
+        const formattedColumns = columns.map(col => {
+            if (col.type === 'vector') {
+                return { ...col, type: `vector(${col.vectorDimension || 768})` };
+            }
+            return col;
+        });
+
         try {
             const res = await fetch('/_/api/tables', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, columns })
+                body: JSON.stringify({ name, columns: formattedColumns })
             });
 
             if (res.ok) {
@@ -1117,7 +1125,7 @@ const App = {
 
     renderCreateTableModal() {
         const { name, columns } = this.state.modal.data;
-        const types = ['uuid', 'text', 'integer', 'boolean', 'timestamptz', 'jsonb', 'numeric', 'bytea'];
+        const types = ['uuid', 'text', 'integer', 'boolean', 'timestamptz', 'jsonb', 'numeric', 'bytea', 'vector'];
 
         return `
             <div class="modal-header">
@@ -1140,6 +1148,12 @@ const App = {
                             <select class="form-input" onchange="App.updateModalColumn(${i}, 'type', this.value)">
                                 ${types.map(t => `<option value="${t}" ${col.type === t ? 'selected' : ''}>${t}</option>`).join('')}
                             </select>
+                            ${col.type === 'vector' ? `
+                                <input type="number" class="form-input" value="${col.vectorDimension || 768}" min="1" max="65535"
+                                    style="width: 80px;" placeholder="dims"
+                                    onchange="App.updateModalColumn(${i}, 'vectorDimension', parseInt(this.value) || 768)"
+                                    title="Vector dimensions">
+                            ` : ''}
                             <label><input type="checkbox" ${col.primary ? 'checked' : ''}
                                 onchange="App.updateModalColumn(${i}, 'primary', this.checked)"> PK</label>
                             <label><input type="checkbox" ${col.nullable ? 'checked' : ''}
@@ -1341,11 +1355,18 @@ const App = {
         const { data } = this.state.modal;
         const { selected } = this.state.tables;
 
+        // Format vector type as vector(N)
+        const formattedData = { ...data };
+        if (formattedData.type === 'vector') {
+            formattedData.type = `vector(${formattedData.vectorDimension || 768})`;
+        }
+        delete formattedData.vectorDimension;
+
         try {
             const res = await fetch(`/_/api/tables/${selected}/columns`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                body: JSON.stringify(formattedData)
             });
 
             if (res.ok) {
@@ -1673,7 +1694,7 @@ const App = {
 
     renderAddColumnModal() {
         const { data } = this.state.modal;
-        const types = ['uuid', 'text', 'integer', 'boolean', 'timestamptz', 'jsonb', 'numeric', 'bytea'];
+        const types = ['uuid', 'text', 'integer', 'boolean', 'timestamptz', 'jsonb', 'numeric', 'bytea', 'vector'];
 
         return `
             <div class="modal-header">
@@ -1692,6 +1713,14 @@ const App = {
                         ${types.map(t => `<option value="${t}" ${data.type === t ? 'selected' : ''}>${t}</option>`).join('')}
                     </select>
                 </div>
+                ${data.type === 'vector' ? `
+                    <div class="form-group">
+                        <label class="form-label">Dimensions</label>
+                        <input type="number" class="form-input" value="${data.vectorDimension || 768}" min="1" max="65535"
+                            onchange="App.updateModalData('vectorDimension', parseInt(this.value) || 768)">
+                        <small style="color: var(--text-muted);">Common: 768 (sentence-transformers), 1536 (OpenAI), 3072 (OpenAI large)</small>
+                    </div>
+                ` : ''}
                 <div class="form-group">
                     <label><input type="checkbox" ${data.nullable ? 'checked' : ''}
                         onchange="App.updateModalData('nullable', this.checked)"> Nullable</label>
