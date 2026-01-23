@@ -165,8 +165,29 @@ jobs:
           # Run multiple passes until no new deps are found
           echo "=== Processing transitive dependencies ==="
 
-          # GCC lib directory for resolving @rpath references
-          GCC_LIB_DIR="${{ matrix.homebrew_prefix }}/opt/gcc/lib/gcc/current"
+          # Search paths for resolving @rpath and other references
+          SEARCH_PATHS=(
+            "${{ matrix.homebrew_prefix }}/opt/gcc/lib/gcc/current"
+            "${{ matrix.homebrew_prefix }}/opt/gcc/lib/gcc/current/gcc/aarch64-apple-darwin24/15"
+            "${{ matrix.homebrew_prefix }}/opt/gcc/lib/gcc/current/gcc/x86_64-apple-darwin24/15"
+            "${{ matrix.homebrew_prefix }}/lib"
+            "${{ matrix.homebrew_prefix }}/opt/openblas/lib"
+            "${{ matrix.homebrew_prefix }}/opt/libomp/lib"
+            "${{ matrix.homebrew_prefix }}/opt/gfortran/lib"
+          )
+
+          # Function to find a library by name
+          find_lib() {
+            local name=$1
+            for dir in "${SEARCH_PATHS[@]}"; do
+              if [ -f "$dir/$name" ]; then
+                echo "$dir/$name"
+                return 0
+              fi
+            done
+            # Also try find in homebrew
+            find "${{ matrix.homebrew_prefix }}/opt" -name "$name" -type f 2>/dev/null | head -1
+          }
 
           PASS=1
           while true; do
@@ -185,34 +206,30 @@ jobs:
                 for dep in $LIB_DEPS; do
                   if [ -f "$dep" ]; then
                     DEP_NAME=$(basename "$dep")
-                    # Copy if not already bundled
                     if [ ! -f "$LIBS_DIR/$DEP_NAME" ]; then
-                      echo "  Bundling transitive: $dep"
+                      echo "  Bundling: $dep"
                       cp "$dep" "$LIBS_DIR/$DEP_NAME"
                       NEW_DEPS_FOUND=true
                     fi
-                    # Update reference (dylib to dylib, same folder, no libs/ prefix)
                     install_name_tool -change "$dep" "@loader_path/$DEP_NAME" "$lib"
                   fi
                 done
 
-                # Find @rpath dependencies (commonly used by GCC libs)
+                # Find @rpath dependencies
                 RPATH_DEPS=$(otool -L "$lib" | grep '@rpath/' | awk '{print $1}' || true)
                 for rpath_ref in $RPATH_DEPS; do
                   DEP_NAME=$(basename "$rpath_ref")
-                  # Try to find the actual file in GCC lib directory
-                  ACTUAL_PATH="$GCC_LIB_DIR/$DEP_NAME"
-                  if [ -f "$ACTUAL_PATH" ]; then
-                    if [ ! -f "$LIBS_DIR/$DEP_NAME" ]; then
-                      echo "  Bundling @rpath dep: $ACTUAL_PATH"
+                  if [ ! -f "$LIBS_DIR/$DEP_NAME" ]; then
+                    ACTUAL_PATH=$(find_lib "$DEP_NAME")
+                    if [ -n "$ACTUAL_PATH" ] && [ -f "$ACTUAL_PATH" ]; then
+                      echo "  Bundling @rpath: $ACTUAL_PATH"
                       cp "$ACTUAL_PATH" "$LIBS_DIR/$DEP_NAME"
                       NEW_DEPS_FOUND=true
+                    else
+                      echo "  Warning: Could not find $DEP_NAME"
                     fi
-                    # Update reference
-                    install_name_tool -change "$rpath_ref" "@loader_path/$DEP_NAME" "$lib"
-                  else
-                    echo "  Warning: Could not find $DEP_NAME for @rpath reference"
                   fi
+                  install_name_tool -change "$rpath_ref" "@loader_path/$DEP_NAME" "$lib"
                 done
               fi
             done
@@ -223,10 +240,19 @@ jobs:
             fi
 
             PASS=$((PASS + 1))
-            if [ $PASS -gt 10 ]; then
+            if [ $PASS -gt 15 ]; then
               echo "Warning: Too many passes, breaking"
               break
             fi
+          done
+
+          echo "=== All bundled libraries ==="
+          ls -la "$LIBS_DIR"
+          echo ""
+          echo "=== Dependencies of each bundled library ==="
+          for lib in "$LIBS_DIR"/*.dylib; do
+            echo "--- $(basename $lib) ---"
+            otool -L "$lib" | head -20
           done
 
           # Sign the modified binary and dylibs (required on macOS)
@@ -243,6 +269,42 @@ jobs:
 
           echo "=== Bundled libraries ==="
           ls -la "$LIBS_DIR"
+
+          # VERIFICATION: Ensure no unresolved dependencies remain
+          echo "=== Verifying all dependencies are resolved ==="
+          FAILED=false
+
+          # Check main binary
+          echo "Checking: $BINARY"
+          UNRESOLVED=$(otool -L "$BINARY" | grep -E '/opt/homebrew|/usr/local/opt|@rpath' | grep -v '@loader_path' || true)
+          if [ -n "$UNRESOLVED" ]; then
+            echo "::error::Binary has unresolved dependencies:"
+            echo "$UNRESOLVED"
+            FAILED=true
+          fi
+
+          # Check all bundled dylibs
+          for lib in "$LIBS_DIR"/*.dylib; do
+            if [ -f "$lib" ]; then
+              echo "Checking: $lib"
+              UNRESOLVED=$(otool -L "$lib" | grep -E '/opt/homebrew|/usr/local/opt|@rpath' | grep -v '@loader_path' || true)
+              if [ -n "$UNRESOLVED" ]; then
+                echo "::error::Library $(basename $lib) has unresolved dependencies:"
+                echo "$UNRESOLVED"
+                FAILED=true
+              fi
+            fi
+          done
+
+          if [ "$FAILED" = true ]; then
+            echo ""
+            echo "::error::BUILD FAILED - Unresolved dependencies found!"
+            echo "The bundled dylibs still reference external libraries."
+            echo "Add the missing libraries to the bundling logic."
+            exit 1
+          fi
+
+          echo "✓ All dependencies resolved - binary is portable"
 
       - name: Create tarball with bundled libs
         run: |
