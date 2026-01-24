@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -19,10 +21,11 @@ import (
 
 // Config holds the pgwire server configuration.
 type Config struct {
-	Address  string // TCP address to listen on (e.g., ":5432")
-	Password string // Password for authentication (empty = no auth)
-	NoAuth   bool   // Disable authentication entirely
-	Logger   *slog.Logger
+	Address       string       // TCP address to listen on (e.g., ":5432")
+	Password      string       // Password for authentication (empty = no auth)
+	NoAuth        bool         // Disable authentication entirely
+	Logger        *slog.Logger
+	MigrationsDir string       // Directory for auto-generated migration files (empty = disabled)
 }
 
 // Server implements a PostgreSQL wire protocol server.
@@ -116,6 +119,26 @@ func (s *Server) handleQuery(ctx context.Context, query string) (wire.PreparedSt
 		return s.handleCreateTable(ctx, query)
 	}
 
+	// Handle DROP TABLE to write migration
+	if strings.HasPrefix(upperQuery, "DROP TABLE") {
+		return s.handleDropTable(ctx, query)
+	}
+
+	// Handle ALTER TABLE to write migration
+	if strings.HasPrefix(upperQuery, "ALTER TABLE") {
+		return s.handleAlterTable(ctx, query)
+	}
+
+	// Handle CREATE INDEX to write migration
+	if strings.HasPrefix(upperQuery, "CREATE INDEX") || strings.HasPrefix(upperQuery, "CREATE UNIQUE INDEX") {
+		return s.handleCreateIndex(ctx, query)
+	}
+
+	// Handle DROP INDEX to write migration
+	if strings.HasPrefix(upperQuery, "DROP INDEX") {
+		return s.handleDropIndex(ctx, query)
+	}
+
 	// Handle INSERT specially to add UUID generation
 	if strings.HasPrefix(upperQuery, "INSERT") {
 		return s.handleInsert(ctx, query)
@@ -141,8 +164,11 @@ func (s *Server) handleQuery(ctx context.Context, query string) (wire.PreparedSt
 	return wire.Prepared(stmt), nil
 }
 
-// handleCreateTable handles CREATE TABLE with UUID column tracking and metadata registration.
+// handleCreateTable handles CREATE TABLE with UUID column tracking, metadata registration, and migration writing.
 func (s *Server) handleCreateTable(ctx context.Context, query string) (wire.PreparedStatements, error) {
+	// Store original PostgreSQL query for migration file
+	originalQuery := query
+
 	// Extract table name and UUID columns before translation
 	tableName := pgtranslate.GetTableName(query)
 	uuidColumns := pgtranslate.GetUUIDColumns(query)
@@ -162,6 +188,16 @@ func (s *Server) handleCreateTable(ctx context.Context, query string) (wire.Prep
 				// Log but don't fail - table was created successfully
 				if s.config.Logger != nil {
 					s.config.Logger.Warn("failed to register table metadata", "table", tableName, "error", err)
+				}
+			}
+
+			// Write migration file (if migrations dir is configured)
+			if s.config.MigrationsDir != "" {
+				migrationName := fmt.Sprintf("create_%s_table", tableName)
+				if err := s.writeMigration(migrationName, ensureSemicolon(originalQuery)); err != nil {
+					if s.config.Logger != nil {
+						s.config.Logger.Warn("failed to write migration", "table", tableName, "error", err)
+					}
 				}
 			}
 		}
@@ -191,6 +227,245 @@ func (s *Server) handleInsert(ctx context.Context, query string) (wire.PreparedS
 	})
 
 	return wire.Prepared(stmt), nil
+}
+
+// handleDropTable handles DROP TABLE with migration writing.
+func (s *Server) handleDropTable(ctx context.Context, query string) (wire.PreparedStatements, error) {
+	originalQuery := query
+	tableName := extractDropTableName(query)
+
+	// Translate PostgreSQL to SQLite
+	translated := pgtranslate.TranslateToSQLite(query)
+
+	stmt := wire.NewStatement(func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
+		// Execute the DROP TABLE
+		if err := s.executeExec(ctx, translated, params); err != nil {
+			return err
+		}
+
+		// Remove from _columns metadata
+		if tableName != "" {
+			_, _ = s.db.ExecContext(ctx, `DELETE FROM _columns WHERE table_name = ?`, tableName)
+
+			// Write migration file
+			if s.config.MigrationsDir != "" {
+				migrationName := fmt.Sprintf("drop_%s_table", tableName)
+				if err := s.writeMigration(migrationName, ensureSemicolon(originalQuery)); err != nil {
+					if s.config.Logger != nil {
+						s.config.Logger.Warn("failed to write migration", "table", tableName, "error", err)
+					}
+				}
+			}
+		}
+
+		return nil
+	})
+
+	return wire.Prepared(stmt), nil
+}
+
+// handleAlterTable handles ALTER TABLE with migration writing.
+func (s *Server) handleAlterTable(ctx context.Context, query string) (wire.PreparedStatements, error) {
+	originalQuery := query
+	tableName := extractAlterTableName(query)
+
+	// Translate PostgreSQL to SQLite
+	translated := pgtranslate.TranslateToSQLite(query)
+
+	stmt := wire.NewStatement(func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
+		// Execute the ALTER TABLE
+		if err := s.executeExec(ctx, translated, params); err != nil {
+			return err
+		}
+
+		// Write migration file
+		if s.config.MigrationsDir != "" && tableName != "" {
+			migrationName := deriveAlterMigrationName(query, tableName)
+			if err := s.writeMigration(migrationName, ensureSemicolon(originalQuery)); err != nil {
+				if s.config.Logger != nil {
+					s.config.Logger.Warn("failed to write migration", "table", tableName, "error", err)
+				}
+			}
+		}
+
+		return nil
+	})
+
+	return wire.Prepared(stmt), nil
+}
+
+// handleCreateIndex handles CREATE INDEX with migration writing.
+func (s *Server) handleCreateIndex(ctx context.Context, query string) (wire.PreparedStatements, error) {
+	originalQuery := query
+	indexName := extractIndexName(query)
+
+	// Translate PostgreSQL to SQLite
+	translated := pgtranslate.TranslateToSQLite(query)
+
+	stmt := wire.NewStatement(func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
+		// Execute the CREATE INDEX
+		if err := s.executeExec(ctx, translated, params); err != nil {
+			return err
+		}
+
+		// Write migration file
+		if s.config.MigrationsDir != "" && indexName != "" {
+			migrationName := fmt.Sprintf("create_%s_index", indexName)
+			if err := s.writeMigration(migrationName, ensureSemicolon(originalQuery)); err != nil {
+				if s.config.Logger != nil {
+					s.config.Logger.Warn("failed to write migration", "index", indexName, "error", err)
+				}
+			}
+		}
+
+		return nil
+	})
+
+	return wire.Prepared(stmt), nil
+}
+
+// handleDropIndex handles DROP INDEX with migration writing.
+func (s *Server) handleDropIndex(ctx context.Context, query string) (wire.PreparedStatements, error) {
+	originalQuery := query
+	indexName := extractDropIndexName(query)
+
+	// Translate PostgreSQL to SQLite
+	translated := pgtranslate.TranslateToSQLite(query)
+
+	stmt := wire.NewStatement(func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
+		// Execute the DROP INDEX
+		if err := s.executeExec(ctx, translated, params); err != nil {
+			return err
+		}
+
+		// Write migration file
+		if s.config.MigrationsDir != "" && indexName != "" {
+			migrationName := fmt.Sprintf("drop_%s_index", indexName)
+			if err := s.writeMigration(migrationName, ensureSemicolon(originalQuery)); err != nil {
+				if s.config.Logger != nil {
+					s.config.Logger.Warn("failed to write migration", "index", indexName, "error", err)
+				}
+			}
+		}
+
+		return nil
+	})
+
+	return wire.Prepared(stmt), nil
+}
+
+// writeMigration creates a migration file and records it in _schema_migrations.
+func (s *Server) writeMigration(name string, sql string) error {
+	// Ensure migrations directory exists
+	if err := os.MkdirAll(s.config.MigrationsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create migrations directory: %w", err)
+	}
+
+	// Generate version timestamp with milliseconds for uniqueness
+	// Using format: YYYYMMDDHHmmss_mmm (14 digits + 3 milliseconds)
+	now := time.Now().UTC()
+	version := fmt.Sprintf("%s%03d", now.Format("20060102150405"), now.Nanosecond()/1e6)
+	filename := fmt.Sprintf("%s_%s.sql", version, name)
+
+	// Write migration file
+	path := filepath.Join(s.config.MigrationsDir, filename)
+	if err := os.WriteFile(path, []byte(sql+"\n"), 0644); err != nil {
+		return fmt.Errorf("failed to write migration file: %w", err)
+	}
+
+	// Record in _schema_migrations
+	_, err := s.db.Exec(`INSERT INTO _schema_migrations (version, name) VALUES (?, ?)`, version, name)
+	if err != nil {
+		// Clean up the file if we can't record the migration
+		os.Remove(path)
+		return fmt.Errorf("failed to record migration: %w", err)
+	}
+
+	if s.config.Logger != nil {
+		s.config.Logger.Info("migration created", "file", filename)
+	}
+
+	return nil
+}
+
+// Patterns for extracting names from DDL statements
+var (
+	dropTablePattern  = regexp.MustCompile(`(?i)DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?`)
+	alterTablePattern = regexp.MustCompile(`(?i)ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?`)
+	createIndexPattern = regexp.MustCompile(`(?i)CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?`)
+	dropIndexPattern  = regexp.MustCompile(`(?i)DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?`)
+	addColumnPattern  = regexp.MustCompile(`(?i)ADD\s+(?:COLUMN\s+)?"?(\w+)"?`)
+	dropColumnPattern = regexp.MustCompile(`(?i)DROP\s+(?:COLUMN\s+)?"?(\w+)"?`)
+	renameColumnPattern = regexp.MustCompile(`(?i)RENAME\s+(?:COLUMN\s+)?"?(\w+)"?\s+TO\s+"?(\w+)"?`)
+)
+
+func extractDropTableName(query string) string {
+	match := dropTablePattern.FindStringSubmatch(query)
+	if match != nil && len(match) > 1 {
+		return match[1]
+	}
+	return ""
+}
+
+func extractAlterTableName(query string) string {
+	match := alterTablePattern.FindStringSubmatch(query)
+	if match != nil && len(match) > 1 {
+		return match[1]
+	}
+	return ""
+}
+
+func extractIndexName(query string) string {
+	match := createIndexPattern.FindStringSubmatch(query)
+	if match != nil && len(match) > 1 {
+		return match[1]
+	}
+	return ""
+}
+
+func extractDropIndexName(query string) string {
+	match := dropIndexPattern.FindStringSubmatch(query)
+	if match != nil && len(match) > 1 {
+		return match[1]
+	}
+	return ""
+}
+
+// deriveAlterMigrationName creates a descriptive migration name based on the ALTER TABLE operation.
+func deriveAlterMigrationName(query, tableName string) string {
+	upperQuery := strings.ToUpper(query)
+
+	if strings.Contains(upperQuery, "ADD") {
+		if match := addColumnPattern.FindStringSubmatch(query); match != nil && len(match) > 1 {
+			return fmt.Sprintf("add_%s_column_to_%s", match[1], tableName)
+		}
+		return fmt.Sprintf("alter_%s_add", tableName)
+	}
+
+	if strings.Contains(upperQuery, "DROP") {
+		if match := dropColumnPattern.FindStringSubmatch(query); match != nil && len(match) > 1 {
+			return fmt.Sprintf("drop_%s_column_from_%s", match[1], tableName)
+		}
+		return fmt.Sprintf("alter_%s_drop", tableName)
+	}
+
+	if strings.Contains(upperQuery, "RENAME") {
+		if match := renameColumnPattern.FindStringSubmatch(query); match != nil && len(match) > 2 {
+			return fmt.Sprintf("rename_%s_to_%s_in_%s", match[1], match[2], tableName)
+		}
+		return fmt.Sprintf("alter_%s_rename", tableName)
+	}
+
+	return fmt.Sprintf("alter_%s", tableName)
+}
+
+// ensureSemicolon ensures the SQL statement ends with a semicolon.
+func ensureSemicolon(sql string) string {
+	sql = strings.TrimSpace(sql)
+	if !strings.HasSuffix(sql, ";") {
+		sql += ";"
+	}
+	return sql
 }
 
 // registerTableMetadata registers a table's columns in the _columns metadata table.

@@ -60,11 +60,13 @@ func NewTranslator() *Translator {
 func (t *Translator) Translate(query string) string {
 	result := query
 
-	// Special handling for CREATE TABLE: remove gen_random_uuid() DEFAULT entirely
+	// Special handling for CREATE TABLE: remove function call DEFAULTs entirely
 	// SQLite DEFAULT clauses only support literals and specific constants, not function calls
-	// UUID generation should happen at INSERT time instead
+	// These defaults should be handled at INSERT time instead
 	if isCreateTableQuery(query) {
 		result = createTableDefaultGenRandomUUIDPattern.ReplaceAllString(result, "")
+		result = createTableDefaultNowPattern.ReplaceAllString(result, "")
+		result = createTableDefaultCurrentTimestampPattern.ReplaceAllString(result, "")
 	}
 
 	for _, rule := range t.rules {
@@ -76,6 +78,15 @@ func (t *Translator) Translate(query string) string {
 // Pattern to match DEFAULT gen_random_uuid() clause (used for CREATE TABLE special handling)
 // SQLite doesn't support function calls in DEFAULT, so we remove the entire DEFAULT clause
 var createTableDefaultGenRandomUUIDPattern = regexp.MustCompile(`(?i)\s+DEFAULT\s+gen_random_uuid\s*\(\s*\)`)
+
+// Pattern to match DEFAULT NOW() clause (used for CREATE TABLE special handling)
+// SQLite doesn't support function calls in DEFAULT
+var createTableDefaultNowPattern = regexp.MustCompile(`(?i)\s+DEFAULT\s+NOW\s*\(\s*\)`)
+
+// Pattern to match DEFAULT CURRENT_TIMESTAMP clause (used for CREATE TABLE special handling)
+// Note: SQLite does support DEFAULT CURRENT_TIMESTAMP as a special case, but the PostgreSQL
+// version may have timezone handling that differs, so we remove it for consistency
+var createTableDefaultCurrentTimestampPattern = regexp.MustCompile(`(?i)\s+DEFAULT\s+CURRENT_TIMESTAMP\b`)
 
 // Pattern to extract column name before DEFAULT gen_random_uuid()
 // Must be anchored to start of column definition (after ( or ,) to avoid matching "CREATE TABLE"

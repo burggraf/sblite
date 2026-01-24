@@ -201,10 +201,11 @@ var serveCmd = &cobra.Command{
 			}
 
 			pgConfig := pgwire.Config{
-				Address:  fmt.Sprintf("%s:%d", host, pgPort),
-				Password: pgPassword,
-				NoAuth:   pgNoAuth,
-				Logger:   log.Logger(),
+				Address:       fmt.Sprintf("%s:%d", host, pgPort),
+				Password:      pgPassword,
+				NoAuth:        pgNoAuth,
+				Logger:        log.Logger(),
+				MigrationsDir: migrationsDir,
 			}
 
 			var err error

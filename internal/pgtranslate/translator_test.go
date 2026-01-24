@@ -326,14 +326,25 @@ func TestTranslator_ComplexQueries(t *testing.T) {
 				email TEXT NOT NULL,
 				active BOOLEAN DEFAULT TRUE,
 				metadata JSONB,
-				created_at TIMESTAMPTZ DEFAULT NOW()
+				created_at TIMESTAMPTZ
 			)`,
 			expected: `CREATE TABLE users (
 				id TEXT PRIMARY KEY,
 				email TEXT NOT NULL,
 				active INTEGER DEFAULT 1,
 				metadata TEXT,
-				created_at TEXT DEFAULT datetime('now')
+				created_at TEXT
+			)`,
+		},
+		{
+			name: "CREATE TABLE removes DEFAULT NOW() (SQLite doesn't support function calls in DEFAULT)",
+			input: `CREATE TABLE events (
+				id INTEGER PRIMARY KEY,
+				created_at TIMESTAMPTZ DEFAULT NOW()
+			)`,
+			expected: `CREATE TABLE events (
+				id INTEGER PRIMARY KEY,
+				created_at TEXT
 			)`,
 		},
 		{
