@@ -2,6 +2,7 @@ package pgwire
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -62,7 +63,10 @@ func (s *Server) versionQuery() wire.PreparedStatements {
 	return wire.Prepared(
 		wire.NewStatement(
 			func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
-				return writer.Row([]interface{}{"sblite 1.0.0, compatible with PostgreSQL 15.0"})
+				if err := writer.Row([]interface{}{"sblite 1.0.0, compatible with PostgreSQL 15.0"}); err != nil {
+					return err
+				}
+				return writer.Complete("SELECT 1")
 			},
 			wire.WithColumns(wire.Columns{
 				{Name: "version", Oid: pgtype.TextOID},
@@ -76,7 +80,10 @@ func (s *Server) currentDatabaseQuery() wire.PreparedStatements {
 	return wire.Prepared(
 		wire.NewStatement(
 			func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
-				return writer.Row([]interface{}{"sblite"})
+				if err := writer.Row([]interface{}{"sblite"}); err != nil {
+					return err
+				}
+				return writer.Complete("SELECT 1")
 			},
 			wire.WithColumns(wire.Columns{
 				{Name: "current_database", Oid: pgtype.TextOID},
@@ -90,7 +97,10 @@ func (s *Server) currentUserQuery() wire.PreparedStatements {
 	return wire.Prepared(
 		wire.NewStatement(
 			func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
-				return writer.Row([]interface{}{"sblite"})
+				if err := writer.Row([]interface{}{"sblite"}); err != nil {
+					return err
+				}
+				return writer.Complete("SELECT 1")
 			},
 			wire.WithColumns(wire.Columns{
 				{Name: "current_user", Oid: pgtype.TextOID},
@@ -104,9 +114,10 @@ func (s *Server) emptyResultQuery() wire.PreparedStatements {
 	return wire.Prepared(
 		wire.NewStatement(
 			func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
-				// Return no rows
-				return nil
+				// Return no rows, just complete
+				return writer.Complete("SELECT 0")
 			},
+			wire.WithColumns(wire.Columns{}),
 		),
 	)
 }
@@ -117,7 +128,7 @@ func (s *Server) setQuery() wire.PreparedStatements {
 		wire.NewStatement(
 			func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
 				// SET statements are acknowledged but don't return results
-				return nil
+				return writer.Complete("SET")
 			},
 		),
 	)
@@ -157,7 +168,10 @@ func (s *Server) showQuery(query string) wire.PreparedStatements {
 	return wire.Prepared(
 		wire.NewStatement(
 			func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
-				return writer.Row([]interface{}{value})
+				if err := writer.Row([]interface{}{value}); err != nil {
+					return err
+				}
+				return writer.Complete("SHOW")
 			},
 			wire.WithColumns(wire.Columns{
 				{Name: name, Oid: pgtype.TextOID},
@@ -200,6 +214,7 @@ func (s *Server) tablesQuery() wire.PreparedStatements {
 				}
 				defer rows.Close()
 
+				rowCount := 0
 				for rows.Next() {
 					var schema, name, tableType string
 					if err := rows.Scan(&schema, &name, &tableType); err != nil {
@@ -208,8 +223,12 @@ func (s *Server) tablesQuery() wire.PreparedStatements {
 					if err := writer.Row([]interface{}{schema, name, tableType}); err != nil {
 						return err
 					}
+					rowCount++
 				}
-				return rows.Err()
+				if err := rows.Err(); err != nil {
+					return err
+				}
+				return writer.Complete(fmt.Sprintf("SELECT %d", rowCount))
 			},
 			wire.WithColumns(wire.Columns{
 				{Name: "table_schema", Oid: pgtype.TextOID},

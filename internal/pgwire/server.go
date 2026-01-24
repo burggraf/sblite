@@ -111,10 +111,62 @@ func (s *Server) handleQuery(ctx context.Context, query string) (wire.PreparedSt
 	// Translate PostgreSQL to SQLite
 	translated := pgtranslate.TranslateToSQLite(query)
 
-	// Create a prepared statement that will execute the translated query
+	upperQuery := strings.ToUpper(strings.TrimSpace(translated))
+
+	// For SELECT queries, we need to determine columns first
+	if strings.HasPrefix(upperQuery, "SELECT") ||
+		strings.HasPrefix(upperQuery, "WITH") ||
+		strings.Contains(upperQuery, "RETURNING") {
+		return s.prepareSelectStatement(ctx, translated)
+	}
+
+	// For non-SELECT queries (INSERT, UPDATE, DELETE, CREATE, etc.)
 	stmt := wire.NewStatement(func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
-		return s.executeQuery(ctx, translated, writer, params)
+		return s.executeExec(ctx, translated, params)
 	})
+
+	return wire.Prepared(stmt), nil
+}
+
+// prepareSelectStatement prepares a SELECT statement with proper column definitions.
+func (s *Server) prepareSelectStatement(ctx context.Context, query string) (wire.PreparedStatements, error) {
+	// Get column metadata by executing the query
+	// We wrap in a subquery with LIMIT 0 to avoid fetching data
+	metaQuery := fmt.Sprintf("SELECT * FROM (%s) AS _meta LIMIT 0", query)
+	rows, err := s.db.QueryContext(ctx, metaQuery)
+	if err != nil {
+		// Fallback: try original query if subquery fails
+		rows, err = s.db.QueryContext(ctx, query)
+		if err != nil {
+			return nil, fmt.Errorf("query failed: %w", err)
+		}
+	}
+
+	colTypes, err := rows.ColumnTypes()
+	if err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("failed to get column types: %w", err)
+	}
+	rows.Close()
+
+	// Build wire.Columns from the column types
+	columns := make(wire.Columns, len(colTypes))
+	for i, ct := range colTypes {
+		columns[i] = wire.Column{
+			Table: 0,
+			Name:  ct.Name(),
+			Oid:   GetOID(ct.DatabaseTypeName()),
+			Width: -1, // Variable width
+		}
+	}
+
+	// Create the statement with columns
+	stmt := wire.NewStatement(
+		func(ctx context.Context, writer wire.DataWriter, params []wire.Parameter) error {
+			return s.executeSelect(ctx, query, writer, params)
+		},
+		wire.WithColumns(columns),
+	)
 
 	return wire.Prepared(stmt), nil
 }
@@ -153,9 +205,6 @@ func (s *Server) executeSelect(ctx context.Context, query string, writer wire.Da
 		return err
 	}
 
-	// First, define columns if the writer supports it
-	// The columns are already defined by the prepared statement
-
 	// Prepare values slice
 	values := make([]interface{}, len(cols))
 	valuePtrs := make([]interface{}, len(cols))
@@ -164,6 +213,7 @@ func (s *Server) executeSelect(ctx context.Context, query string, writer wire.Da
 	}
 
 	// Write rows
+	rowCount := 0
 	for rows.Next() {
 		if err := rows.Scan(valuePtrs...); err != nil {
 			return err
@@ -177,9 +227,15 @@ func (s *Server) executeSelect(ctx context.Context, query string, writer wire.Da
 		if err := writer.Row(row); err != nil {
 			return err
 		}
+		rowCount++
 	}
 
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Complete the result set
+	return writer.Complete(fmt.Sprintf("SELECT %d", rowCount))
 }
 
 // executeExec executes a non-SELECT query.
