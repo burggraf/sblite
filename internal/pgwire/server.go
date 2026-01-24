@@ -147,6 +147,11 @@ func (s *Server) handleCreateTable(ctx context.Context, query string) (wire.Prep
 	tableName := pgtranslate.GetTableName(query)
 	uuidColumns := pgtranslate.GetUUIDColumns(query)
 
+	// Debug logging
+	if s.config.Logger != nil {
+		s.config.Logger.Info("handleCreateTable", "table", tableName, "uuidColumns", uuidColumns, "query", query)
+	}
+
 	// Translate PostgreSQL to SQLite
 	translated := pgtranslate.TranslateToSQLite(query)
 
@@ -195,12 +200,10 @@ func (s *Server) handleInsert(ctx context.Context, query string) (wire.PreparedS
 
 // registerTableMetadata registers a table's columns in the _columns metadata table.
 func (s *Server) registerTableMetadata(ctx context.Context, tableName string, uuidColumns []string) error {
-	// Get column info from PRAGMA
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", tableName))
-	if err != nil {
-		return fmt.Errorf("failed to get table info: %w", err)
+	// Debug logging
+	if s.config.Logger != nil {
+		s.config.Logger.Info("registerTableMetadata called", "table", tableName, "uuidColumns", uuidColumns)
 	}
-	defer rows.Close()
 
 	// Create a set of UUID columns for quick lookup
 	uuidColSet := make(map[string]bool)
@@ -208,20 +211,36 @@ func (s *Server) registerTableMetadata(ctx context.Context, tableName string, uu
 		uuidColSet[strings.ToLower(col)] = true
 	}
 
+	if s.config.Logger != nil {
+		s.config.Logger.Info("uuidColSet created", "set", uuidColSet)
+	}
+
 	// Get existing columns for this table from _columns
 	existingCols := make(map[string]bool)
 	existingRows, err := s.db.QueryContext(ctx, `SELECT column_name FROM _columns WHERE table_name = ?`, tableName)
 	if err == nil {
-		defer existingRows.Close()
 		for existingRows.Next() {
 			var colName string
 			if err := existingRows.Scan(&colName); err == nil {
 				existingCols[colName] = true
 			}
 		}
+		existingRows.Close()
 	}
 
-	// Process each column from PRAGMA
+	// Get column info from PRAGMA and collect into slice (to avoid holding connection during INSERTs)
+	type columnInfo struct {
+		name     string
+		colType  string
+		notNull  int
+		pk       int
+	}
+	var columns []columnInfo
+
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", tableName))
+	if err != nil {
+		return fmt.Errorf("failed to get table info: %w", err)
+	}
 	for rows.Next() {
 		var cid int
 		var name, colType string
@@ -230,18 +249,27 @@ func (s *Server) registerTableMetadata(ctx context.Context, tableName string, uu
 		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
 			continue
 		}
+		columns = append(columns, columnInfo{name: name, colType: colType, notNull: notNull, pk: pk})
+	}
+	rows.Close() // Close before doing INSERTs
 
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error reading table info: %w", err)
+	}
+
+	// Now insert each column into _columns
+	for _, col := range columns {
 		// Skip if already registered
-		if existingCols[name] {
+		if existingCols[col.name] {
 			continue
 		}
 
 		// Infer PostgreSQL type from SQLite type
-		pgType := inferPgType(colType)
+		pgType := inferPgType(col.colType)
 
 		// Check if this is a UUID column
 		defaultValue := ""
-		if uuidColSet[strings.ToLower(name)] {
+		if uuidColSet[strings.ToLower(col.name)] {
 			pgType = "uuid"
 			defaultValue = "gen_random_uuid()"
 		}
@@ -250,13 +278,13 @@ func (s *Server) registerTableMetadata(ctx context.Context, tableName string, uu
 		_, err := s.db.ExecContext(ctx, `
 			INSERT OR IGNORE INTO _columns (table_name, column_name, pg_type, is_nullable, default_value, is_primary)
 			VALUES (?, ?, ?, ?, ?, ?)
-		`, tableName, name, pgType, notNull == 0, defaultValue, pk == 1)
+		`, tableName, col.name, pgType, col.notNull == 0, defaultValue, col.pk == 1)
 		if err != nil {
 			return fmt.Errorf("failed to insert column metadata: %w", err)
 		}
 	}
 
-	return rows.Err()
+	return nil
 }
 
 // inferPgType infers a PostgreSQL type from a SQLite type.
