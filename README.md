@@ -29,6 +29,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | Web Dashboard | :white_check_mark: |
 | Full-text search (FTS5) | :white_check_mark: |
 | PostgreSQL syntax translation | :white_check_mark: |
+| PostgreSQL wire protocol (psql, pgAdmin) | :white_check_mark: |
 | PostgreSQL Functions (RPC) | :white_check_mark: |
 | Edge Functions | :white_check_mark: |
 | API Docs Dashboard | :white_check_mark: |
@@ -58,6 +59,7 @@ go build -o sblite
 ./sblite serve --port 3000            # Custom port
 ./sblite serve --host 0.0.0.0         # Bind to all interfaces
 ./sblite serve --realtime             # Enable WebSocket realtime subscriptions
+./sblite serve --pg-port 5432         # Enable PostgreSQL wire protocol (psql, pgAdmin)
 ./sblite serve --mail-mode=catch      # Development: captures emails, web UI at /_/mail
 ./sblite serve --mail-mode=smtp       # Production: sends real emails via SMTP
 ./sblite serve --https example.com    # HTTPS with automatic Let's Encrypt certificate
@@ -127,6 +129,18 @@ await supabase.from('todos').delete().eq('id', 1)
 | `SBLITE_HOST` | `localhost` | Server bind address |
 | `SBLITE_PORT` | `8080` | Server port |
 | `SBLITE_DB_PATH` | `./data.db` | SQLite database path |
+
+### PostgreSQL Wire Protocol Settings
+
+| CLI Flag | Default | Description |
+|----------|---------|-------------|
+| `--pg-port` | (disabled) | TCP port for PostgreSQL wire protocol |
+| `--pg-password` | (none) | Password for client authentication |
+| `--pg-no-auth` | `false` | Disable authentication (development only) |
+
+Connect with psql: `psql -h localhost -p 5432 -d sblite`
+
+See [PostgreSQL Wire Protocol](docs/pgwire.md) for detailed setup with pgAdmin, DBeaver, and application drivers.
 
 ### Email Settings
 
@@ -273,6 +287,7 @@ Enable with `--realtime` flag. Supports Broadcast, Presence, and Postgres Change
 - [Logging System](docs/LOGGING.md) - Logging modes, rotation, database queries, and configuration
 - [Full-Text Search](docs/full-text-search.md) - FTS5 indexing, query types, and Supabase textSearch compatibility
 - [PostgreSQL Translation](docs/postgres-translation.md) - Write PostgreSQL syntax that translates to SQLite automatically
+- [PostgreSQL Wire Protocol](docs/pgwire.md) - Connect with psql, pgAdmin, DBeaver, and native PostgreSQL drivers
 - [PostgreSQL Functions (RPC)](docs/rpc-functions.md) - SQL functions callable via `supabase.rpc()`
 - [Storage API](docs/STORAGE.md) - File uploads, downloads, buckets, and public access
 - [Edge Functions](docs/edge-functions.md) - Serverless TypeScript/JavaScript functions with secrets and configuration

@@ -1,8 +1,8 @@
 # PostgreSQL Syntax Translation
 
 **Status:** Implemented
-**Version:** 1.0
-**Last Updated:** 2026-01-19
+**Version:** 1.1
+**Last Updated:** 2026-01-24
 
 ## Overview
 
@@ -250,22 +250,104 @@ ON CONFLICT DO NOTHING;
 INSERT OR IGNORE INTO users (id, email) VALUES (1, 'test@example.com');
 ```
 
+### Array Operations
+
+| PostgreSQL | SQLite | Example |
+|------------|--------|---------|
+| `ARRAY[...]` | `json_array(...)` | `ARRAY[1,2,3]` → `json_array(1,2,3)` |
+| `arr[n]` | `json_extract(arr, '$[n-1]')` | `tags[1]` → `json_extract(tags, '$[0]')` |
+| `= ANY(arr)` | `EXISTS (SELECT ... FROM json_each)` | `id = ANY(ARRAY[1,2])` → subquery |
+| `> ALL(arr)` | `NOT EXISTS (SELECT ... FROM json_each)` | `x > ALL(ARRAY[1,2])` → subquery |
+
+**Examples:**
+```sql
+-- PostgreSQL: Array literal
+SELECT ARRAY[1, 2, 3] as numbers;
+-- Translated: json_array(1, 2, 3)
+
+-- PostgreSQL: Array subscript (1-based indexing)
+SELECT tags[1] FROM posts;
+-- Translated: json_extract(tags, '$[0]')
+
+-- PostgreSQL: ANY operator
+SELECT * FROM users WHERE id = ANY(ARRAY[1, 2, 3]);
+-- Translated: WHERE EXISTS (SELECT 1 FROM json_each(json_array(1,2,3)) WHERE value = id)
+
+-- PostgreSQL: ALL operator
+SELECT * FROM products WHERE price > ALL(ARRAY[10, 20, 30]);
+-- Translated: WHERE NOT EXISTS (SELECT 1 FROM json_each(json_array(10,20,30)) WHERE value >= price)
+```
+
+### Window Functions
+
+SQLite 3.25+ supports window functions natively. The translator passes these through:
+
+| PostgreSQL | SQLite | Notes |
+|------------|--------|-------|
+| `ROW_NUMBER() OVER (...)` | Same | Fully supported |
+| `RANK() OVER (...)` | Same | Fully supported |
+| `DENSE_RANK() OVER (...)` | Same | Fully supported |
+| `PARTITION BY` | Same | Fully supported |
+| `ORDER BY` in OVER | Same | Fully supported |
+| `ROWS BETWEEN ... AND ...` | Same | Frame specification supported |
+
+**Examples:**
+```sql
+-- Row numbering with partition
+SELECT name, dept,
+       ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC) as rank
+FROM employees;
+
+-- Running totals
+SELECT date, amount,
+       SUM(amount) OVER (ORDER BY date ROWS UNBOUNDED PRECEDING) as running_total
+FROM transactions;
+
+-- Moving averages
+SELECT date, value,
+       AVG(value) OVER (ORDER BY date ROWS BETWEEN 2 PRECEDING AND 2 FOLLOWING) as moving_avg
+FROM metrics;
+```
+
+### Regex Operators
+
+| PostgreSQL | SQLite | Description |
+|------------|--------|-------------|
+| `~` | `REGEXP` | Case-sensitive regex match |
+| `~*` | `LOWER(...) REGEXP LOWER(...)` | Case-insensitive regex match |
+| `!~` | `NOT ... REGEXP` | Negated case-sensitive match |
+| `!~*` | `NOT LOWER(...) REGEXP LOWER(...)` | Negated case-insensitive match |
+
+**Examples:**
+```sql
+-- PostgreSQL: Case-sensitive regex
+SELECT * FROM users WHERE email ~ '^admin@';
+-- Translated: WHERE email REGEXP '^admin@'
+
+-- PostgreSQL: Case-insensitive regex
+SELECT * FROM users WHERE name ~* 'john';
+-- Translated: WHERE LOWER(name) REGEXP LOWER('john')
+
+-- PostgreSQL: Negated regex
+SELECT * FROM logs WHERE message !~ 'DEBUG';
+-- Translated: WHERE NOT message REGEXP 'DEBUG'
+```
+
 ## Unsupported Features
 
 The following PostgreSQL features cannot be reliably translated and will **not** be translated (original query returned):
 
-- **Window Functions** - `OVER()`, `PARTITION BY`
-- **Array Literals** - `ARRAY[1,2,3]`
-- **Array Functions** - `ARRAY_AGG()`, `UNNEST()`
+- **Array Functions** - `ARRAY_AGG()`, `UNNEST()` (planned for future release)
 - **Lateral Joins** - `LATERAL`
 - **Row Locking** - `FOR UPDATE`, `FOR SHARE`
 - **Advanced CTEs** - Some complex Common Table Expressions
 - **ON CONFLICT DO UPDATE** - Requires complex rewriting
+- **Full-Text Search** - `tsvector`, `tsquery`, `@@` operator (use FTS5 instead)
 
 For these features, you'll need to:
 1. Disable PostgreSQL mode and write SQLite syntax manually
 2. Wait for future enhancements to the translator
-3. Use workarounds (e.g., rewrite window functions as subqueries)
+3. Use workarounds specific to each feature
 
 ## Known Limitations
 
@@ -552,7 +634,7 @@ To contribute new translation rules or improvements:
 ## FAQ
 
 **Q: Does PostgreSQL mode make sblite fully PostgreSQL compatible?**
-A: No. It provides translation for common PostgreSQL syntax, but sblite is still powered by SQLite. Some PostgreSQL features (like window functions, arrays) are not supported.
+A: No. It provides translation for common PostgreSQL syntax, but sblite is still powered by SQLite. Most common features (arrays, window functions, regex) are supported, but some advanced features (LATERAL, array functions like UNNEST) are not.
 
 **Q: Will translated queries perform the same as in PostgreSQL?**
 A: Usually yes, but SQLite and PostgreSQL have different query planners and optimizations. Performance characteristics may differ.
