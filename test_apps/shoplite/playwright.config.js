@@ -7,6 +7,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: 1,
   reporter: 'html',
+  globalSetup: './e2e/global-setup.js',
   use: {
     baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',

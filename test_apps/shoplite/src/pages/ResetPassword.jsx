@@ -1,34 +1,18 @@
 import { useState, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { useAuth } from '../App'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 
 function ResetPassword() {
-  const { updatePassword, user } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [ready, setReady] = useState(false)
 
-  useEffect(() => {
-    // The user should be set via the hash fragment from the recovery link
-    // supabase-js handles parsing the token and creating a session
-    // We just need to wait for the auth state to be ready
-    const timer = setTimeout(() => {
-      setReady(true)
-    }, 1000)
-
-    return () => clearTimeout(timer)
-  }, [])
-
-  useEffect(() => {
-    // If user becomes available after page load, we're ready
-    if (user) {
-      setReady(true)
-    }
-  }, [user])
+  // Get token from URL query params
+  const token = searchParams.get('token')
+  const type = searchParams.get('type')
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -44,43 +28,55 @@ function ResetPassword() {
       return
     }
 
+    if (!token) {
+      setError('Invalid reset link - no token found')
+      return
+    }
+
     setLoading(true)
 
-    const { error } = await updatePassword(password)
+    try {
+      // Call the verify endpoint with the token and new password
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL || 'http://localhost:8080'}/auth/v1/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'recovery',
+          token: token,
+          password: password
+        })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setError(data.message || data.error || 'Failed to reset password')
+        setLoading(false)
+        return
+      }
+
+      setSuccess(true)
+    } catch (err) {
+      setError('Network error. Please try again.')
+    }
 
     setLoading(false)
-
-    if (error) {
-      setError(error.message)
-    } else {
-      setSuccess(true)
-    }
   }
 
-  // Show message if no valid session
-  if (ready && !user) {
+  // Show message if no token in URL
+  if (!token || type !== 'recovery') {
     return (
       <div className="auth-page">
         <div className="auth-card">
-          <h1 className="auth-title">Invalid or Expired Link</h1>
+          <h1 className="auth-title">Invalid Link</h1>
           <div className="alert alert-error">
-            This password reset link is invalid or has expired. Please request a new one.
+            This password reset link is invalid. Please request a new one.
           </div>
           <Link to="/login" className="btn btn-primary" style={{ width: '100%', display: 'block', textAlign: 'center' }}>
             Back to Sign In
           </Link>
-        </div>
-      </div>
-    )
-  }
-
-  // Show loading while checking session
-  if (!ready) {
-    return (
-      <div className="auth-page">
-        <div className="auth-card">
-          <h1 className="auth-title">Reset Password</h1>
-          <div className="loading">Verifying your link...</div>
         </div>
       </div>
     )

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { testEmail, TEST_PASSWORD, registerAndConfirmViaUI } from '../helpers.js'
-import { waitForEmail, extractVerificationUrl, extractToken, clearAllEmails } from '../mail-helpers.js'
+import { waitForEmail, extractVerificationUrl, extractToken, extractResetPasswordUrl, clearAllEmails } from '../mail-helpers.js'
 
 test.describe('Forgot Password', () => {
   test.beforeEach(async () => {
@@ -119,6 +119,68 @@ test.describe('Forgot Password', () => {
       })
     })
     expect(verifyResponse.ok).toBeTruthy()
+
+    // Sign in with new password
+    await page.goto('/login')
+    await page.getByTestId('email-input').fill(email)
+    await page.getByTestId('password-input').fill(newPassword)
+    await page.getByTestId('submit-button').click()
+
+    // Should successfully sign in
+    await expect(page).toHaveURL('/')
+    await expect(page.getByRole('button', { name: 'Sign Out' })).toBeVisible()
+  })
+
+  test('full password reset flow via frontend UI', async ({ page }) => {
+    const email = testEmail()
+    const newPassword = 'NewSecurePassword789!'
+
+    // First register a user
+    await registerAndConfirmViaUI(page, email, TEST_PASSWORD)
+
+    // Sign out
+    await page.getByRole('button', { name: 'Sign Out' }).click()
+    await page.waitForURL('/')
+
+    // Clear emails before requesting reset
+    await clearAllEmails()
+
+    // Request password reset
+    await page.goto('/login')
+    await page.getByTestId('forgot-password-link').click()
+    await page.getByTestId('forgot-email-input').fill(email)
+    await page.getByTestId('forgot-submit-button').click()
+
+    // Wait for success message
+    await expect(page.locator('.alert-success')).toBeVisible()
+
+    // Wait for recovery email to arrive
+    const recoveryEmail = await waitForEmail(email, 'recovery', 10000)
+    expect(recoveryEmail).toBeTruthy()
+
+    // Extract the reset password URL (frontend URL)
+    const resetUrl = extractResetPasswordUrl(recoveryEmail)
+    expect(resetUrl).toBeTruthy()
+    expect(resetUrl).toContain('/reset-password')
+    expect(resetUrl).toContain('token=')
+    expect(resetUrl).toContain('type=recovery')
+
+    // Navigate to the reset password page
+    await page.goto(resetUrl)
+
+    // Should show the reset password form
+    await expect(page.locator('.auth-title')).toHaveText('Reset Password')
+    await expect(page.getByTestId('new-password-input')).toBeVisible()
+    await expect(page.getByTestId('confirm-password-input')).toBeVisible()
+
+    // Fill in new password
+    await page.getByTestId('new-password-input').fill(newPassword)
+    await page.getByTestId('confirm-password-input').fill(newPassword)
+    await page.getByTestId('reset-submit-button').click()
+
+    // Should show success message
+    await expect(page.locator('.auth-title')).toHaveText('Password Updated')
+    await expect(page.locator('.alert-success')).toContainText('successfully updated')
 
     // Sign in with new password
     await page.goto('/login')

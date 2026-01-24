@@ -111,6 +111,25 @@ export function extractVerificationUrl(email) {
 }
 
 /**
+ * Extract the reset password URL from recovery email body (frontend URL)
+ * @param {object} email - Email object
+ */
+export function extractResetPasswordUrl(email) {
+  const body = email.body_html || email.body_text
+
+  // Match href URLs containing /reset-password
+  const hrefMatch = body.match(/href="([^"]*\/reset-password[^"]*)"/)
+  if (hrefMatch) {
+    // Decode HTML entities (e.g., &amp; -> &)
+    return hrefMatch[1].replace(/&amp;/g, '&')
+  }
+
+  // Match plain URLs containing /reset-password
+  const urlMatch = body.match(/(https?:\/\/[^\s<>"]*\/reset-password[^\s<>"]*)/)
+  return urlMatch ? urlMatch[1].replace(/&amp;/g, '&') : null
+}
+
+/**
  * Confirm a user's email by calling the verification endpoint
  * @param {string} verificationUrl - The full verification URL from the email
  */
