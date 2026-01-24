@@ -78,7 +78,8 @@ func (t *Translator) Translate(query string) string {
 var createTableDefaultGenRandomUUIDPattern = regexp.MustCompile(`(?i)\s+DEFAULT\s+gen_random_uuid\s*\(\s*\)`)
 
 // Pattern to extract column name before DEFAULT gen_random_uuid()
-var columnWithGenRandomUUIDPattern = regexp.MustCompile(`(?i)(\w+)\s+\w+[^,)]*DEFAULT\s+gen_random_uuid\s*\(\s*\)`)
+// Must be anchored to start of column definition (after ( or ,) to avoid matching "CREATE TABLE"
+var columnWithGenRandomUUIDPattern = regexp.MustCompile(`(?i)(?:[(,])\s*(\w+)\s+\w+[^,)]*?DEFAULT\s+gen_random_uuid\s*\(\s*\)`)
 
 // Pattern to extract table name from CREATE TABLE
 var createTableNamePattern = regexp.MustCompile(`(?i)CREATE\s+(?:TEMP(?:ORARY)?\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)`)
