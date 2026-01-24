@@ -25,6 +25,7 @@ var dashboardSetupCmd = &cobra.Command{
 	Long:  `Set the initial dashboard password. Only works if no password has been set.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dbPath, _ := cmd.Flags().GetString("db")
+		passwordFlag, _ := cmd.Flags().GetString("password")
 
 		database, err := db.New(dbPath)
 		if err != nil {
@@ -43,18 +44,23 @@ var dashboardSetupCmd = &cobra.Command{
 			return fmt.Errorf("dashboard password already set, use 'dashboard reset-password' to change it")
 		}
 
-		password, err := promptPassword("Enter dashboard password: ")
-		if err != nil {
-			return err
-		}
+		var password string
+		if passwordFlag != "" {
+			password = passwordFlag
+		} else {
+			password, err = promptPassword("Enter dashboard password: ")
+			if err != nil {
+				return err
+			}
 
-		confirm, err := promptPassword("Confirm password: ")
-		if err != nil {
-			return err
-		}
+			confirm, err := promptPassword("Confirm password: ")
+			if err != nil {
+				return err
+			}
 
-		if password != confirm {
-			return fmt.Errorf("passwords do not match")
+			if password != confirm {
+				return fmt.Errorf("passwords do not match")
+			}
 		}
 
 		if err := auth.SetupPassword(password); err != nil {
@@ -72,6 +78,7 @@ var dashboardResetPasswordCmd = &cobra.Command{
 	Long:  `Change the dashboard password. This will invalidate any existing sessions.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dbPath, _ := cmd.Flags().GetString("db")
+		passwordFlag, _ := cmd.Flags().GetString("password")
 
 		database, err := db.New(dbPath)
 		if err != nil {
@@ -86,18 +93,24 @@ var dashboardResetPasswordCmd = &cobra.Command{
 		store := dashboard.NewStore(database.DB)
 		auth := dashboard.NewAuth(store)
 
-		password, err := promptPassword("Enter new dashboard password: ")
-		if err != nil {
-			return err
-		}
+		var password string
+		var err2 error
+		if passwordFlag != "" {
+			password = passwordFlag
+		} else {
+			password, err2 = promptPassword("Enter new dashboard password: ")
+			if err2 != nil {
+				return err2
+			}
 
-		confirm, err := promptPassword("Confirm password: ")
-		if err != nil {
-			return err
-		}
+			confirm, err2 := promptPassword("Confirm password: ")
+			if err2 != nil {
+				return err2
+			}
 
-		if password != confirm {
-			return fmt.Errorf("passwords do not match")
+			if password != confirm {
+				return fmt.Errorf("passwords do not match")
+			}
 		}
 
 		if err := auth.ResetPassword(password); err != nil {
@@ -147,5 +160,8 @@ func init() {
 	dashboardCmd.AddCommand(dashboardResetPasswordCmd)
 
 	dashboardSetupCmd.Flags().String("db", "data.db", "Path to the database file")
+	dashboardSetupCmd.Flags().String("password", "", "Dashboard password (skips interactive prompt)")
+
 	dashboardResetPasswordCmd.Flags().String("db", "data.db", "Path to the database file")
+	dashboardResetPasswordCmd.Flags().String("password", "", "New dashboard password (skips interactive prompt)")
 }

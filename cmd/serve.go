@@ -73,9 +73,10 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		// Check if database exists
+		// Auto-initialize database if it doesn't exist
+		dbExists := true
 		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-			return fmt.Errorf("database not found at %s. Run 'sblite init' first", dbPath)
+			dbExists = false
 		}
 
 		database, err := db.New(dbPath)
@@ -87,6 +88,20 @@ var serveCmd = &cobra.Command{
 		// Run migrations in case schema is outdated
 		if err := database.RunMigrations(); err != nil {
 			return fmt.Errorf("failed to run migrations: %w", err)
+		}
+
+		if !dbExists {
+			log.Info("initialized new database", "path", dbPath)
+
+			// Set dashboard password if provided during auto-init
+			if password, _ := cmd.Flags().GetString("password"); password != "" {
+				store := dashboard.NewStore(database.DB)
+				auth := dashboard.NewAuth(store)
+				if err := auth.SetupPassword(password); err != nil {
+					return fmt.Errorf("failed to set dashboard password: %w", err)
+				}
+				log.Info("dashboard password set")
+			}
 		}
 
 		// Build mail configuration
@@ -516,6 +531,7 @@ func buildStorageConfig(cmd *cobra.Command, db *sql.DB) *storage.Config {
 func init() {
 	rootCmd.AddCommand(serveCmd)
 	serveCmd.Flags().String("db", "data.db", "Path to database file")
+	serveCmd.Flags().String("password", "", "Set dashboard password (only used when auto-initializing database)")
 	serveCmd.Flags().IntP("port", "p", 8080, "Port to listen on")
 	serveCmd.Flags().String("host", "0.0.0.0", "Host to bind to")
 	serveCmd.Flags().String("migrations-dir", "./migrations", "Path to migrations directory")

@@ -124,13 +124,16 @@ sblite/
 go build -o sblite .
 
 # Initialize database (creates data.db with auth schema)
-./sblite init
+./sblite init                                 # Interactive (no password set)
+./sblite init --password "my-password"        # Set dashboard password during init
+./sblite init --db /path/to/data.db           # Custom database path
 
-# Start server
-./sblite serve                      # Default: localhost:8080
-./sblite serve --port 3000          # Custom port
-./sblite serve --host 0.0.0.0       # Bind to all interfaces
-./sblite serve --db /path/to/data.db  # Custom database path
+# Start server (auto-creates database if not found)
+./sblite serve                                # Default: localhost:8080, auto-creates data.db
+./sblite serve --port 3000                    # Custom port
+./sblite serve --host 0.0.0.0                 # Bind to all interfaces
+./sblite serve --db /path/to/data.db          # Custom database path
+./sblite serve --password "my-password"       # Set dashboard password during auto-init
 
 # Start server with HTTPS (Let's Encrypt)
 ./sblite serve --https example.com
@@ -152,9 +155,11 @@ go test ./...
 ./sblite migration list --db data.db          # List all migrations and status
 ./sblite db push --db data.db                 # Apply pending migrations
 
-# Dashboard management
-./sblite dashboard setup                      # Set initial dashboard password
-./sblite dashboard reset-password             # Reset password and clear sessions
+# Dashboard password management
+./sblite dashboard setup                      # Set initial password (interactive)
+./sblite dashboard setup --password "pw"      # Set initial password (non-interactive)
+./sblite dashboard reset-password             # Reset password (interactive)
+./sblite dashboard reset-password --password "new-pw"  # Reset password (non-interactive)
 
 # Edge Functions
 ./sblite serve --functions                    # Start server with edge functions enabled
@@ -172,6 +177,22 @@ npm run setup    # Initialize test database
 npm test         # Run all tests (server must be running)
 ```
 
+## Quick Start
+
+The simplest way to get started:
+
+```bash
+# Build and run (database auto-created)
+go build -o sblite .
+./sblite serve --password "admin123"
+```
+
+This will:
+1. Auto-create `data.db` with the auth schema
+2. Set the dashboard password to `admin123`
+3. Start the server at `http://localhost:8080`
+4. Dashboard available at `http://localhost:8080/_`
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -182,6 +203,43 @@ npm test         # Run all tests (server must be running)
 | `SBLITE_DB_PATH` | `./data.db` | SQLite database path |
 | `SBLITE_HTTPS_DOMAIN` | (none) | Domain for automatic Let's Encrypt HTTPS |
 | `SBLITE_HTTP_PORT` | `80` | HTTP port for ACME challenges (with HTTPS) |
+
+### Database Auto-Initialization
+
+When running `sblite serve`, if no database exists at the specified path (default: `data.db`), it will be automatically created and initialized with the auth schema. This eliminates the need to run `sblite init` separately.
+
+```bash
+# These are equivalent for a fresh start:
+./sblite init && ./sblite serve
+./sblite serve  # Auto-creates data.db if not found
+```
+
+To set the dashboard password during auto-initialization:
+
+```bash
+./sblite serve --password "my-secure-password"
+```
+
+The `--password` flag only takes effect when the database is being created. If the database already exists, the flag is ignored.
+
+### Dashboard Password Management
+
+The dashboard requires a password for access. You can set or reset it via CLI:
+
+| Command | Description |
+|---------|-------------|
+| `sblite init --password "pw"` | Set password during database creation |
+| `sblite serve --password "pw"` | Set password during auto-initialization |
+| `sblite dashboard setup` | Set initial password (interactive prompt) |
+| `sblite dashboard setup --password "pw"` | Set initial password (non-interactive) |
+| `sblite dashboard reset-password` | Reset password (interactive prompt) |
+| `sblite dashboard reset-password --password "pw"` | Reset password (non-interactive) |
+
+**Notes:**
+- `dashboard setup` only works if no password has been set yet
+- `dashboard reset-password` invalidates all existing sessions
+- Minimum password length: 8 characters
+- All commands support `--db` flag to specify database path
 
 ### HTTPS Configuration
 
@@ -619,7 +677,18 @@ Built-in web UI for table and data management, served at `/_`.
 **Security:**
 - Password: minimum 8 characters, bcrypt hashed (cost 10)
 - Session: 24-hour expiry, HTTP-only SameSite=Strict cookie
-- First access requires initial password setup
+- First access requires initial password setup (can be set via CLI or web UI)
+
+**Password Setup Options:**
+```bash
+# Set during database initialization
+./sblite init --password "my-password"
+./sblite serve --password "my-password"  # During auto-init
+
+# Set/reset via CLI
+./sblite dashboard setup --password "my-password"
+./sblite dashboard reset-password --password "new-password"
+```
 
 **Features:**
 - **Table Management:** Create/modify/delete tables with typed schemas
