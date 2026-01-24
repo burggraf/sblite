@@ -314,6 +314,26 @@ sblite version dev  # Should show v0.2.12
 
 ---
 
+## Future: Enhanced PostgreSQL Translation
+
+Integrate [auxten/postgresql-parser](https://github.com/auxten/postgresql-parser) for fuller PostgreSQL syntax support.
+
+**Target features:**
+- Window functions (`ROW_NUMBER() OVER (PARTITION BY ...)`)
+- Arrays (`ARRAY[]`, `unnest()`, `ANY/ALL`)
+- CTEs (`WITH` clauses, `WITH RECURSIVE`)
+
+**Tradeoffs:**
+- +558 transitive dependencies
+- +23MB binary size (~doubles current size)
+- Pure Go, no CGO required
+
+**Status:** Design complete, implementation deferred until users report specific unsupported queries.
+
+**Design:** `docs/plans/2025-01-24-postgresql-parser-integration-design.md`
+
+---
+
 ## Notes
 
 - sblite is fully functional for typical use cases (CRUD + auth + RLS + FTS + OAuth + Storage + Realtime + Edge Functions + RPC + Vector Search)
