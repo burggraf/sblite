@@ -8,6 +8,7 @@ import Checkout from './pages/Checkout'
 import Orders from './pages/Orders'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import ResetPassword from './pages/ResetPassword'
 
 // Auth Context
 const AuthContext = createContext(null)
@@ -210,6 +211,27 @@ function App() {
         email
       })
       return { data, error }
+    },
+    resetPasswordForEmail: async (email) => {
+      const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`
+      })
+      return { data, error }
+    },
+    signInWithMagicLink: async (email) => {
+      const { data, error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/`
+        }
+      })
+      return { data, error }
+    },
+    updatePassword: async (newPassword) => {
+      const { data, error } = await supabase.auth.updateUser({
+        password: newPassword
+      })
+      return { data, error }
     }
   }
 
@@ -227,6 +249,7 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route
               path="/cart"
               element={

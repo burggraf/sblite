@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../App'
 
 function Login() {
-  const { signIn, resendConfirmation } = useAuth()
+  const { signIn, resendConfirmation, resetPasswordForEmail, signInWithMagicLink } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -12,6 +12,11 @@ function Login() {
   const [needsConfirmation, setNeedsConfirmation] = useState(false)
   const [resendLoading, setResendLoading] = useState(false)
   const [resendSuccess, setResendSuccess] = useState(false)
+
+  // View state: 'login' | 'forgot' | 'magic'
+  const [view, setView] = useState('login')
+  const [forgotSuccess, setForgotSuccess] = useState(false)
+  const [magicLinkSuccess, setMagicLinkSuccess] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -53,6 +58,190 @@ function Login() {
     }
   }
 
+  async function handleForgotPassword(e) {
+    e.preventDefault()
+    setError('')
+    setForgotSuccess(false)
+    setLoading(true)
+
+    const { error } = await resetPasswordForEmail(email)
+
+    setLoading(false)
+
+    if (error) {
+      setError(error.message)
+    } else {
+      setForgotSuccess(true)
+    }
+  }
+
+  async function handleMagicLink(e) {
+    e.preventDefault()
+    setError('')
+    setMagicLinkSuccess(false)
+    setLoading(true)
+
+    const { error } = await signInWithMagicLink(email)
+
+    setLoading(false)
+
+    if (error) {
+      setError(error.message)
+    } else {
+      setMagicLinkSuccess(true)
+    }
+  }
+
+  function switchView(newView) {
+    setView(newView)
+    setError('')
+    setForgotSuccess(false)
+    setMagicLinkSuccess(false)
+    setNeedsConfirmation(false)
+    setResendSuccess(false)
+  }
+
+  // Forgot Password View
+  if (view === 'forgot') {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <h1 className="auth-title">Reset Password</h1>
+
+          {error && <div className="alert alert-error">{error}</div>}
+
+          {forgotSuccess ? (
+            <>
+              <div className="alert alert-success">
+                If an account exists for {email}, you will receive a password reset link shortly.
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ width: '100%', marginTop: '1rem' }}
+                onClick={() => switchView('login')}
+              >
+                Back to Sign In
+              </button>
+            </>
+          ) : (
+            <form onSubmit={handleForgotPassword}>
+              <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+                Enter your email address and we'll send you a link to reset your password.
+              </p>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="forgot-email">
+                  Email
+                </label>
+                <input
+                  id="forgot-email"
+                  type="email"
+                  className="form-input"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  data-testid="forgot-email-input"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="btn btn-primary"
+                style={{ width: '100%' }}
+                disabled={loading}
+                data-testid="forgot-submit-button"
+              >
+                {loading ? 'Sending...' : 'Send Reset Link'}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ width: '100%', marginTop: '0.5rem' }}
+                onClick={() => switchView('login')}
+              >
+                Back to Sign In
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Magic Link View
+  if (view === 'magic') {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <h1 className="auth-title">Sign In with Magic Link</h1>
+
+          {error && <div className="alert alert-error">{error}</div>}
+
+          {magicLinkSuccess ? (
+            <>
+              <div className="alert alert-success">
+                Check your email! We've sent a magic link to {email}. Click the link to sign in.
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ width: '100%', marginTop: '1rem' }}
+                onClick={() => switchView('login')}
+              >
+                Back to Sign In
+              </button>
+            </>
+          ) : (
+            <form onSubmit={handleMagicLink}>
+              <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+                Enter your email and we'll send you a magic link to sign in instantly - no password needed.
+              </p>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="magic-email">
+                  Email
+                </label>
+                <input
+                  id="magic-email"
+                  type="email"
+                  className="form-input"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  data-testid="magic-email-input"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="btn btn-primary"
+                style={{ width: '100%' }}
+                disabled={loading}
+                data-testid="magic-submit-button"
+              >
+                {loading ? 'Sending...' : 'Send Magic Link'}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ width: '100%', marginTop: '0.5rem' }}
+                onClick={() => switchView('login')}
+              >
+                Back to Sign In
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Default Login View
   return (
     <div className="auth-page">
       <div className="auth-card">
@@ -111,6 +300,16 @@ function Login() {
               required
               data-testid="password-input"
             />
+            <div style={{ textAlign: 'right', marginTop: '0.25rem' }}>
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => switchView('forgot')}
+                data-testid="forgot-password-link"
+              >
+                Forgot password?
+              </button>
+            </div>
           </div>
 
           <button
@@ -123,6 +322,17 @@ function Login() {
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
+
+        <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => switchView('magic')}
+            data-testid="magic-link-button"
+          >
+            Sign in with Magic Link instead
+          </button>
+        </div>
 
         <div className="auth-footer">
           Don't have an account? <Link to="/register">Sign up</Link>

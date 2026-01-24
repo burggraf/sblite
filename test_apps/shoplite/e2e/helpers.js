@@ -45,13 +45,51 @@ export async function signInViaUI(page, email, password) {
 }
 
 // Register a new user via the UI
+// If email confirmation is required, this only submits the form
 export async function registerViaUI(page, email, password) {
   await page.goto('/register')
   await page.getByTestId('email-input').fill(email)
   await page.getByTestId('password-input').fill(password)
   await page.getByTestId('confirm-password-input').fill(password)
   await page.getByTestId('submit-button').click()
-  await page.waitForURL('/')
+  // Wait for either redirect to home (auto-confirm) or success message (needs confirmation)
+  await Promise.race([
+    page.waitForURL('/'),
+    page.locator('.alert-success').waitFor({ timeout: 5000 }).catch(() => {})
+  ])
+}
+
+// Register and confirm email, then sign in
+// Use this when you need a fully authenticated user
+import { waitForEmail, extractVerificationUrl, confirmEmail, clearAllEmails } from './mail-helpers.js'
+
+export async function registerAndConfirmViaUI(page, email, password) {
+  await clearAllEmails()
+  await page.goto('/register')
+  await page.getByTestId('email-input').fill(email)
+  await page.getByTestId('password-input').fill(password)
+  await page.getByTestId('confirm-password-input').fill(password)
+  await page.getByTestId('submit-button').click()
+
+  // Check if we got redirected (auto-confirm) or need to confirm email
+  try {
+    await page.waitForURL('/', { timeout: 2000 })
+    // Auto-confirmed, we're done
+    return
+  } catch {
+    // Need to confirm email - wait for confirmation message
+  }
+
+  // Wait for the confirmation message to appear
+  await page.getByTestId('confirmation-message').waitFor({ timeout: 5000 })
+
+  // Wait for confirmation email and confirm it
+  const confirmationEmail = await waitForEmail(email, 'confirmation', 10000)
+  const verificationUrl = extractVerificationUrl(confirmationEmail)
+  await confirmEmail(verificationUrl)
+
+  // Now sign in
+  await signInViaUI(page, email, password)
 }
 
 // Add product to cart via UI

@@ -10,10 +10,12 @@ function Register() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [needsConfirmation, setNeedsConfirmation] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+    setNeedsConfirmation(false)
 
     if (password !== confirmPassword) {
       setError('Passwords do not match')
@@ -27,10 +29,14 @@ function Register() {
 
     setLoading(true)
 
-    const { error } = await signUp(email, password)
+    const { data, error } = await signUp(email, password)
 
     if (error) {
       setError(error.message)
+      setLoading(false)
+    } else if (data?.user && !data?.session) {
+      // User created but needs email confirmation
+      setNeedsConfirmation(true)
       setLoading(false)
     } else {
       navigate('/')
@@ -44,6 +50,13 @@ function Register() {
 
         {error && <div className="alert alert-error">{error}</div>}
 
+        {needsConfirmation && (
+          <div className="alert alert-success" data-testid="confirmation-message">
+            Please check your email ({email}) for a confirmation link to complete your registration.
+          </div>
+        )}
+
+        {!needsConfirmation && (
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label className="form-label" htmlFor="email">
@@ -103,9 +116,14 @@ function Register() {
             {loading ? 'Creating account...' : 'Create Account'}
           </button>
         </form>
+        )}
 
         <div className="auth-footer">
-          Already have an account? <Link to="/login">Sign in</Link>
+          {needsConfirmation ? (
+            <Link to="/login">Go to Sign In</Link>
+          ) : (
+            <>Already have an account? <Link to="/login">Sign in</Link></>
+          )}
         </div>
       </div>
     </div>
