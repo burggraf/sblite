@@ -16,12 +16,12 @@ func TestTranslator_DateTimeFunctions(t *testing.T) {
 		{
 			name:     "NOW() function",
 			input:    "SELECT NOW()",
-			expected: "SELECT datetime('now')",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 		},
 		{
 			name:     "CURRENT_TIMESTAMP",
 			input:    "SELECT CURRENT_TIMESTAMP",
-			expected: "SELECT datetime('now')",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 		},
 		{
 			name:     "CURRENT_DATE",
@@ -31,7 +31,7 @@ func TestTranslator_DateTimeFunctions(t *testing.T) {
 		{
 			name:     "NOW() in WHERE clause",
 			input:    "SELECT * FROM users WHERE created_at < NOW()",
-			expected: "SELECT * FROM users WHERE created_at < datetime('now')",
+			expected: "SELECT * FROM users WHERE created_at < strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 		},
 	}
 
@@ -350,12 +350,12 @@ func TestTranslator_ComplexQueries(t *testing.T) {
 		{
 			name:     "Query with multiple function translations",
 			input:    "SELECT id::text, LEFT(name, 10), created_at FROM users WHERE updated_at > NOW()",
-			expected: "SELECT id, SUBSTR(name, 1, 10), created_at FROM users WHERE updated_at > datetime('now')",
+			expected: "SELECT id, SUBSTR(name, 1, 10), created_at FROM users WHERE updated_at > strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 		},
 		{
 			name:     "UPDATE with boolean and timestamp",
 			input:    "UPDATE users SET active = FALSE, updated_at = NOW() WHERE id = '123'::uuid",
-			expected: "UPDATE users SET active = 0, updated_at = datetime('now') WHERE id = '123'",
+			expected: "UPDATE users SET active = 0, updated_at = strftime('%Y-%m-%d %H:%M:%f+00', 'now') WHERE id = '123'",
 		},
 	}
 
@@ -381,7 +381,7 @@ func TestTranslator_TranslateWithFallback(t *testing.T) {
 		{
 			name:           "Translatable query - returns translated",
 			input:          "SELECT NOW()",
-			expectedOutput: "SELECT datetime('now')",
+			expectedOutput: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 			wasTranslated:  true,
 		},
 		{

@@ -145,76 +145,76 @@ func TestTranslator_IntervalFormats(t *testing.T) {
 		// Singular forms
 		{
 			name:     "INTERVAL day singular",
-			input:    "SELECT datetime('now') - INTERVAL '1 day'",
-			expected: "SELECT datetime('now') - '+1 day'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '1 day'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+1 day'",
 		},
 		{
 			name:     "INTERVAL hour singular",
-			input:    "SELECT datetime('now') - INTERVAL '1 hour'",
-			expected: "SELECT datetime('now') - '+1 hour'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '1 hour'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+1 hour'",
 		},
 		{
 			name:     "INTERVAL minute singular",
-			input:    "SELECT datetime('now') - INTERVAL '1 minute'",
-			expected: "SELECT datetime('now') - '+1 minute'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '1 minute'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+1 minute'",
 		},
 		{
 			name:     "INTERVAL second singular",
-			input:    "SELECT datetime('now') - INTERVAL '1 second'",
-			expected: "SELECT datetime('now') - '+1 second'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '1 second'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+1 second'",
 		},
 		{
 			name:     "INTERVAL month singular",
-			input:    "SELECT datetime('now') - INTERVAL '1 month'",
-			expected: "SELECT datetime('now') - '+1 month'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '1 month'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+1 month'",
 		},
 		{
 			name:     "INTERVAL year singular",
-			input:    "SELECT datetime('now') - INTERVAL '1 year'",
-			expected: "SELECT datetime('now') - '+1 year'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '1 year'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+1 year'",
 		},
 		// Plural forms
 		{
 			name:     "INTERVAL days plural",
-			input:    "SELECT datetime('now') - INTERVAL '7 days'",
-			expected: "SELECT datetime('now') - '+7 day'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '7 days'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+7 day'",
 		},
 		{
 			name:     "INTERVAL hours plural",
-			input:    "SELECT datetime('now') - INTERVAL '24 hours'",
-			expected: "SELECT datetime('now') - '+24 hour'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '24 hours'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+24 hour'",
 		},
 		{
 			name:     "INTERVAL minutes plural",
-			input:    "SELECT datetime('now') - INTERVAL '30 minutes'",
-			expected: "SELECT datetime('now') - '+30 minute'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '30 minutes'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+30 minute'",
 		},
 		{
 			name:     "INTERVAL seconds plural",
-			input:    "SELECT datetime('now') - INTERVAL '60 seconds'",
-			expected: "SELECT datetime('now') - '+60 second'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '60 seconds'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+60 second'",
 		},
 		{
 			name:     "INTERVAL months plural",
-			input:    "SELECT datetime('now') - INTERVAL '6 months'",
-			expected: "SELECT datetime('now') - '+6 month'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '6 months'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+6 month'",
 		},
 		{
 			name:     "INTERVAL years plural",
-			input:    "SELECT datetime('now') - INTERVAL '5 years'",
-			expected: "SELECT datetime('now') - '+5 year'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - INTERVAL '5 years'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+5 year'",
 		},
 		// Case insensitive
 		{
 			name:     "INTERVAL lowercase",
-			input:    "SELECT datetime('now') - interval '7 days'",
-			expected: "SELECT datetime('now') - '+7 day'",
+			input:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - interval '7 days'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+7 day'",
 		},
 		// Combined with NOW() translation
 		{
 			name:     "NOW() and INTERVAL together",
 			input:    "SELECT NOW() - INTERVAL '7 days'",
-			expected: "SELECT datetime('now') - '+7 day'",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now') - '+7 day'",
 		},
 	}
 
@@ -358,22 +358,22 @@ func TestTranslator_CaseSensitivity(t *testing.T) {
 		{
 			name:     "NOW uppercase",
 			input:    "SELECT NOW()",
-			expected: "SELECT datetime('now')",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 		},
 		{
 			name:     "now lowercase",
 			input:    "SELECT now()",
-			expected: "SELECT datetime('now')",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 		},
 		{
 			name:     "Now mixed case",
 			input:    "SELECT Now()",
-			expected: "SELECT datetime('now')",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 		},
 		{
 			name:     "CURRENT_TIMESTAMP mixed case",
 			input:    "SELECT Current_Timestamp",
-			expected: "SELECT datetime('now')",
+			expected: "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 		},
 		{
 			name:     "TRUE uppercase",
@@ -424,7 +424,7 @@ func TestTranslator_NestedFunctions(t *testing.T) {
 		{
 			name:     "EXTRACT from NOW",
 			input:    "SELECT EXTRACT(YEAR FROM NOW())",
-			contains: []string{"strftime('%Y'", "datetime('now')"},
+			contains: []string{"strftime('%Y'", "strftime('%Y-%m-%d %H:%M:%f+00', 'now')"},
 		},
 		{
 			name:     "GREATEST with boolean",
@@ -457,7 +457,7 @@ func TestTranslator_MultipleTranslations(t *testing.T) {
 		{
 			name:     "Boolean and datetime",
 			input:    "UPDATE users SET active = TRUE, updated_at = NOW()",
-			expected: "UPDATE users SET active = 1, updated_at = datetime('now')",
+			expected: "UPDATE users SET active = 1, updated_at = strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 		},
 		{
 			name:     "Multiple casts",
@@ -503,7 +503,7 @@ func TestTranslator_EdgeCases(t *testing.T) {
 		{
 			name:     "NOW in string gets translated (known limitation)",
 			input:    "SELECT 'NOW()' as value",
-			expected: "SELECT 'datetime('now')' as value", // Known limitation: regex-based translation affects strings
+			expected: "SELECT 'strftime('%Y-%m-%d %H:%M:%f+00', 'now')' as value", // Known limitation: regex-based translation affects strings
 		},
 		{
 			name:     "Column named now should not be translated",
@@ -632,8 +632,8 @@ func TestTranslator_Integration_DateTimeFunctions(t *testing.T) {
 		{
 			name:        "NOW() returns valid datetime",
 			pgQuery:     "SELECT NOW()",
-			validateFn:  func(r string) bool { return len(r) == 19 }, // YYYY-MM-DD HH:MM:SS
-			description: "should return datetime in format YYYY-MM-DD HH:MM:SS",
+			validateFn:  func(r string) bool { return len(r) == 26 }, // YYYY-MM-DD HH:MM:SS.fff+00
+			description: "should return datetime in format YYYY-MM-DD HH:MM:SS.fff+00",
 		},
 		{
 			name:        "CURRENT_DATE returns valid date",
@@ -911,7 +911,7 @@ func TestTranslator_Integration_CreateTable(t *testing.T) {
 
 	// Note: Using literal values in DEFAULT instead of NOW() because SQLite
 	// doesn't support function calls in DEFAULT expressions the same way.
-	// The translation for NOW() produces datetime('now') which works,
+	// The translation for NOW() produces strftime('%Y-%m-%d %H:%M:%f+00', 'now') which works,
 	// but gen_random_uuid() produces a SELECT which doesn't work in DEFAULT.
 	pgCreate := `CREATE TABLE test_table (
 		id UUID PRIMARY KEY,
@@ -992,8 +992,8 @@ func TestTranslator_Integration_OnConflict(t *testing.T) {
 func TestTranslator_ConvenienceFunctions(t *testing.T) {
 	// Test Translate convenience function
 	result := Translate("SELECT NOW()")
-	if result != "SELECT datetime('now')" {
-		t.Errorf("Translate() = %q, want %q", result, "SELECT datetime('now')")
+	if result != "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')" {
+		t.Errorf("Translate() = %q, want %q", result, "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')")
 	}
 
 	// Test TranslateWithFallback convenience function
@@ -1001,8 +1001,8 @@ func TestTranslator_ConvenienceFunctions(t *testing.T) {
 	if !wasTranslated {
 		t.Error("TranslateWithFallback() should return wasTranslated=true for translatable query")
 	}
-	if translated != "SELECT datetime('now')" {
-		t.Errorf("TranslateWithFallback() = %q, want %q", translated, "SELECT datetime('now')")
+	if translated != "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')" {
+		t.Errorf("TranslateWithFallback() = %q, want %q", translated, "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')")
 	}
 
 	// Test with untranslatable query (UNNEST is still not supported)
@@ -1095,7 +1095,7 @@ func TestTranslator_RealWorldQueries(t *testing.T) {
 			name: "User registration query",
 			input: `INSERT INTO auth_users (id, email, encrypted_password, created_at, updated_at)
 				VALUES (gen_random_uuid(), 'user@example.com'::text, 'hash'::text, NOW(), NOW())`,
-			contains:    []string{"randomblob", "datetime('now')"},
+			contains:    []string{"randomblob", "strftime('%Y-%m-%d %H:%M:%f+00', 'now')"},
 			notContains: []string{"gen_random_uuid", "NOW()", "::text"},
 		},
 		{
@@ -1104,7 +1104,7 @@ func TestTranslator_RealWorldQueries(t *testing.T) {
 				WHERE user_id = '123'::uuid
 				AND expires_at > NOW()
 				AND deleted = FALSE`,
-			contains:    []string{"datetime('now')", "deleted = 0"},
+			contains:    []string{"strftime('%Y-%m-%d %H:%M:%f+00', 'now')", "deleted = 0"},
 			notContains: []string{"::uuid", "NOW()", "FALSE"},
 		},
 		{
@@ -1114,7 +1114,7 @@ func TestTranslator_RealWorldQueries(t *testing.T) {
 				WHERE created_at > NOW() - INTERVAL '7 days'
 				AND user_id = 'abc'::uuid
 				ORDER BY created_at DESC`,
-			contains:    []string{"datetime('now')", "'+7 day'"},
+			contains:    []string{"strftime('%Y-%m-%d %H:%M:%f+00', 'now')", "'+7 day'"},
 			notContains: []string{"NOW()", "INTERVAL", "::uuid"},
 		},
 		{

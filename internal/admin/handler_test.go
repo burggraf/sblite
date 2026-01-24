@@ -396,7 +396,7 @@ func TestMapDefaultValue(t *testing.T) {
 		expected   string
 	}{
 		{"gen_random_uuid()", "uuid", "(lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6))))"},
-		{"now()", "timestamptz", "(datetime('now'))"},
+		{"now()", "timestamptz", "(strftime('%Y-%m-%d %H:%M:%f+00', 'now'))"},
 		{"true", "boolean", "1"},
 		{"false", "boolean", "0"},
 		{"'default text'", "text", "'default text'"},

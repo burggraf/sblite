@@ -40,6 +40,9 @@ func (r *ReverseTranslator) Translate(sql string) string {
 func (r *ReverseTranslator) translateFunctions(sql string) string {
 	result := sql
 
+	// strftime('%Y-%m-%d %H:%M:%f+00', 'now') -> NOW() (PostgreSQL-compatible timestamp format)
+	result = regexp.MustCompile(`(?i)strftime\s*\(\s*'[^']+'\s*,\s*'now'\s*\)`).ReplaceAllString(result, "NOW()")
+
 	// datetime('now') -> NOW()
 	result = regexp.MustCompile(`(?i)datetime\s*\(\s*'now'\s*\)`).ReplaceAllString(result, "NOW()")
 
@@ -106,13 +109,19 @@ func (r *ReverseTranslator) TranslateDefault(sqliteDefault string, pgType string
 	}
 
 	// Handle special SQLite functions
-	switch strings.ToLower(sqliteDefault) {
+	lowerDefault := strings.ToLower(sqliteDefault)
+	switch lowerDefault {
 	case "datetime('now')", "(datetime('now'))":
 		return "NOW()"
 	case "date('now')", "(date('now'))":
 		return "CURRENT_DATE"
 	case "time('now')", "(time('now'))":
 		return "CURRENT_TIME"
+	}
+
+	// Handle PostgreSQL-compatible strftime timestamp format
+	if strings.Contains(lowerDefault, "strftime") && strings.Contains(lowerDefault, "'now'") {
+		return "NOW()"
 	}
 
 	// Handle gen_uuid() which is our internal UUID function

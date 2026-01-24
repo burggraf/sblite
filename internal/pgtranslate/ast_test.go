@@ -343,10 +343,10 @@ func TestGenerator(t *testing.T) {
 		want    string
 	}{
 		{
-			name:    "NOW() to datetime('now') for SQLite",
+			name:    "NOW() to strftime('%Y-%m-%d %H:%M:%f+00', 'now') for SQLite",
 			input:   "SELECT NOW()",
 			dialect: DialectSQLite,
-			want:    "SELECT datetime('now')",
+			want:    "SELECT strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 		},
 		{
 			name:    "gen_random_uuid() to SQLite subquery",
@@ -403,8 +403,8 @@ func TestReverseTranslator(t *testing.T) {
 		want    string
 	}{
 		{
-			name:   "datetime('now') to NOW()",
-			sqlite: "datetime('now')",
+			name:   "strftime('%Y-%m-%d %H:%M:%f+00', 'now') to NOW()",
+			sqlite: "strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 			want:   "NOW()",
 		},
 		{
@@ -448,8 +448,8 @@ func TestReverseTranslateDefault(t *testing.T) {
 		want          string
 	}{
 		{
-			name:         "datetime('now') to NOW()",
-			sqliteDefault: "datetime('now')",
+			name:         "strftime('%Y-%m-%d %H:%M:%f+00', 'now') to NOW()",
+			sqliteDefault: "strftime('%Y-%m-%d %H:%M:%f+00', 'now')",
 			pgType:        "TIMESTAMPTZ",
 			want:          "NOW()",
 		},
@@ -506,7 +506,7 @@ func TestFunctionMapper(t *testing.T) {
 			args []Expr
 			want string
 		}{
-			{"NOW", "NOW", nil, "datetime('now')"},
+			{"NOW", "NOW", nil, "strftime('%Y-%m-%d %H:%M:%f+00', 'now')"},
 			{"CURRENT_DATE", "CURRENT_DATE", nil, "date('now')"},
 			{"CURRENT_TIME", "CURRENT_TIME", nil, "time('now')"},
 		}
@@ -660,7 +660,7 @@ func TestEndToEnd(t *testing.T) {
 			{
 				name:  "Simple SELECT with NOW()",
 				pg:    "SELECT NOW(), id FROM users",
-				check: func(s string) bool { return strings.Contains(s, "datetime('now')") },
+				check: func(s string) bool { return strings.Contains(s, "strftime('%Y-%m-%d %H:%M:%f+00', 'now')") },
 			},
 			{
 				name:  "SELECT with boolean",

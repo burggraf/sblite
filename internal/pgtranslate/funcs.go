@@ -44,11 +44,12 @@ func (m *FunctionMapper) MapToPostgreSQL(call *FunctionCall) (string, bool) {
 
 func (m *FunctionMapper) registerDefaults() {
 	// Date/Time functions: PostgreSQL -> SQLite
+	// Use strftime for PostgreSQL-compatible timestamptz format with milliseconds and UTC offset
 	m.pgToSQLite["NOW"] = func(call *FunctionCall, _ *Generator) (string, bool) {
-		return "datetime('now')", true
+		return "strftime('%Y-%m-%d %H:%M:%f+00', 'now')", true
 	}
 	m.pgToSQLite["CURRENT_TIMESTAMP"] = func(call *FunctionCall, _ *Generator) (string, bool) {
-		return "datetime('now')", true
+		return "strftime('%Y-%m-%d %H:%M:%f+00', 'now')", true
 	}
 	m.pgToSQLite["CURRENT_DATE"] = func(call *FunctionCall, _ *Generator) (string, bool) {
 		return "date('now')", true

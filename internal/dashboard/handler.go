@@ -812,7 +812,7 @@ func (h *Handler) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			def += " NOT NULL"
 		}
 		if col.Default != "" {
-			def += " DEFAULT " + col.Default
+			def += " DEFAULT " + mapDefaultValueForSQLite(col.Default, col.Type)
 		}
 		colDefs = append(colDefs, def)
 		if col.Primary {
@@ -883,6 +883,31 @@ func pgTypeToSQLite(pgType string) string {
 	default:
 		return "TEXT"
 	}
+}
+
+// mapDefaultValueForSQLite maps PostgreSQL default values to SQLite equivalents.
+func mapDefaultValueForSQLite(defaultVal, pgType string) string {
+	lower := strings.ToLower(defaultVal)
+	switch lower {
+	case "gen_random_uuid()":
+		// SQLite UUID generation expression that produces valid UUID v4 format
+		return "(lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6))))"
+	case "now()":
+		// PostgreSQL-compatible timestamptz format with milliseconds and UTC offset
+		return "(strftime('%Y-%m-%d %H:%M:%f+00', 'now'))"
+	}
+
+	// Handle boolean literals
+	if pgType == "boolean" {
+		switch lower {
+		case "true":
+			return "1"
+		case "false":
+			return "0"
+		}
+	}
+
+	return defaultVal
 }
 
 // writeMigration creates a migration file and records it in _schema_migrations.
@@ -1075,10 +1100,27 @@ func (h *Handler) handleInsertData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get columns with default values so we can skip empty values for them
+	columnsWithDefaults := make(map[string]bool)
+	rows, err := h.db.Query(`SELECT column_name FROM _columns WHERE table_name = ? AND default_value IS NOT NULL AND default_value != ''`, tableName)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var colName string
+			if rows.Scan(&colName) == nil {
+				columnsWithDefaults[colName] = true
+			}
+		}
+	}
+
 	var columns []string
 	var placeholders []string
 	var values []interface{}
 	for col, val := range data {
+		// Skip empty values for columns that have defaults - let the DB default apply
+		if columnsWithDefaults[col] && isEmptyValue(val) {
+			continue
+		}
 		columns = append(columns, fmt.Sprintf(`"%s"`, col))
 		placeholders = append(placeholders, "?")
 		values = append(values, val)
@@ -1097,6 +1139,17 @@ func (h *Handler) handleInsertData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(data)
+}
+
+// isEmptyValue checks if a value should be considered "empty" for default handling
+func isEmptyValue(val interface{}) bool {
+	if val == nil {
+		return true
+	}
+	if s, ok := val.(string); ok && s == "" {
+		return true
+	}
+	return false
 }
 
 func (h *Handler) handleUpdateData(w http.ResponseWriter, r *http.Request) {
@@ -1261,7 +1314,7 @@ func (h *Handler) handleAddColumn(w http.ResponseWriter, r *http.Request) {
 	sqlType := pgTypeToSQLite(col.Type)
 	alterSQL := fmt.Sprintf(`ALTER TABLE "%s" ADD COLUMN "%s" %s`, tableName, col.Name, sqlType)
 	if col.Default != "" {
-		alterSQL += " DEFAULT " + col.Default
+		alterSQL += " DEFAULT " + mapDefaultValueForSQLite(col.Default, col.Type)
 	}
 
 	tx, err := h.db.Begin()

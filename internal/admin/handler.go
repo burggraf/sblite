@@ -408,8 +408,8 @@ func mapDefaultValue(defaultVal, pgType string) string {
 		// SQLite UUID generation expression that produces valid UUID v4 format
 		return "(lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6))))"
 	case "now()":
-		// Wrap in parentheses as SQLite requires for function expressions in DEFAULT
-		return "(datetime('now'))"
+		// PostgreSQL-compatible timestamptz format with milliseconds and UTC offset
+		return "(strftime('%Y-%m-%d %H:%M:%f+00', 'now'))"
 	}
 
 	// Handle boolean literals

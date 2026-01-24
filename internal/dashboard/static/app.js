@@ -984,7 +984,7 @@ const App = {
             type: 'createTable',
             data: {
                 name: '',
-                columns: [{ name: 'id', type: 'uuid', primary: true, nullable: false }]
+                columns: [{ name: 'id', type: 'uuid', primary: true, nullable: false, defaultValue: 'gen_random_uuid()' }]
             }
         };
         this.render();
@@ -995,13 +995,13 @@ const App = {
         this.render();
     },
 
-    updateModalData(field, value) {
+    updateModalData(field, value, shouldRender = false) {
         this.state.modal.data[field] = value;
-        this.render();
+        if (shouldRender) this.render();
     },
 
     addColumnToModal() {
-        this.state.modal.data.columns.push({ name: '', type: 'text', nullable: true, primary: false });
+        this.state.modal.data.columns.push({ name: '', type: 'text', nullable: true, primary: false, defaultValue: '' });
         this.render();
     },
 
@@ -1010,9 +1010,9 @@ const App = {
         this.render();
     },
 
-    updateModalColumn(index, field, value) {
+    updateModalColumn(index, field, value, shouldRender = false) {
         this.state.modal.data.columns[index][field] = value;
-        this.render();
+        if (shouldRender) this.render();
     },
 
     async createTable() {
@@ -1023,12 +1023,19 @@ const App = {
             return;
         }
 
-        // Format vector types as vector(N)
+        // Format vector types as vector(N) and map defaultValue to default
         const formattedColumns = columns.map(col => {
+            const formatted = { ...col };
             if (col.type === 'vector') {
-                return { ...col, type: `vector(${col.vectorDimension || 768})` };
+                formatted.type = `vector(${col.vectorDimension || 768})`;
             }
-            return col;
+            // Map defaultValue to 'default' for API
+            if (col.defaultValue) {
+                formatted.default = col.defaultValue;
+            }
+            delete formatted.defaultValue;
+            delete formatted.vectorDimension;
+            return formatted;
         });
 
         try {
@@ -1115,9 +1122,10 @@ const App = {
         }
 
         // Use larger modal for policy editing and FTS search
+        const isFullscreenModal = type === 'createTable' || type === 'schema';
         const isLargeModal = type === 'createPolicy' || type === 'editPolicy' || type === 'ftsSearch';
         const isFilePreview = type === 'filePreview';
-        const modalClass = isFilePreview ? 'modal modal-file-preview' : (isLargeModal ? 'modal modal-large' : 'modal');
+        const modalClass = isFilePreview ? 'modal modal-file-preview' : (isFullscreenModal ? 'modal modal-fullscreen' : (isLargeModal ? 'modal modal-large' : 'modal'));
 
         return `
             <div class="modal-overlay${isFilePreview ? ' modal-overlay-dark' : ''}" onclick="App.closeModal()">
@@ -1141,7 +1149,7 @@ const App = {
                 <div class="form-group">
                     <label class="form-label">Table Name</label>
                     <input type="text" class="form-input" value="${name}"
-                        onchange="App.updateModalData('name', this.value)" placeholder="my_table">
+                        oninput="App.updateModalData('name', this.value)" placeholder="my_table">
                 </div>
 
                 <div class="form-group">
@@ -1149,8 +1157,8 @@ const App = {
                     ${columns.map((col, i) => `
                         <div class="column-row">
                             <input type="text" class="form-input" value="${col.name}" placeholder="column_name"
-                                onchange="App.updateModalColumn(${i}, 'name', this.value)">
-                            <select class="form-input" onchange="App.updateModalColumn(${i}, 'type', this.value)">
+                                oninput="App.updateModalColumn(${i}, 'name', this.value)">
+                            <select class="form-input" onchange="App.updateModalColumn(${i}, 'type', this.value, true)">
                                 ${types.map(t => `<option value="${t}" ${col.type === t ? 'selected' : ''}>${t}</option>`).join('')}
                             </select>
                             ${col.type === 'vector' ? `
@@ -1163,6 +1171,9 @@ const App = {
                                 onchange="App.updateModalColumn(${i}, 'primary', this.checked)"> PK</label>
                             <label><input type="checkbox" ${col.nullable ? 'checked' : ''}
                                 onchange="App.updateModalColumn(${i}, 'nullable', this.checked)"> Null</label>
+                            <input type="text" class="form-input" value="${this.escapeHtml(col.defaultValue || '')}" placeholder="default"
+                                style="width: 140px;" title="Default value"
+                                oninput="App.updateModalColumn(${i}, 'defaultValue', this.value)">
                             <button class="btn-icon" onclick="App.removeColumnFromModal(${i})">&times;</button>
                         </div>
                     `).join('')}
@@ -1351,7 +1362,7 @@ const App = {
     showAddColumnModal() {
         this.state.modal = {
             type: 'addColumn',
-            data: { name: '', type: 'text', nullable: true }
+            data: { name: '', type: 'text', nullable: true, defaultValue: '' }
         };
         this.render();
     },
@@ -1360,12 +1371,16 @@ const App = {
         const { data } = this.state.modal;
         const { selected } = this.state.tables;
 
-        // Format vector type as vector(N)
+        // Format vector type as vector(N) and map defaultValue to default
         const formattedData = { ...data };
         if (formattedData.type === 'vector') {
             formattedData.type = `vector(${formattedData.vectorDimension || 768})`;
         }
+        if (formattedData.defaultValue) {
+            formattedData.default = formattedData.defaultValue;
+        }
         delete formattedData.vectorDimension;
+        delete formattedData.defaultValue;
 
         try {
             const res = await fetch(`/_/api/tables/${selected}/columns`, {
@@ -1640,7 +1655,7 @@ const App = {
                 <h4 style="margin-bottom: 0.5rem;">Columns</h4>
                 <table class="schema-table">
                     <thead>
-                        <tr><th>Column</th><th>Type</th><th>Nullable</th><th>Primary</th><th></th></tr>
+                        <tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th><th>Primary</th><th></th></tr>
                     </thead>
                     <tbody>
                         ${schema.columns.map(col => `
@@ -1648,6 +1663,7 @@ const App = {
                                 <td>${col.name}</td>
                                 <td>${col.type}</td>
                                 <td>${col.nullable ? 'Yes' : 'No'}</td>
+                                <td style="font-family: monospace; font-size: 0.8rem;">${col.default ? this.escapeHtml(col.default) : ''}</td>
                                 <td>${col.primary ? 'Yes' : ''}</td>
                                 <td>
                                     <button class="btn-icon" onclick="App.renameColumn('${col.name}')">Rename</button>
@@ -1710,11 +1726,11 @@ const App = {
                 <div class="form-group">
                     <label class="form-label">Column Name</label>
                     <input type="text" class="form-input" value="${data.name}"
-                        onchange="App.updateModalData('name', this.value)">
+                        oninput="App.updateModalData('name', this.value)">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Type</label>
-                    <select class="form-input" onchange="App.updateModalData('type', this.value)">
+                    <select class="form-input" onchange="App.updateModalData('type', this.value, true)">
                         ${types.map(t => `<option value="${t}" ${data.type === t ? 'selected' : ''}>${t}</option>`).join('')}
                     </select>
                 </div>
@@ -1726,6 +1742,12 @@ const App = {
                         <small style="color: var(--text-muted);">Common: 768 (sentence-transformers), 1536 (OpenAI), 3072 (OpenAI large)</small>
                     </div>
                 ` : ''}
+                <div class="form-group">
+                    <label class="form-label">Default Value</label>
+                    <input type="text" class="form-input" value="${this.escapeHtml(data.defaultValue || '')}"
+                        placeholder="e.g., now(), gen_random_uuid(), 0, 'text'"
+                        oninput="App.updateModalData('defaultValue', this.value)">
+                </div>
                 <div class="form-group">
                     <label><input type="checkbox" ${data.nullable ? 'checked' : ''}
                         onchange="App.updateModalData('nullable', this.checked)"> Nullable</label>
@@ -1756,7 +1778,7 @@ const App = {
                 <div class="form-group">
                     <label class="form-label">Index Name</label>
                     <input type="text" class="form-input" value="${data.name}" placeholder="e.g., search"
-                        onchange="App.updateModalData('name', this.value)">
+                        oninput="App.updateModalData('name', this.value)">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Columns to Index</label>
@@ -1775,7 +1797,7 @@ const App = {
                 </div>
                 <div class="form-group">
                     <label class="form-label">Tokenizer</label>
-                    <select class="form-input" onchange="App.updateModalData('tokenizer', this.value)">
+                    <select class="form-input" onchange="App.updateModalData('tokenizer', this.value, true)">
                         ${tokenizers.map(t => `<option value="${t.value}" ${data.tokenizer === t.value ? 'selected' : ''}>${t.label}</option>`).join('')}
                     </select>
                     <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;">
@@ -1811,7 +1833,7 @@ const App = {
                 <div class="form-group">
                     <label class="form-label">Search Query</label>
                     <input type="text" class="form-input" value="${data.query}" placeholder="Enter search terms..."
-                        onchange="App.updateModalData('query', this.value)"
+                        oninput="App.updateModalData('query', this.value)"
                         onkeydown="if(event.key === 'Enter') App.testFTSSearch()">
                 </div>
                 <div class="form-group">

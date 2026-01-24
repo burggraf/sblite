@@ -605,6 +605,13 @@ body {
     max-height: 90vh;
 }
 
+.modal.modal-fullscreen {
+    width: calc(100vw - 4rem);
+    max-width: calc(100vw - 4rem);
+    height: calc(100vh - 4rem);
+    max-height: calc(100vh - 4rem);
+}
+
 /* File Preview Modal */
 .modal-overlay-dark {
     background: rgba(0, 0, 0, 0.85);

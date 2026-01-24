@@ -181,9 +181,9 @@ func isCreateTableQuery(query string) bool {
 
 func defaultRules() []Rule {
 	return []Rule{
-		// Date/Time Functions
-		&FunctionRule{"NOW()", "datetime('now')"},
-		&FunctionRule{"CURRENT_TIMESTAMP", "datetime('now')"},
+		// Date/Time Functions - PostgreSQL-compatible format with milliseconds and UTC offset
+		&FunctionRule{"NOW()", "strftime('%Y-%m-%d %H:%M:%f+00', 'now')"},
+		&FunctionRule{"CURRENT_TIMESTAMP", "strftime('%Y-%m-%d %H:%M:%f+00', 'now')"},
 		&FunctionRule{"CURRENT_DATE", "date('now')"},
 		&FunctionRule{"CURRENT_TIME", "time('now')"},
 
