@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/markb/sblite/internal/fts"
+	"github.com/markb/sblite/internal/pgtranslate"
 	"github.com/markb/sblite/internal/schema"
 	"github.com/markb/sblite/internal/types"
 )
@@ -155,7 +156,7 @@ func (e *Exporter) exportTable(tableName string) (string, error) {
 
 		// DEFAULT
 		if col.DefaultValue != "" {
-			mappedDefault := mapDefaultToPostgres(col.DefaultValue)
+			mappedDefault := mapDefaultToPostgresWithType(col.DefaultValue, col.PgType)
 			if mappedDefault != "" {
 				sb.WriteString(" DEFAULT ")
 				sb.WriteString(mappedDefault)
@@ -216,14 +217,22 @@ func pgTypeToUpper(pgType string) string {
 }
 
 // mapDefaultToPostgres converts SQLite/sblite default values to PostgreSQL equivalents.
+// Uses pgtranslate.ReverseTranslateDefault for accurate conversions.
 func mapDefaultToPostgres(defaultVal string) string {
+	return mapDefaultToPostgresWithType(defaultVal, "")
+}
+
+// mapDefaultToPostgresWithType converts SQLite/sblite default values to PostgreSQL equivalents,
+// using the PostgreSQL type for context-sensitive conversions (e.g., boolean defaults).
+func mapDefaultToPostgresWithType(defaultVal, pgType string) string {
 	if defaultVal == "" {
 		return ""
 	}
 
-	// Map gen_uuid() to gen_random_uuid()
-	if defaultVal == "gen_uuid()" {
-		return "gen_random_uuid()"
+	// Use pgtranslate for standard conversions
+	translated := pgtranslate.ReverseTranslateDefault(defaultVal, pgType)
+	if translated != defaultVal && translated != "" {
+		return translated
 	}
 
 	// Keep now() as-is
@@ -241,8 +250,12 @@ func mapDefaultToPostgres(defaultVal string) string {
 		return defaultVal
 	}
 
-	// Quote string literals
-	return "'" + defaultVal + "'"
+	// Quote string literals if not already quoted
+	if !strings.HasPrefix(defaultVal, "'") {
+		return "'" + defaultVal + "'"
+	}
+
+	return defaultVal
 }
 
 // isNumeric returns true if the string represents a numeric value.

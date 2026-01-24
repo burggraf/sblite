@@ -376,3 +376,135 @@ func TranslateWithFallback(query string) (translated string, wasTranslated bool)
 func IsTranslatable(query string) bool {
 	return defaultTranslator.IsTranslatable(query)
 }
+
+// ----------------------------------------------------------------------------
+// AST-based Translation API
+// ----------------------------------------------------------------------------
+
+// ASTTranslator provides AST-based SQL translation.
+// It offers more accurate translation than regex-based rules by properly
+// parsing the SQL and understanding its structure.
+type ASTTranslator struct {
+	generator *Generator
+}
+
+// NewASTTranslator creates a new AST-based translator.
+func NewASTTranslator(dialect Dialect) *ASTTranslator {
+	return &ASTTranslator{
+		generator: NewGenerator(WithDialect(dialect)),
+	}
+}
+
+// TranslateExpr parses and translates a SQL expression.
+// Returns the translated expression and any error.
+func (t *ASTTranslator) TranslateExpr(expr string) (string, error) {
+	parser := NewParser(expr)
+	ast, err := parser.ParseExpr()
+	if err != nil {
+		return "", err
+	}
+
+	return t.generator.Generate(ast)
+}
+
+// TranslateExpression is a convenience function for expression translation.
+// It uses the AST translator if parsing succeeds, otherwise falls back to regex.
+func TranslateExpression(expr string, dialect Dialect) (string, error) {
+	translator := NewASTTranslator(dialect)
+	result, err := translator.TranslateExpr(expr)
+	if err != nil {
+		// Fall back to regex-based translation
+		if dialect == DialectSQLite {
+			return Translate(expr), nil
+		}
+		return expr, nil
+	}
+	return result, nil
+}
+
+// Parse parses SQL into AST nodes.
+// Currently supports expressions and simple SELECT statements.
+func Parse(sql string) (Node, error) {
+	parser := NewParser(sql)
+
+	// Try to detect what kind of statement this is
+	sql = strings.TrimSpace(sql)
+	upperSQL := strings.ToUpper(sql)
+
+	if strings.HasPrefix(upperSQL, "SELECT") || strings.HasPrefix(upperSQL, "WITH") {
+		return parser.ParseSelect()
+	}
+
+	// Default to expression parsing
+	return parser.ParseExpr()
+}
+
+// TranslateAST translates an AST node to the target dialect.
+func TranslateAST(node Node, dialect Dialect) (string, error) {
+	gen := NewGenerator(WithDialect(dialect))
+	return gen.Generate(node)
+}
+
+// ParseAndTranslate parses SQL and translates to the target dialect.
+// This is the recommended entry point for AST-based translation.
+func ParseAndTranslate(sql string, dialect Dialect) (string, error) {
+	node, err := Parse(sql)
+	if err != nil {
+		return "", err
+	}
+	return TranslateAST(node, dialect)
+}
+
+// TranslateToSQLite translates PostgreSQL SQL to SQLite.
+// Uses AST-based translation when possible, falls back to regex.
+func TranslateToSQLite(sql string) string {
+	// Try AST-based translation first
+	result, err := ParseAndTranslate(sql, DialectSQLite)
+	if err == nil {
+		return result
+	}
+
+	// Fall back to regex-based translation
+	return Translate(sql)
+}
+
+// TranslateToPostgreSQL translates SQLite SQL to PostgreSQL.
+// Uses AST-based translation.
+func TranslateToPostgreSQL(sql string) (string, error) {
+	return ParseAndTranslate(sql, DialectPostgreSQL)
+}
+
+// ----------------------------------------------------------------------------
+// Specialized Translation Functions
+// ----------------------------------------------------------------------------
+
+// TranslateCreateFunction translates a CREATE FUNCTION body from PostgreSQL to SQLite.
+// The body is expected to be the SQL inside the function (without the $$ delimiters).
+func TranslateCreateFunctionBody(body string) string {
+	// For function bodies, we use the regex translator as it handles
+	// multiple statements and edge cases better
+	return Translate(body)
+}
+
+// TranslateDDL translates DDL statements (CREATE TABLE, etc.) from PostgreSQL to SQLite.
+// Returns the translated DDL and any error.
+func TranslateDDL(ddl string) (string, error) {
+	// Try AST-based translation
+	result, err := ParseAndTranslate(ddl, DialectSQLite)
+	if err != nil {
+		// Fall back to regex for DDL
+		return Translate(ddl), nil
+	}
+	return result, nil
+}
+
+// TranslateQuery translates a query (SELECT, INSERT, UPDATE, DELETE) from PostgreSQL to SQLite.
+func TranslateQuery(query string) (string, error) {
+	// Try AST-based translation
+	result, err := ParseAndTranslate(query, DialectSQLite)
+	if err != nil {
+		// Fall back to regex
+		return Translate(query), nil
+	}
+	return result, nil
+}
