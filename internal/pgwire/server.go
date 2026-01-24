@@ -195,19 +195,10 @@ func (s *Server) handleInsert(ctx context.Context, query string) (wire.PreparedS
 
 // registerTableMetadata registers a table's columns in the _columns metadata table.
 func (s *Server) registerTableMetadata(ctx context.Context, tableName string, uuidColumns []string) error {
-	// Debug logging
-	if s.config.Logger != nil {
-		s.config.Logger.Info("registerTableMetadata called", "table", tableName, "uuidColumns", uuidColumns)
-	}
-
 	// Create a set of UUID columns for quick lookup
 	uuidColSet := make(map[string]bool)
 	for _, col := range uuidColumns {
 		uuidColSet[strings.ToLower(col)] = true
-	}
-
-	if s.config.Logger != nil {
-		s.config.Logger.Info("uuidColSet created", "set", uuidColSet)
 	}
 
 	// Get existing columns for this table from _columns
