@@ -1098,6 +1098,16 @@ func (g *Generator) generateColumnDef(col *ColumnDef) (string, error) {
 	}
 
 	if col.Default != nil {
+		// For SQLite, skip DEFAULT gen_random_uuid() - SQLite doesn't support function calls in DEFAULT
+		// UUID generation should happen at INSERT time
+		if g.dialect == DialectSQLite {
+			if call, ok := col.Default.(*FunctionCall); ok {
+				if strings.ToUpper(call.Name) == "GEN_RANDOM_UUID" {
+					// Skip this DEFAULT clause entirely
+					goto skipDefault
+				}
+			}
+		}
 		sb.WriteString(" DEFAULT ")
 		// Set context for DEFAULT expression generation
 		g.inDefaultExpr = true
@@ -1108,6 +1118,7 @@ func (g *Generator) generateColumnDef(col *ColumnDef) (string, error) {
 		}
 		sb.WriteString(def)
 	}
+skipDefault:
 
 	return sb.String(), nil
 }

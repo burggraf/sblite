@@ -60,10 +60,11 @@ func NewTranslator() *Translator {
 func (t *Translator) Translate(query string) string {
 	result := query
 
-	// Special handling for CREATE TABLE: use gen_uuid() instead of SELECT subquery
-	// for gen_random_uuid() in DEFAULT clauses (SQLite doesn't support SELECT in DEFAULT)
+	// Special handling for CREATE TABLE: remove gen_random_uuid() DEFAULT entirely
+	// SQLite DEFAULT clauses only support literals and specific constants, not function calls
+	// UUID generation should happen at INSERT time instead
 	if isCreateTableQuery(query) {
-		result = createTableGenRandomUUIDPattern.ReplaceAllString(result, "gen_uuid()")
+		result = createTableDefaultGenRandomUUIDPattern.ReplaceAllString(result, "")
 	}
 
 	for _, rule := range t.rules {
@@ -72,8 +73,9 @@ func (t *Translator) Translate(query string) string {
 	return result
 }
 
-// Pattern to match gen_random_uuid() (used for CREATE TABLE special handling)
-var createTableGenRandomUUIDPattern = regexp.MustCompile(`(?i)gen_random_uuid\s*\(\s*\)`)
+// Pattern to match DEFAULT gen_random_uuid() clause (used for CREATE TABLE special handling)
+// SQLite doesn't support function calls in DEFAULT, so we remove the entire DEFAULT clause
+var createTableDefaultGenRandomUUIDPattern = regexp.MustCompile(`(?i)\s+DEFAULT\s+gen_random_uuid\s*\(\s*\)`)
 
 // isCreateTableQuery checks if the query is a CREATE TABLE statement
 func isCreateTableQuery(query string) bool {

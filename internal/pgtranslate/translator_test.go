@@ -233,8 +233,8 @@ func TestTranslator_SpecialFunctions(t *testing.T) {
 		{
 			name:           "gen_random_uuid() in CREATE TABLE",
 			input:          "CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid())",
-			expectedPrefix: "CREATE TABLE users (id TEXT PRIMARY KEY DEFAULT gen_uuid()",
-			checkUUIDv4:    false, // gen_uuid() is a placeholder, not the full UUID generator
+			expectedPrefix: "CREATE TABLE users (id TEXT PRIMARY KEY)", // DEFAULT removed - SQLite doesn't support function calls in DEFAULT
+			checkUUIDv4:    false,
 		},
 	}
 
@@ -396,21 +396,21 @@ func TestTranslator_TranslateWithFallback(t *testing.T) {
 
 func TestTranslator_CreateTable_GenRandomUUID(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		want   string
+		name    string
+		input   string
+		want    string
 		notWant string
 	}{
 		{
-			name:   "CREATE TABLE uses gen_uuid()",
-			input:  "CREATE TABLE people (id uuid primary key default gen_random_uuid(), name text)",
-			want:   "gen_uuid()",
-			notWant: "SELECT",
+			name:    "CREATE TABLE removes gen_random_uuid() DEFAULT",
+			input:   "CREATE TABLE people (id uuid primary key default gen_random_uuid(), name text)",
+			want:    "CREATE TABLE people (id TEXT primary key, name text)",
+			notWant: "gen_random_uuid",
 		},
 		{
-			name:   "SELECT uses full UUID subquery",
-			input:  "SELECT gen_random_uuid()",
-			want:   "SELECT",
+			name: "SELECT uses full UUID subquery",
+			input: "SELECT gen_random_uuid()",
+			want:  "SELECT",
 		},
 	}
 
