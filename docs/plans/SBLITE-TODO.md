@@ -299,18 +299,13 @@ TOTP-based second factor.
 
 ## Build/Release
 
-### Version in Binary
-The `--version` flag shows "dev" instead of the actual release version.
+### ~~Version in Binary~~ ✅ COMPLETE
+The `--version` flag now shows the actual release version, build time, and git commit.
 
 ```bash
 ./sblite --version
-sblite version dev  # Should show v0.2.12
+sblite version v0.3.1 (built 2026-01-24T10:00:00Z, commit abc1234)
 ```
-
-**Fix:** Inject version via `-ldflags` during build in the release workflow.
-
-**Complexity:** Small
-**Priority:** Low
 
 ---
 

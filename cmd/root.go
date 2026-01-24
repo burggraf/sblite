@@ -23,7 +23,16 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	// Set version template to include build info when available
-	rootCmd.SetVersionTemplate("sblite version {{.Version}}\n")
+	versionTmpl := "sblite version {{.Version}}"
+	if BuildTime != "" {
+		versionTmpl += " (built " + BuildTime
+		if GitCommit != "" {
+			versionTmpl += ", commit " + GitCommit
+		}
+		versionTmpl += ")"
+	}
+	versionTmpl += "\n"
+	rootCmd.SetVersionTemplate(versionTmpl)
 }
 
 func Execute() {

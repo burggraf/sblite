@@ -62,7 +62,10 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w" -o sblite${{ matrix.ext }} .
+          VERSION=${{ steps.version.outputs.VERSION }}
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          GIT_COMMIT=$(git rev-parse --short HEAD)
+          go build -ldflags="-s -w -X 'github.com/markb/sblite/cmd.Version=${VERSION}' -X 'github.com/markb/sblite/cmd.BuildTime=${BUILD_TIME}' -X 'github.com/markb/sblite/cmd.GitCommit=${GIT_COMMIT}'" -o sblite${{ matrix.ext }} .
 
       # macOS Code Signing and Notarization
       - name: Import Code Signing Certificate
