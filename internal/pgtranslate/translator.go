@@ -59,10 +59,28 @@ func NewTranslator() *Translator {
 // syntax, returns the original query (best effort).
 func (t *Translator) Translate(query string) string {
 	result := query
+
+	// Special handling for CREATE TABLE: use gen_uuid() instead of SELECT subquery
+	// for gen_random_uuid() in DEFAULT clauses (SQLite doesn't support SELECT in DEFAULT)
+	if isCreateTableQuery(query) {
+		result = createTableGenRandomUUIDPattern.ReplaceAllString(result, "gen_uuid()")
+	}
+
 	for _, rule := range t.rules {
 		result = rule.Apply(result)
 	}
 	return result
+}
+
+// Pattern to match gen_random_uuid() (used for CREATE TABLE special handling)
+var createTableGenRandomUUIDPattern = regexp.MustCompile(`(?i)gen_random_uuid\s*\(\s*\)`)
+
+// isCreateTableQuery checks if the query is a CREATE TABLE statement
+func isCreateTableQuery(query string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(query))
+	return strings.HasPrefix(normalized, "CREATE TABLE") ||
+		strings.HasPrefix(normalized, "CREATE TEMPORARY TABLE") ||
+		strings.HasPrefix(normalized, "CREATE TEMP TABLE")
 }
 
 func defaultRules() []Rule {

@@ -15,11 +15,12 @@ const (
 
 // Generator generates SQL from AST nodes.
 type Generator struct {
-	dialect     Dialect
-	funcMapper  *FunctionMapper
-	typeMapper  *TypeMapper
-	indent      int
-	indentStr   string
+	dialect       Dialect
+	funcMapper    *FunctionMapper
+	typeMapper    *TypeMapper
+	indent        int
+	indentStr     string
+	inDefaultExpr bool // true when generating a DEFAULT expression
 }
 
 // GeneratorOption configures the generator.
@@ -207,6 +208,16 @@ func (g *Generator) generateUnaryOp(op *UnaryOp) (string, error) {
 }
 
 func (g *Generator) generateFunctionCall(call *FunctionCall) (string, error) {
+	// Special handling for gen_random_uuid() in DEFAULT expressions for SQLite
+	// SQLite doesn't support SELECT subqueries in DEFAULT clauses, so we use gen_uuid()
+	// which is a simpler placeholder that gets stored in _columns metadata
+	if g.dialect == DialectSQLite && g.inDefaultExpr {
+		upperName := strings.ToUpper(call.Name)
+		if upperName == "GEN_RANDOM_UUID" {
+			return "gen_uuid()", nil
+		}
+	}
+
 	// Check for function mapping
 	if g.dialect == DialectSQLite {
 		if mapped, ok := g.funcMapper.MapToSQLite(call); ok {
@@ -1088,7 +1099,10 @@ func (g *Generator) generateColumnDef(col *ColumnDef) (string, error) {
 
 	if col.Default != nil {
 		sb.WriteString(" DEFAULT ")
+		// Set context for DEFAULT expression generation
+		g.inDefaultExpr = true
 		def, err := g.generateExpr(col.Default)
+		g.inDefaultExpr = false
 		if err != nil {
 			return "", err
 		}

@@ -233,8 +233,8 @@ func TestTranslator_SpecialFunctions(t *testing.T) {
 		{
 			name:           "gen_random_uuid() in CREATE TABLE",
 			input:          "CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid())",
-			expectedPrefix: "CREATE TABLE users (id TEXT PRIMARY KEY DEFAULT (SELECT lower(",
-			checkUUIDv4:    true,
+			expectedPrefix: "CREATE TABLE users (id TEXT PRIMARY KEY DEFAULT gen_uuid()",
+			checkUUIDv4:    false, // gen_uuid() is a placeholder, not the full UUID generator
 		},
 	}
 
@@ -389,6 +389,39 @@ func TestTranslator_TranslateWithFallback(t *testing.T) {
 			}
 			if translated != tt.wasTranslated {
 				t.Errorf("TranslateWithFallback() wasTranslated = %v, want %v", translated, tt.wasTranslated)
+			}
+		})
+	}
+}
+
+func TestTranslator_CreateTable_GenRandomUUID(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		want   string
+		notWant string
+	}{
+		{
+			name:   "CREATE TABLE uses gen_uuid()",
+			input:  "CREATE TABLE people (id uuid primary key default gen_random_uuid(), name text)",
+			want:   "gen_uuid()",
+			notWant: "SELECT",
+		},
+		{
+			name:   "SELECT uses full UUID subquery",
+			input:  "SELECT gen_random_uuid()",
+			want:   "SELECT",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Translate(tt.input)
+			if !strings.Contains(result, tt.want) {
+				t.Errorf("Translate(%q) = %q, should contain %q", tt.input, result, tt.want)
+			}
+			if tt.notWant != "" && strings.Contains(result, tt.notWant) {
+				t.Errorf("Translate(%q) = %q, should NOT contain %q", tt.input, result, tt.notWant)
 			}
 		})
 	}
