@@ -314,23 +314,36 @@ sblite version dev  # Should show v0.2.12
 
 ---
 
-## Future: Enhanced PostgreSQL Translation
+## Future: Comprehensive PostgreSQL Compatibility
 
-Integrate [auxten/postgresql-parser](https://github.com/auxten/postgresql-parser) for fuller PostgreSQL syntax support.
+Comprehensive PostgreSQL-to-SQLite translation based on [pgsqlite](https://github.com/erans/pgsqlite) analysis.
 
-**Target features:**
-- Window functions (`ROW_NUMBER() OVER (PARTITION BY ...)`)
-- Arrays (`ARRAY[]`, `unnest()`, `ANY/ALL`)
-- CTEs (`WITH` clauses, `WITH RECURSIVE`)
+**Already Implemented:**
+- Window functions (`ROW_NUMBER() OVER (PARTITION BY ...)`) ✅
+- Arrays (`ARRAY[]`, `arr[n]`, `= ANY()`, `= ALL()`) ✅
+- CTEs (`WITH` clauses, `WITH RECURSIVE`) ✅
+- Regex operators (`~`, `~*`, `!~`, `!~*`) ✅
+- PostgreSQL wire protocol (`--pg-port` flag) ✅
+- Migration auto-translation ✅
 
-**Tradeoffs:**
-- +558 transitive dependencies
-- +23MB binary size (~doubles current size)
-- Pure Go, no CGO required
+**Remaining (10 phases):**
 
-**Status:** Design complete, implementation deferred until users report specific unsupported queries.
+| Phase | Category | Priority | Status |
+|-------|----------|----------|--------|
+| 1 | String Functions (SPLIT_PART, REPEAT, REVERSE, LPAD, etc.) | High | Planned |
+| 2 | Math Functions (CEIL, SQRT, POWER, trig, etc.) | Medium | Planned |
+| 3 | JSON Functions (@>, <@, ?, JSON_AGG, etc.) | High | Planned |
+| 4 | Array Functions (UNNEST, ARRAY_AGG, ARRAY_APPEND, etc.) | Medium | Planned |
+| 5 | Full-Text Search (tsvector, tsquery, @@ operator) | Medium | Planned |
+| 6 | Date/Time Functions (DATE_TRUNC, TO_CHAR, etc.) | Medium | Planned |
+| 7 | System Catalogs (pg_catalog tables, psql commands) | Low | Planned |
+| 8 | Advanced Queries (LATERAL, DISTINCT ON, GROUPING SETS) | Low | Planned |
+| 9 | Sequences (NEXTVAL, CURRVAL, CREATE SEQUENCE) | Low | Planned |
+| 10 | Type System (ENUM, composite types, domains) | Low | Planned |
 
-**Design:** `docs/plans/2025-01-24-postgresql-parser-integration-design.md`
+**Comprehensive Plan:** `docs/plans/2026-01-24-postgresql-compatibility-comprehensive.md`
+
+**Previous Design:** `docs/plans/2025-01-24-postgresql-parser-integration-design.md`
 
 ---
 
