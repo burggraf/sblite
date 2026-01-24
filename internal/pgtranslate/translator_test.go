@@ -408,7 +408,7 @@ func TestTranslator_CreateTable_GenRandomUUID(t *testing.T) {
 			notWant: "gen_random_uuid",
 		},
 		{
-			name: "SELECT uses full UUID subquery",
+			name:  "SELECT uses full UUID subquery",
 			input: "SELECT gen_random_uuid()",
 			want:  "SELECT",
 		},
@@ -422,6 +422,60 @@ func TestTranslator_CreateTable_GenRandomUUID(t *testing.T) {
 			}
 			if tt.notWant != "" && strings.Contains(result, tt.notWant) {
 				t.Errorf("Translate(%q) = %q, should NOT contain %q", tt.input, result, tt.notWant)
+			}
+		})
+	}
+}
+
+func TestGetUUIDColumns(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		expected []string
+	}{
+		{
+			name:     "single UUID column",
+			query:    "CREATE TABLE mynewtable (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name text, age integer)",
+			expected: []string{"id"},
+		},
+		{
+			name:     "lowercase create table",
+			query:    "create table mynewtable (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name text, age integer)",
+			expected: []string{"id"},
+		},
+		{
+			name:     "UUID column with different order",
+			query:    "CREATE TABLE users (id UUID DEFAULT gen_random_uuid() PRIMARY KEY, email TEXT)",
+			expected: []string{"id"},
+		},
+		{
+			name:     "multiple UUID columns",
+			query:    "CREATE TABLE multi (a UUID DEFAULT gen_random_uuid(), b UUID DEFAULT gen_random_uuid(), c TEXT)",
+			expected: []string{"a", "b"},
+		},
+		{
+			name:     "no UUID columns",
+			query:    "CREATE TABLE simple (id INTEGER PRIMARY KEY, name TEXT)",
+			expected: nil,
+		},
+		{
+			name:     "not a CREATE TABLE",
+			query:    "SELECT * FROM users",
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetUUIDColumns(tt.query)
+			if len(result) != len(tt.expected) {
+				t.Errorf("GetUUIDColumns() = %v, want %v", result, tt.expected)
+				return
+			}
+			for i, col := range result {
+				if col != tt.expected[i] {
+					t.Errorf("GetUUIDColumns()[%d] = %q, want %q", i, col, tt.expected[i])
+				}
 			}
 		})
 	}
