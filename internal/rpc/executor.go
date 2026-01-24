@@ -4,7 +4,6 @@ package rpc
 import (
 	"database/sql"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/markb/sblite/internal/rls"
@@ -109,11 +108,16 @@ func (e *Executor) Execute(name string, args map[string]interface{}, authCtx *rl
 }
 
 // bindArguments validates and binds function arguments, applying defaults.
+// Supports both named arguments (by parameter name) and positional arguments ($1, $2, etc.).
 func (e *Executor) bindArguments(fn *FunctionDef, provided map[string]interface{}) (map[string]interface{}, error) {
 	bound := make(map[string]interface{})
 
-	for _, arg := range fn.Args {
+	for i, arg := range fn.Args {
+		// Check by parameter name first
 		if val, ok := provided[arg.Name]; ok {
+			bound[arg.Name] = val
+		} else if val, ok := provided[fmt.Sprintf("$%d", i+1)]; ok {
+			// Check by positional argument ($1, $2, etc.)
 			bound[arg.Name] = val
 		} else if arg.DefaultValue != nil {
 			bound[arg.Name] = *arg.DefaultValue
@@ -135,11 +139,11 @@ func isTableReturn(returnType string) bool {
 func PrepareSource(body string, args []FunctionArg) string {
 	result := body
 
-	// Replace bare parameter names with named placeholders
-	for _, arg := range args {
-		// Match word boundary to avoid partial replacements
-		pattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(arg.Name) + `\b`)
-		result = pattern.ReplaceAllString(result, ":"+arg.Name)
+	// Replace PostgreSQL positional parameters ($1, $2, etc.) with named placeholders
+	for i, arg := range args {
+		// Replace $N with :param_name
+		positional := fmt.Sprintf("$%d", i+1)
+		result = strings.ReplaceAll(result, positional, ":"+arg.Name)
 	}
 
 	return result

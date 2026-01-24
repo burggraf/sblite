@@ -14,7 +14,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +55,7 @@ type Handler struct {
 	functionsService *functions.Service
 	storageService   *storage.Service
 	rpcInterceptor   *rpc.Interceptor
+	rpcExecutor      *rpc.Executor
 	catchMailer      *mail.CatchMailer
 	mailViewer       *viewer.Handler
 	migrationsDir    string
@@ -125,6 +128,11 @@ func (h *Handler) SetStorageService(svc *storage.Service) {
 // SetRPCInterceptor sets the RPC interceptor for SQL statement handling.
 func (h *Handler) SetRPCInterceptor(i *rpc.Interceptor) {
 	h.rpcInterceptor = i
+}
+
+// SetRPCExecutor sets the RPC executor for function calls in SQL.
+func (h *Handler) SetRPCExecutor(e *rpc.Executor) {
+	h.rpcExecutor = e
 }
 
 // SetStorageReloadFunc sets the callback function for storage configuration changes.
@@ -3240,11 +3248,24 @@ func (h *Handler) handleExecuteSQL(w http.ResponseWriter, r *http.Request) {
 
 	// Translate PostgreSQL syntax to SQLite if requested
 	queryToExecute := req.Query
+	var uuidColumns []string
+	var tableName string
 	if req.PostgresMode {
+		// For CREATE TABLE, extract UUID columns before translation removes the DEFAULT clause
+		if queryType == "CREATE" && pgtranslate.GetTableName(req.Query) != "" {
+			tableName = pgtranslate.GetTableName(req.Query)
+			uuidColumns = pgtranslate.GetUUIDColumns(req.Query)
+		}
+
 		translated, wasTranslated := pgtranslate.TranslateWithFallback(req.Query)
 		queryToExecute = translated
 		response.TranslatedQuery = translated
 		response.WasTranslated = wasTranslated
+
+		// For INSERT, add UUID generation for columns that need it
+		if queryType == "INSERT" {
+			queryToExecute = h.rewriteInsertWithUUIDs(queryToExecute, req.Query)
+		}
 	}
 
 	startTime := time.Now()
@@ -3276,6 +3297,52 @@ func (h *Handler) handleExecuteSQL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if queryType == "SELECT" || queryType == "PRAGMA" {
+		// Check if this is a function call (SELECT * FROM function_name(...))
+		if h.rpcExecutor != nil && queryType == "SELECT" {
+			if funcName, args, ok := parseFunctionCallSelect(req.Query); ok {
+				result, err := h.rpcExecutor.Execute(funcName, args, nil)
+				if err == nil {
+					response.ExecutionTimeMs = time.Since(startTime).Milliseconds()
+					// Convert RPC result to SQL result format
+					if result.IsSet {
+						if rows, ok := result.Data.([]map[string]interface{}); ok && len(rows) > 0 {
+							// Get columns from first row
+							for col := range rows[0] {
+								response.Columns = append(response.Columns, col)
+							}
+							// Sort columns for consistent output
+							sort.Strings(response.Columns)
+							// Convert rows
+							for _, row := range rows {
+								rowData := make([]interface{}, len(response.Columns))
+								for i, col := range response.Columns {
+									rowData[i] = row[col]
+								}
+								response.Rows = append(response.Rows, rowData)
+							}
+						}
+					} else if result.Data != nil {
+						if row, ok := result.Data.(map[string]interface{}); ok {
+							for col := range row {
+								response.Columns = append(response.Columns, col)
+							}
+							sort.Strings(response.Columns)
+							rowData := make([]interface{}, len(response.Columns))
+							for i, col := range response.Columns {
+								rowData[i] = row[col]
+							}
+							response.Rows = append(response.Rows, rowData)
+						}
+					}
+					response.RowCount = len(response.Rows)
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(response)
+					return
+				}
+				// If function not found, fall through to regular SQL execution
+			}
+		}
+
 		// For SELECT queries, return rows
 		rows, err := h.db.Query(queryToExecute)
 		if err != nil {
@@ -3345,6 +3412,11 @@ func (h *Handler) handleExecuteSQL(w http.ResponseWriter, r *http.Request) {
 		affected, _ := result.RowsAffected()
 		response.AffectedRows = affected
 		response.RowCount = int(affected)
+
+		// For CREATE TABLE in postgres mode, store UUID column defaults
+		if queryType == "CREATE" && tableName != "" && len(uuidColumns) > 0 {
+			h.storeUUIDColumnDefaults(tableName, uuidColumns)
+		}
 	}
 
 	response.ExecutionTimeMs = time.Since(startTime).Milliseconds()
@@ -5563,4 +5635,287 @@ func (h *Handler) handleRealtimeStats(w http.ResponseWriter, r *http.Request) {
 
 	stats := h.realtimeService.Stats()
 	json.NewEncoder(w).Encode(stats)
+}
+
+// storeUUIDColumnDefaults stores gen_random_uuid() default for columns in _columns table
+func (h *Handler) storeUUIDColumnDefaults(tableName string, uuidColumns []string) {
+	for _, col := range uuidColumns {
+		// Update the default_value for this column
+		_, err := h.db.Exec(`
+			UPDATE _columns SET default_value = 'gen_random_uuid()'
+			WHERE table_name = ? AND column_name = ?
+		`, tableName, col)
+		if err != nil {
+			// If update didn't affect any rows, the column might not be registered yet
+			// The auto-registration will handle it, but we can try to insert
+			h.db.Exec(`
+				INSERT OR IGNORE INTO _columns (table_name, column_name, pg_type, default_value)
+				VALUES (?, ?, 'uuid', 'gen_random_uuid()')
+			`, tableName, col)
+		}
+	}
+}
+
+// rewriteInsertWithUUIDs modifies INSERT statements to add UUID generation for columns
+// that have gen_random_uuid() as their default value
+func (h *Handler) rewriteInsertWithUUIDs(translatedQuery, originalQuery string) string {
+	// Extract table name from INSERT statement
+	insertTablePattern := regexp.MustCompile(`(?i)INSERT\s+INTO\s+"?(\w+)"?`)
+	match := insertTablePattern.FindStringSubmatch(translatedQuery)
+	if match == nil {
+		return translatedQuery
+	}
+	tableName := match[1]
+
+	// Get columns with gen_random_uuid() default
+	rows, err := h.db.Query(`
+		SELECT column_name FROM _columns
+		WHERE table_name = ? AND default_value = 'gen_random_uuid()'
+	`, tableName)
+	if err != nil {
+		return translatedQuery
+	}
+	defer rows.Close()
+
+	var uuidCols []string
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err == nil {
+			uuidCols = append(uuidCols, col)
+		}
+	}
+
+	if len(uuidCols) == 0 {
+		return translatedQuery
+	}
+
+	// Check if the INSERT specifies column names
+	// Pattern: INSERT INTO table (col1, col2, ...) VALUES (...)
+	columnsPattern := regexp.MustCompile(`(?i)INSERT\s+INTO\s+"?\w+"?\s*\(([^)]+)\)\s*VALUES`)
+	colMatch := columnsPattern.FindStringSubmatch(translatedQuery)
+
+	if colMatch != nil {
+		// INSERT has explicit columns - check if UUID columns are missing
+		specifiedCols := strings.ToLower(colMatch[1])
+		var missingUUIDCols []string
+		for _, uuidCol := range uuidCols {
+			if !strings.Contains(specifiedCols, strings.ToLower(uuidCol)) {
+				missingUUIDCols = append(missingUUIDCols, uuidCol)
+			}
+		}
+
+		if len(missingUUIDCols) > 0 {
+			// Add missing UUID columns to the INSERT
+			return h.addUUIDColumnsToInsert(translatedQuery, missingUUIDCols)
+		}
+	} else {
+		// INSERT without column names - check if it's INSERT INTO table VALUES (...)
+		// In this case, we can't easily add UUID columns without knowing the full schema
+		// Just return as-is
+	}
+
+	return translatedQuery
+}
+
+// addUUIDColumnsToInsert adds UUID columns to an INSERT statement
+func (h *Handler) addUUIDColumnsToInsert(query string, uuidCols []string) string {
+	// UUID v4 generation expression for SQLite
+	uuidExpr := `(lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab', abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))))`
+
+	// Find position of ) VALUES to add columns
+	queryUpper := strings.ToUpper(query)
+	valuesIdx := strings.Index(queryUpper, ") VALUES")
+	if valuesIdx == -1 {
+		return query
+	}
+
+	// Add UUID column names before ) VALUES
+	colAddition := ""
+	for _, col := range uuidCols {
+		colAddition += ", " + col
+	}
+	query = query[:valuesIdx] + colAddition + query[valuesIdx:]
+
+	// Build the UUID expressions to add to each VALUES tuple
+	uuidExprs := ""
+	for range uuidCols {
+		uuidExprs += ", " + uuidExpr
+	}
+
+	// Process the VALUES section to add UUID expressions to each tuple
+	result := strings.Builder{}
+	inValues := false
+	parenDepth := 0
+	i := 0
+	queryUpper = strings.ToUpper(query)
+
+	for i < len(query) {
+		// Check if we're entering VALUES section
+		if !inValues && i+6 < len(query) && queryUpper[i:i+6] == "VALUES" {
+			inValues = true
+			result.WriteString(query[i : i+6])
+			i += 6
+			continue
+		}
+
+		if inValues {
+			ch := query[i]
+			if ch == '(' {
+				parenDepth++
+				result.WriteByte(ch)
+			} else if ch == ')' {
+				parenDepth--
+				if parenDepth == 0 {
+					// End of a value tuple - add UUID expressions before closing paren
+					result.WriteString(uuidExprs)
+				}
+				result.WriteByte(ch)
+			} else if ch == '\'' {
+				// String literal - copy until closing quote
+				result.WriteByte(ch)
+				i++
+				for i < len(query) {
+					result.WriteByte(query[i])
+					if query[i] == '\'' {
+						if i+1 < len(query) && query[i+1] == '\'' {
+							// Escaped quote
+							i++
+							result.WriteByte(query[i])
+						} else {
+							break
+						}
+					}
+					i++
+				}
+			} else {
+				result.WriteByte(ch)
+			}
+		} else {
+			result.WriteByte(query[i])
+		}
+		i++
+	}
+
+	return result.String()
+}
+
+// parseFunctionCallSelect checks if a SELECT query is calling an RPC function.
+// Supports: SELECT * FROM function_name(arg1, arg2, ...)
+// Returns function name, arguments map, and whether it matched.
+var functionCallSelectPattern = regexp.MustCompile(`(?i)^\s*SELECT\s+\*\s+FROM\s+(\w+)\s*\(\s*(.*?)\s*\)\s*;?\s*$`)
+
+func parseFunctionCallSelect(query string) (funcName string, args map[string]interface{}, ok bool) {
+	matches := functionCallSelectPattern.FindStringSubmatch(query)
+	if matches == nil {
+		return "", nil, false
+	}
+
+	funcName = matches[1]
+	argsStr := strings.TrimSpace(matches[2])
+
+	args = make(map[string]interface{})
+	if argsStr == "" {
+		return funcName, args, true
+	}
+
+	// Parse arguments - support both positional and named arguments
+	// Named: name => 'value' or name := 'value'
+	// Positional: 'value1', 'value2'
+	argParts := splitFunctionArgs(argsStr)
+
+	for i, part := range argParts {
+		part = strings.TrimSpace(part)
+
+		// Check for named argument (=> or :=)
+		if idx := strings.Index(part, "=>"); idx > 0 {
+			name := strings.TrimSpace(part[:idx])
+			value := parseArgValue(strings.TrimSpace(part[idx+2:]))
+			args[name] = value
+		} else if idx := strings.Index(part, ":="); idx > 0 {
+			name := strings.TrimSpace(part[:idx])
+			value := parseArgValue(strings.TrimSpace(part[idx+2:]))
+			args[name] = value
+		} else {
+			// Positional argument - use position as key for now
+			// The RPC executor will need to map these to parameter names
+			args[fmt.Sprintf("$%d", i+1)] = parseArgValue(part)
+		}
+	}
+
+	return funcName, args, true
+}
+
+// splitFunctionArgs splits function arguments respecting quotes and parentheses.
+func splitFunctionArgs(s string) []string {
+	var result []string
+	var current strings.Builder
+	var inString bool
+	var stringChar rune
+	depth := 0
+
+	for _, ch := range s {
+		switch {
+		case inString:
+			current.WriteRune(ch)
+			if ch == stringChar {
+				inString = false
+			}
+		case ch == '\'' || ch == '"':
+			current.WriteRune(ch)
+			inString = true
+			stringChar = ch
+		case ch == '(':
+			depth++
+			current.WriteRune(ch)
+		case ch == ')':
+			depth--
+			current.WriteRune(ch)
+		case ch == ',' && depth == 0:
+			result = append(result, current.String())
+			current.Reset()
+		default:
+			current.WriteRune(ch)
+		}
+	}
+
+	if current.Len() > 0 {
+		result = append(result, current.String())
+	}
+
+	return result
+}
+
+// parseArgValue parses a SQL argument value.
+func parseArgValue(s string) interface{} {
+	s = strings.TrimSpace(s)
+
+	// String literal
+	if (strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'")) ||
+		(strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"")) {
+		return s[1 : len(s)-1]
+	}
+
+	// NULL
+	if strings.ToUpper(s) == "NULL" {
+		return nil
+	}
+
+	// Boolean
+	if strings.ToUpper(s) == "TRUE" {
+		return true
+	}
+	if strings.ToUpper(s) == "FALSE" {
+		return false
+	}
+
+	// Try number
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f
+	}
+
+	// Return as string
+	return s
 }

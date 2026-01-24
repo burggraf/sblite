@@ -77,6 +77,88 @@ func (t *Translator) Translate(query string) string {
 // SQLite doesn't support function calls in DEFAULT, so we remove the entire DEFAULT clause
 var createTableDefaultGenRandomUUIDPattern = regexp.MustCompile(`(?i)\s+DEFAULT\s+gen_random_uuid\s*\(\s*\)`)
 
+// Pattern to extract column name before DEFAULT gen_random_uuid()
+var columnWithGenRandomUUIDPattern = regexp.MustCompile(`(?i)(\w+)\s+\w+[^,)]*DEFAULT\s+gen_random_uuid\s*\(\s*\)`)
+
+// Pattern to extract table name from CREATE TABLE
+var createTableNamePattern = regexp.MustCompile(`(?i)CREATE\s+(?:TEMP(?:ORARY)?\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)`)
+
+// TranslateCreateTableWithTriggers translates a CREATE TABLE statement and returns
+// additional trigger statements needed for UUID auto-generation.
+// Returns the translated CREATE TABLE and a slice of trigger creation statements.
+func (t *Translator) TranslateCreateTableWithTriggers(query string) (string, []string) {
+	if !isCreateTableQuery(query) {
+		return t.Translate(query), nil
+	}
+
+	// Extract table name
+	tableMatch := createTableNamePattern.FindStringSubmatch(query)
+	if tableMatch == nil {
+		return t.Translate(query), nil
+	}
+	tableName := tableMatch[1]
+
+	// Find all columns with DEFAULT gen_random_uuid()
+	var uuidColumns []string
+	matches := columnWithGenRandomUUIDPattern.FindAllStringSubmatch(query, -1)
+	for _, match := range matches {
+		if len(match) > 1 {
+			uuidColumns = append(uuidColumns, match[1])
+		}
+	}
+
+	// Translate the CREATE TABLE (removes the DEFAULT gen_random_uuid() clauses)
+	translated := t.Translate(query)
+
+	// Generate triggers for each UUID column
+	var triggers []string
+	for _, col := range uuidColumns {
+		trigger := generateUUIDTrigger(tableName, col)
+		triggers = append(triggers, trigger)
+	}
+
+	return translated, triggers
+}
+
+// generateUUIDTrigger creates a BEFORE INSERT trigger that auto-generates UUID v4.
+// Note: SQLite triggers can't modify NEW values directly, so this trigger uses a workaround
+// with an INSTEAD OF trigger pattern via a temporary table approach.
+// For practical use, UUID generation should happen at INSERT time via query rewriting.
+func generateUUIDTrigger(tableName, columnName string) string {
+	// This is a placeholder - actual UUID generation should be done via INSERT rewriting
+	// because SQLite BEFORE INSERT triggers cannot modify NEW values
+	return ""
+}
+
+// UUIDv4Expr returns the SQLite expression for generating a UUID v4
+func UUIDv4Expr() string {
+	return `(lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab', abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))))`
+}
+
+// GetUUIDColumns returns the column names that have DEFAULT gen_random_uuid() in a CREATE TABLE statement
+func GetUUIDColumns(query string) []string {
+	if !isCreateTableQuery(query) {
+		return nil
+	}
+	var columns []string
+	matches := columnWithGenRandomUUIDPattern.FindAllStringSubmatch(query, -1)
+	for _, match := range matches {
+		if len(match) > 1 {
+			columns = append(columns, match[1])
+		}
+	}
+	return columns
+}
+
+// GetTableName extracts the table name from a CREATE TABLE statement
+func GetTableName(query string) string {
+	match := createTableNamePattern.FindStringSubmatch(query)
+	if match != nil && len(match) > 1 {
+		return match[1]
+	}
+	return ""
+}
+
 // isCreateTableQuery checks if the query is a CREATE TABLE statement
 func isCreateTableQuery(query string) bool {
 	normalized := strings.ToUpper(strings.TrimSpace(query))
