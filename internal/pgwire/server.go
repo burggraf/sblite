@@ -147,11 +147,6 @@ func (s *Server) handleCreateTable(ctx context.Context, query string) (wire.Prep
 	tableName := pgtranslate.GetTableName(query)
 	uuidColumns := pgtranslate.GetUUIDColumns(query)
 
-	// Debug logging
-	if s.config.Logger != nil {
-		s.config.Logger.Info("handleCreateTable", "table", tableName, "uuidColumns", uuidColumns, "query", query)
-	}
-
 	// Translate PostgreSQL to SQLite
 	translated := pgtranslate.TranslateToSQLite(query)
 
