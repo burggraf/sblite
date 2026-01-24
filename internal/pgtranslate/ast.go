@@ -87,6 +87,36 @@ type FunctionCall struct {
 	Distinct bool // for COUNT(DISTINCT x)
 	Star     bool // for COUNT(*)
 	OrderBy  []OrderByExpr // for aggregate functions with ORDER BY
+	Over     *WindowSpec   // for window functions
+}
+
+// WindowSpec represents a window specification (OVER clause).
+type WindowSpec struct {
+	Pos         Position
+	PartitionBy []Expr
+	OrderBy     []OrderByExpr
+	Frame       *FrameSpec
+}
+
+func (n *WindowSpec) Position() Position { return n.Pos }
+func (n *WindowSpec) nodeType() string   { return "WindowSpec" }
+
+// FrameSpec represents a window frame specification.
+type FrameSpec struct {
+	Pos     Position
+	Type    string // ROWS, RANGE, GROUPS
+	Start   *FrameBound
+	End     *FrameBound // nil for single bound (e.g., ROWS UNBOUNDED PRECEDING)
+}
+
+func (n *FrameSpec) Position() Position { return n.Pos }
+func (n *FrameSpec) nodeType() string   { return "FrameSpec" }
+
+// FrameBound represents a window frame bound.
+type FrameBound struct {
+	Pos      Position
+	Type     string // UNBOUNDED PRECEDING, CURRENT ROW, n PRECEDING, n FOLLOWING, UNBOUNDED FOLLOWING
+	Offset   Expr   // for n PRECEDING/FOLLOWING
 }
 
 func (n *FunctionCall) Position() Position { return n.Pos }
@@ -159,6 +189,32 @@ type ArraySubscript struct {
 func (n *ArraySubscript) Position() Position { return n.Pos }
 func (n *ArraySubscript) nodeType() string   { return "ArraySubscript" }
 func (n *ArraySubscript) exprNode()          {}
+
+// AnyAllExpr represents x = ANY(arr) or x = ALL(arr) expressions.
+type AnyAllExpr struct {
+	Pos   Position
+	Left  Expr   // comparison left side
+	Op    string // =, <>, <, >, <=, >=
+	Kind  string // "ANY" or "ALL"
+	Array Expr   // array expression
+}
+
+func (n *AnyAllExpr) Position() Position { return n.Pos }
+func (n *AnyAllExpr) nodeType() string   { return "AnyAllExpr" }
+func (n *AnyAllExpr) exprNode()          {}
+
+// RegexExpr represents regex match expressions (~ ~* !~ !~*).
+type RegexExpr struct {
+	Pos           Position
+	Left          Expr
+	Pattern       Expr
+	CaseInsensitive bool
+	Not           bool
+}
+
+func (n *RegexExpr) Position() Position { return n.Pos }
+func (n *RegexExpr) nodeType() string   { return "RegexExpr" }
+func (n *RegexExpr) exprNode()          {}
 
 // CaseExpr represents a CASE expression.
 type CaseExpr struct {

@@ -427,14 +427,10 @@ func defaultRules() []Rule {
 // Returns false for queries with unsupported features.
 func (t *Translator) IsTranslatable(query string) bool {
 	// List of PostgreSQL features that can't be reliably translated
+	// Note: WINDOW, OVER, PARTITION BY, ARRAY are now supported via AST translation
 	unsupported := []string{
-		"WINDOW",
-		"OVER\\s*\\(",
-		"PARTITION\\s+BY",
-		"ARRAY\\[", // Array literals
-		"ARRAY_AGG",
-		"UNNEST",
-		"LATERAL",
+		"UNNEST",  // UNNEST requires special handling not yet implemented
+		"LATERAL", // LATERAL joins not supported in SQLite
 		"FOR\\s+UPDATE",
 		"FOR\\s+SHARE",
 	}

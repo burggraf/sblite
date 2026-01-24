@@ -113,6 +113,10 @@ func (g *Generator) generateExpr(expr Expr) (string, error) {
 		return g.generateStarExpr(e), nil
 	case *RawSQL:
 		return e.Text, nil
+	case *AnyAllExpr:
+		return g.generateAnyAllExpr(e)
+	case *RegexExpr:
+		return g.generateRegexExpr(e)
 	default:
 		return "", fmt.Errorf("unknown expression type: %T", expr)
 	}
@@ -221,10 +225,25 @@ func (g *Generator) generateFunctionCall(call *FunctionCall) (string, error) {
 	// Check for function mapping
 	if g.dialect == DialectSQLite {
 		if mapped, ok := g.funcMapper.MapToSQLite(call); ok {
+			// If there's a window spec, append it
+			if call.Over != nil {
+				over, err := g.generateWindowSpec(call.Over)
+				if err != nil {
+					return "", err
+				}
+				return mapped + " " + over, nil
+			}
 			return mapped, nil
 		}
 	} else {
 		if mapped, ok := g.funcMapper.MapToPostgreSQL(call); ok {
+			if call.Over != nil {
+				over, err := g.generateWindowSpec(call.Over)
+				if err != nil {
+					return "", err
+				}
+				return mapped + " " + over, nil
+			}
 			return mapped, nil
 		}
 	}
@@ -272,7 +291,131 @@ func (g *Generator) generateFunctionCall(call *FunctionCall) (string, error) {
 	}
 
 	sb.WriteString(")")
+
+	// Window specification (OVER clause)
+	if call.Over != nil {
+		over, err := g.generateWindowSpec(call.Over)
+		if err != nil {
+			return "", err
+		}
+		sb.WriteString(" ")
+		sb.WriteString(over)
+	}
+
 	return sb.String(), nil
+}
+
+func (g *Generator) generateWindowSpec(spec *WindowSpec) (string, error) {
+	var sb strings.Builder
+	sb.WriteString("OVER (")
+
+	needSpace := false
+
+	// PARTITION BY
+	if len(spec.PartitionBy) > 0 {
+		sb.WriteString("PARTITION BY ")
+		for i, expr := range spec.PartitionBy {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			exprStr, err := g.generateExpr(expr)
+			if err != nil {
+				return "", err
+			}
+			sb.WriteString(exprStr)
+		}
+		needSpace = true
+	}
+
+	// ORDER BY
+	if len(spec.OrderBy) > 0 {
+		if needSpace {
+			sb.WriteString(" ")
+		}
+		sb.WriteString("ORDER BY ")
+		for i, ob := range spec.OrderBy {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			obStr, err := g.generateExpr(ob.Expr)
+			if err != nil {
+				return "", err
+			}
+			sb.WriteString(obStr)
+			if ob.Desc {
+				sb.WriteString(" DESC")
+			}
+			if ob.NullsFirst != nil {
+				if *ob.NullsFirst {
+					sb.WriteString(" NULLS FIRST")
+				} else {
+					sb.WriteString(" NULLS LAST")
+				}
+			}
+		}
+		needSpace = true
+	}
+
+	// Frame specification
+	if spec.Frame != nil {
+		if needSpace {
+			sb.WriteString(" ")
+		}
+		frame, err := g.generateFrameSpec(spec.Frame)
+		if err != nil {
+			return "", err
+		}
+		sb.WriteString(frame)
+	}
+
+	sb.WriteString(")")
+	return sb.String(), nil
+}
+
+func (g *Generator) generateFrameSpec(frame *FrameSpec) (string, error) {
+	var sb strings.Builder
+	sb.WriteString(frame.Type)
+	sb.WriteString(" ")
+
+	if frame.End != nil {
+		// BETWEEN start AND end
+		sb.WriteString("BETWEEN ")
+		start, err := g.generateFrameBound(frame.Start)
+		if err != nil {
+			return "", err
+		}
+		sb.WriteString(start)
+		sb.WriteString(" AND ")
+		end, err := g.generateFrameBound(frame.End)
+		if err != nil {
+			return "", err
+		}
+		sb.WriteString(end)
+	} else {
+		// Single bound
+		bound, err := g.generateFrameBound(frame.Start)
+		if err != nil {
+			return "", err
+		}
+		sb.WriteString(bound)
+	}
+
+	return sb.String(), nil
+}
+
+func (g *Generator) generateFrameBound(bound *FrameBound) (string, error) {
+	switch bound.Type {
+	case "UNBOUNDED PRECEDING", "UNBOUNDED FOLLOWING", "CURRENT ROW":
+		return bound.Type, nil
+	case "PRECEDING", "FOLLOWING":
+		offset, err := g.generateExpr(bound.Offset)
+		if err != nil {
+			return "", err
+		}
+		return offset + " " + bound.Type, nil
+	default:
+		return bound.Type, nil
+	}
 }
 
 func (g *Generator) generateTypeCast(cast *TypeCast) (string, error) {
@@ -406,6 +549,95 @@ func (g *Generator) generateArraySubscript(as *ArraySubscript) (string, error) {
 	}
 
 	return fmt.Sprintf("%s[%s]", array, index), nil
+}
+
+func (g *Generator) generateAnyAllExpr(ae *AnyAllExpr) (string, error) {
+	left, err := g.generateExpr(ae.Left)
+	if err != nil {
+		return "", err
+	}
+	array, err := g.generateExpr(ae.Array)
+	if err != nil {
+		return "", err
+	}
+
+	if g.dialect == DialectSQLite {
+		// Translate to SQLite using json_each
+		// x = ANY(arr) -> EXISTS (SELECT 1 FROM json_each(arr) WHERE value = x)
+		// x = ALL(arr) -> NOT EXISTS (SELECT 1 FROM json_each(arr) WHERE value <op_negated> x)
+		if ae.Kind == "ANY" {
+			return fmt.Sprintf("EXISTS (SELECT 1 FROM json_each(%s) WHERE value %s %s)", array, ae.Op, left), nil
+		}
+		// ALL: negate the operator for the NOT EXISTS check
+		negatedOp := negateOperator(ae.Op)
+		return fmt.Sprintf("NOT EXISTS (SELECT 1 FROM json_each(%s) WHERE value %s %s)", array, negatedOp, left), nil
+	}
+
+	// PostgreSQL
+	return fmt.Sprintf("%s %s %s(%s)", left, ae.Op, ae.Kind, array), nil
+}
+
+// negateOperator returns the negated comparison operator for ALL translation.
+func negateOperator(op string) string {
+	switch op {
+	case "=":
+		return "<>"
+	case "<>":
+		return "="
+	case "<":
+		return ">="
+	case "<=":
+		return ">"
+	case ">":
+		return "<="
+	case ">=":
+		return "<"
+	default:
+		return op
+	}
+}
+
+func (g *Generator) generateRegexExpr(re *RegexExpr) (string, error) {
+	left, err := g.generateExpr(re.Left)
+	if err != nil {
+		return "", err
+	}
+	pattern, err := g.generateExpr(re.Pattern)
+	if err != nil {
+		return "", err
+	}
+
+	if g.dialect == DialectSQLite {
+		// SQLite REGEXP function
+		if re.CaseInsensitive {
+			// For case-insensitive matching, apply LOWER to both sides
+			if re.Not {
+				return fmt.Sprintf("NOT (LOWER(%s) REGEXP LOWER(%s))", left, pattern), nil
+			}
+			return fmt.Sprintf("LOWER(%s) REGEXP LOWER(%s)", left, pattern), nil
+		}
+		if re.Not {
+			return fmt.Sprintf("NOT (%s REGEXP %s)", left, pattern), nil
+		}
+		return fmt.Sprintf("%s REGEXP %s", left, pattern), nil
+	}
+
+	// PostgreSQL
+	var op string
+	if re.Not {
+		if re.CaseInsensitive {
+			op = "!~*"
+		} else {
+			op = "!~"
+		}
+	} else {
+		if re.CaseInsensitive {
+			op = "~*"
+		} else {
+			op = "~"
+		}
+	}
+	return fmt.Sprintf("%s %s %s", left, op, pattern), nil
 }
 
 func (g *Generator) generateCaseExpr(ce *CaseExpr) (string, error) {

@@ -92,6 +92,8 @@ func (p *Parser) precedence(t TokenType) int {
 		return precComparison
 	case TokenLike, TokenILike:
 		return precLike
+	case TokenRegexMatch, TokenRegexMatchCI, TokenRegexNotMatch, TokenRegexNotMatchCI:
+		return precLike
 	case TokenPlus, TokenMinus:
 		return precAddSub
 	case TokenStar, TokenSlash, TokenPercent:
@@ -207,6 +209,8 @@ func (p *Parser) parsePrefixExpr() (Expr, error) {
 		star := &StarExpr{Pos: p.current.Pos}
 		p.nextToken()
 		return star, nil
+	case TokenArray:
+		return p.parseArrayLiteral()
 	default:
 		return nil, fmt.Errorf("unexpected token %s at %s", TokenTypeName(p.current.Type), p.current.Pos)
 	}
@@ -253,6 +257,14 @@ func (p *Parser) parseFunctionCall(pos Position, name string) (Expr, error) {
 		p.nextToken()
 		if err := p.expect(TokenRParen); err != nil {
 			return nil, err
+		}
+		// Check for OVER clause
+		if p.curIs(TokenOver) {
+			over, err := p.parseWindowSpec()
+			if err != nil {
+				return nil, err
+			}
+			call.Over = over
 		}
 		return call, nil
 	}
@@ -309,7 +321,194 @@ func (p *Parser) parseFunctionCall(pos Position, name string) (Expr, error) {
 		return nil, err
 	}
 
+	// Check for OVER clause (window function)
+	if p.curIs(TokenOver) {
+		over, err := p.parseWindowSpec()
+		if err != nil {
+			return nil, err
+		}
+		call.Over = over
+	}
+
 	return call, nil
+}
+
+// parseWindowSpec parses the OVER clause for window functions.
+func (p *Parser) parseWindowSpec() (*WindowSpec, error) {
+	pos := p.current.Pos
+	p.nextToken() // skip OVER
+
+	if err := p.expect(TokenLParen); err != nil {
+		return nil, err
+	}
+
+	spec := &WindowSpec{Pos: pos}
+
+	// Parse PARTITION BY
+	if p.curIs(TokenPartition) {
+		p.nextToken() // skip PARTITION
+		if err := p.expect(TokenBy); err != nil {
+			return nil, err
+		}
+		for {
+			expr, err := p.parseExpr(precLowest)
+			if err != nil {
+				return nil, err
+			}
+			spec.PartitionBy = append(spec.PartitionBy, expr)
+			if !p.curIs(TokenComma) {
+				break
+			}
+			p.nextToken()
+		}
+	}
+
+	// Parse ORDER BY
+	if p.curIs(TokenOrder) {
+		p.nextToken() // skip ORDER
+		if err := p.expect(TokenBy); err != nil {
+			return nil, err
+		}
+		for {
+			expr, err := p.parseExpr(precLowest)
+			if err != nil {
+				return nil, err
+			}
+			ob := OrderByExpr{Pos: expr.Position(), Expr: expr}
+			if p.curIs(TokenDesc) {
+				ob.Desc = true
+				p.nextToken()
+			} else if p.curIs(TokenAsc) {
+				p.nextToken()
+			}
+			// Handle NULLS FIRST/LAST
+			if p.curIs(TokenIdent) && strings.ToUpper(p.current.Value) == "NULLS" {
+				p.nextToken()
+				if p.curIs(TokenIdent) {
+					if strings.ToUpper(p.current.Value) == "FIRST" {
+						first := true
+						ob.NullsFirst = &first
+					} else if strings.ToUpper(p.current.Value) == "LAST" {
+						first := false
+						ob.NullsFirst = &first
+					}
+					p.nextToken()
+				}
+			}
+			spec.OrderBy = append(spec.OrderBy, ob)
+			if !p.curIs(TokenComma) {
+				break
+			}
+			p.nextToken()
+		}
+	}
+
+	// Parse frame specification (ROWS/RANGE/GROUPS)
+	if p.curIs(TokenRows) || p.curIs(TokenRange) || p.curIs(TokenGroups) {
+		frame, err := p.parseFrameSpec()
+		if err != nil {
+			return nil, err
+		}
+		spec.Frame = frame
+	}
+
+	if err := p.expect(TokenRParen); err != nil {
+		return nil, err
+	}
+
+	return spec, nil
+}
+
+// parseFrameSpec parses ROWS/RANGE/GROUPS frame specification.
+func (p *Parser) parseFrameSpec() (*FrameSpec, error) {
+	pos := p.current.Pos
+	frame := &FrameSpec{Pos: pos}
+
+	switch p.current.Type {
+	case TokenRows:
+		frame.Type = "ROWS"
+	case TokenRange:
+		frame.Type = "RANGE"
+	case TokenGroups:
+		frame.Type = "GROUPS"
+	}
+	p.nextToken()
+
+	// Check for BETWEEN
+	if p.curIs(TokenBetween) {
+		p.nextToken() // skip BETWEEN
+
+		start, err := p.parseFrameBound()
+		if err != nil {
+			return nil, err
+		}
+		frame.Start = start
+
+		if err := p.expect(TokenAnd); err != nil {
+			return nil, err
+		}
+
+		end, err := p.parseFrameBound()
+		if err != nil {
+			return nil, err
+		}
+		frame.End = end
+	} else {
+		// Single bound
+		bound, err := p.parseFrameBound()
+		if err != nil {
+			return nil, err
+		}
+		frame.Start = bound
+	}
+
+	return frame, nil
+}
+
+// parseFrameBound parses a frame bound (UNBOUNDED PRECEDING, CURRENT ROW, n PRECEDING, etc.)
+func (p *Parser) parseFrameBound() (*FrameBound, error) {
+	pos := p.current.Pos
+	bound := &FrameBound{Pos: pos}
+
+	if p.curIs(TokenUnbounded) {
+		p.nextToken()
+		if p.curIs(TokenPreceding) {
+			bound.Type = "UNBOUNDED PRECEDING"
+			p.nextToken()
+		} else if p.curIs(TokenFollowing) {
+			bound.Type = "UNBOUNDED FOLLOWING"
+			p.nextToken()
+		} else {
+			return nil, fmt.Errorf("expected PRECEDING or FOLLOWING after UNBOUNDED at %s", p.current.Pos)
+		}
+	} else if p.curIs(TokenCurrent) {
+		p.nextToken()
+		if p.curIs(TokenIdent) && strings.ToUpper(p.current.Value) == "ROW" {
+			bound.Type = "CURRENT ROW"
+			p.nextToken()
+		} else {
+			return nil, fmt.Errorf("expected ROW after CURRENT at %s", p.current.Pos)
+		}
+	} else if p.curIs(TokenNumber) {
+		// n PRECEDING or n FOLLOWING
+		offset := &Literal{Pos: p.current.Pos, Type: LitNumber, Value: p.current.Value}
+		p.nextToken()
+		if p.curIs(TokenPreceding) {
+			bound.Type = "PRECEDING"
+			bound.Offset = offset
+			p.nextToken()
+		} else if p.curIs(TokenFollowing) {
+			bound.Type = "FOLLOWING"
+			bound.Offset = offset
+			p.nextToken()
+		} else {
+			return nil, fmt.Errorf("expected PRECEDING or FOLLOWING at %s", p.current.Pos)
+		}
+	} else {
+		return nil, fmt.Errorf("expected frame bound at %s", p.current.Pos)
+	}
+
+	return bound, nil
 }
 
 func (p *Parser) parseParenExpr() (Expr, error) {
@@ -398,9 +597,76 @@ func (p *Parser) parseInfixExpr(left Expr, prec int) (Expr, error) {
 		return p.parseLikeExpr(left, false)
 	case TokenLBracket:
 		return p.parseArraySubscript(left)
+	case TokenRegexMatch, TokenRegexMatchCI, TokenRegexNotMatch, TokenRegexNotMatchCI:
+		return p.parseRegexExpr(left)
+	case TokenEq, TokenNe, TokenLt, TokenLe, TokenGt, TokenGe:
+		// Check for = ANY(...) or = ALL(...) patterns
+		return p.parseBinaryOpOrAnyAll(left, prec)
 	default:
 		return p.parseBinaryOp(left, prec)
 	}
+}
+
+// parseBinaryOpOrAnyAll handles binary operators and detects ANY/ALL patterns.
+func (p *Parser) parseBinaryOpOrAnyAll(left Expr, prec int) (Expr, error) {
+	pos := p.current.Pos
+	op := p.current.Value
+	opType := p.current.Type
+	p.nextToken()
+
+	// Check for ANY or ALL keyword
+	if p.curIs(TokenAny) || p.curIs(TokenSome) || p.curIs(TokenAll) {
+		kind := "ANY"
+		if p.curIs(TokenAll) {
+			kind = "ALL"
+		}
+		p.nextToken() // skip ANY/SOME/ALL
+
+		if err := p.expect(TokenLParen); err != nil {
+			return nil, err
+		}
+
+		// Parse the array expression
+		arrayExpr, err := p.parseExpr(precLowest)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := p.expect(TokenRParen); err != nil {
+			return nil, err
+		}
+
+		// Map token type to operator string
+		switch opType {
+		case TokenNe:
+			op = "<>"
+		}
+
+		return &AnyAllExpr{Pos: pos, Left: left, Op: op, Kind: kind, Array: arrayExpr}, nil
+	}
+
+	// Regular binary operation
+	right, err := p.parseExpr(prec)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BinaryOp{Pos: pos, Op: op, Left: left, Right: right}, nil
+}
+
+// parseRegexExpr parses regex match expressions (~ ~* !~ !~*).
+func (p *Parser) parseRegexExpr(left Expr) (Expr, error) {
+	pos := p.current.Pos
+	caseInsensitive := p.current.Type == TokenRegexMatchCI || p.current.Type == TokenRegexNotMatchCI
+	not := p.current.Type == TokenRegexNotMatch || p.current.Type == TokenRegexNotMatchCI
+	p.nextToken() // skip operator
+
+	pattern, err := p.parseExpr(precLike)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RegexExpr{Pos: pos, Left: left, Pattern: pattern, CaseInsensitive: caseInsensitive, Not: not}, nil
 }
 
 func (p *Parser) parseBinaryOp(left Expr, prec int) (Expr, error) {
@@ -871,6 +1137,45 @@ func (p *Parser) parseAggregateFunc() (Expr, error) {
 	}
 
 	return call, nil
+}
+
+// parseArrayLiteral parses ARRAY[...] expressions.
+func (p *Parser) parseArrayLiteral() (Expr, error) {
+	pos := p.current.Pos
+	p.nextToken() // skip ARRAY
+
+	if !p.curIs(TokenLBracket) {
+		return nil, fmt.Errorf("expected '[' after ARRAY at %s", p.current.Pos)
+	}
+	p.nextToken() // skip [
+
+	arr := &ArrayExpr{Pos: pos}
+
+	// Handle empty array
+	if p.curIs(TokenRBracket) {
+		p.nextToken()
+		return arr, nil
+	}
+
+	// Parse elements
+	for {
+		elem, err := p.parseExpr(precLowest)
+		if err != nil {
+			return nil, err
+		}
+		arr.Elements = append(arr.Elements, elem)
+
+		if !p.curIs(TokenComma) {
+			break
+		}
+		p.nextToken() // skip comma
+	}
+
+	if err := p.expect(TokenRBracket); err != nil {
+		return nil, err
+	}
+
+	return arr, nil
 }
 
 // ParseSelect parses a SELECT statement with full support for CTEs and set operations.

@@ -557,29 +557,29 @@ func TestTranslator_UnsupportedFeatures(t *testing.T) {
 			want:  true,
 		},
 		{
-			name:  "OVER clause - not translatable",
+			name:  "OVER clause - now translatable",
 			query: "SELECT ROW_NUMBER() OVER (ORDER BY id) FROM users",
-			want:  false,
+			want:  true,
 		},
 		{
-			name:  "PARTITION BY - not translatable",
+			name:  "PARTITION BY - now translatable",
 			query: "SELECT SUM(amount) OVER (PARTITION BY user_id) FROM orders",
-			want:  false,
+			want:  true,
 		},
 		{
-			name:  "WINDOW keyword - not translatable",
+			name:  "WINDOW keyword - now translatable",
 			query: "SELECT * FROM users WINDOW w AS (PARTITION BY dept)",
-			want:  false,
+			want:  true,
 		},
 		{
-			name:  "ARRAY literal - not translatable",
+			name:  "ARRAY literal - now translatable",
 			query: "SELECT ARRAY[1, 2, 3]",
-			want:  false,
+			want:  true,
 		},
 		{
-			name:  "ARRAY_AGG - not translatable",
+			name:  "ARRAY_AGG - now translatable",
 			query: "SELECT ARRAY_AGG(name) FROM users",
-			want:  false,
+			want:  true,
 		},
 		{
 			name:  "UNNEST - not translatable",
@@ -1005,12 +1005,12 @@ func TestTranslator_ConvenienceFunctions(t *testing.T) {
 		t.Errorf("TranslateWithFallback() = %q, want %q", translated, "SELECT datetime('now')")
 	}
 
-	// Test with untranslatable query
-	original, wasTranslated := TranslateWithFallback("SELECT ARRAY_AGG(x) FROM t")
+	// Test with untranslatable query (UNNEST is still not supported)
+	original, wasTranslated := TranslateWithFallback("SELECT * FROM UNNEST(ARRAY[1,2,3])")
 	if wasTranslated {
 		t.Error("TranslateWithFallback() should return wasTranslated=false for untranslatable query")
 	}
-	if original != "SELECT ARRAY_AGG(x) FROM t" {
+	if original != "SELECT * FROM UNNEST(ARRAY[1,2,3])" {
 		t.Errorf("TranslateWithFallback() should return original query, got %q", original)
 	}
 
@@ -1018,8 +1018,11 @@ func TestTranslator_ConvenienceFunctions(t *testing.T) {
 	if !IsTranslatable("SELECT NOW()") {
 		t.Error("IsTranslatable() should return true for simple query")
 	}
-	if IsTranslatable("SELECT ARRAY[1,2,3]") {
-		t.Error("IsTranslatable() should return false for ARRAY query")
+	if !IsTranslatable("SELECT ARRAY[1,2,3]") {
+		t.Error("IsTranslatable() should return true for ARRAY query (now supported)")
+	}
+	if IsTranslatable("SELECT * FROM UNNEST(ARRAY[1,2,3])") {
+		t.Error("IsTranslatable() should return false for UNNEST query")
 	}
 }
 

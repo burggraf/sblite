@@ -38,8 +38,12 @@ const (
 	TokenGe         // >=
 	TokenConcat     // ||
 	TokenCast       // ::
-	TokenJsonArrow  // ->
-	TokenJsonArrow2 // ->>
+	TokenJsonArrow      // ->
+	TokenJsonArrow2     // ->>
+	TokenRegexMatch     // ~
+	TokenRegexMatchCI   // ~*
+	TokenRegexNotMatch  // !~
+	TokenRegexNotMatchCI // !~*
 
 	// Punctuation
 	TokenLParen    // (
@@ -148,6 +152,16 @@ const (
 	TokenDefiner
 	TokenInvoker
 	TokenIf
+	TokenArray
+	TokenOver
+	TokenPartition
+	TokenRows
+	TokenRange
+	TokenGroups
+	TokenUnbounded
+	TokenPreceding
+	TokenFollowing
+	TokenCurrent
 )
 
 // Token represents a lexical token with its position.
@@ -267,6 +281,16 @@ var keywords = map[string]TokenType{
 	"DEFINER":   TokenDefiner,
 	"INVOKER":   TokenInvoker,
 	"IF":        TokenIf,
+	"ARRAY":     TokenArray,
+	"OVER":      TokenOver,
+	"PARTITION": TokenPartition,
+	"ROWS":      TokenRows,
+	"RANGE":     TokenRange,
+	"GROUPS":    TokenGroups,
+	"UNBOUNDED": TokenUnbounded,
+	"PRECEDING": TokenPreceding,
+	"FOLLOWING": TokenFollowing,
+	"CURRENT":   TokenCurrent,
 }
 
 // Lexer tokenizes SQL input.
@@ -417,8 +441,24 @@ func (l *Lexer) NextToken() Token {
 			l.readChar()
 			return Token{Type: TokenNe, Value: "!=", Pos: pos}
 		}
+		if l.peekChar() == '~' {
+			l.readChar()
+			l.readChar()
+			if l.ch == '*' {
+				l.readChar()
+				return Token{Type: TokenRegexNotMatchCI, Value: "!~*", Pos: pos}
+			}
+			return Token{Type: TokenRegexNotMatch, Value: "!~", Pos: pos}
+		}
 		l.readChar()
 		return Token{Type: TokenError, Value: "!", Pos: pos}
+	case '~':
+		l.readChar()
+		if l.ch == '*' {
+			l.readChar()
+			return Token{Type: TokenRegexMatchCI, Value: "~*", Pos: pos}
+		}
+		return Token{Type: TokenRegexMatch, Value: "~", Pos: pos}
 	case '|':
 		if l.peekChar() == '|' {
 			l.readChar()

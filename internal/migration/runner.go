@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/markb/sblite/internal/pgtranslate"
 )
 
 // Runner handles migration execution against a database
@@ -63,7 +65,12 @@ func (r *Runner) Apply(m Migration) error {
 		if stmt == "" {
 			continue
 		}
-		if _, err := tx.Exec(stmt); err != nil {
+
+		// Translate PostgreSQL syntax to SQLite
+		// This allows migrations written in PostgreSQL syntax to work with SQLite
+		translated := pgtranslate.TranslateToSQLite(stmt)
+
+		if _, err := tx.Exec(translated); err != nil {
 			return fmt.Errorf("migration %s failed: %w", m.Version, err)
 		}
 	}

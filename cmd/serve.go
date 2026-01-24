@@ -20,6 +20,7 @@ import (
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
+	"github.com/markb/sblite/internal/pgwire"
 	"github.com/markb/sblite/internal/server"
 	"github.com/markb/sblite/internal/storage"
 	"github.com/spf13/cobra"
@@ -187,6 +188,42 @@ var serveCmd = &cobra.Command{
 		// Start TUS cleanup routine for expired resumable uploads
 		srv.StartTUSCleanup(ctx)
 
+		// Start PostgreSQL wire protocol server if requested
+		pgPort, _ := cmd.Flags().GetInt("pg-port")
+		var pgServer *pgwire.Server
+		if pgPort > 0 {
+			pgPassword, _ := cmd.Flags().GetString("pg-password")
+			pgNoAuth, _ := cmd.Flags().GetBool("pg-no-auth")
+
+			// Check environment variables
+			if pgPassword == "" {
+				pgPassword = os.Getenv("SBLITE_PG_PASSWORD")
+			}
+
+			pgConfig := pgwire.Config{
+				Address:  fmt.Sprintf("%s:%d", host, pgPort),
+				Password: pgPassword,
+				NoAuth:   pgNoAuth,
+				Logger:   log.Logger(),
+			}
+
+			var err error
+			pgServer, err = pgwire.NewServer(database.DB, pgConfig)
+			if err != nil {
+				return fmt.Errorf("failed to create pgwire server: %w", err)
+			}
+
+			go func() {
+				log.Info("pgwire server listening",
+					"addr", pgConfig.Address,
+					"auth", !pgNoAuth && pgPassword != "",
+				)
+				if err := pgServer.ListenAndServe(); err != nil {
+					log.Warn("pgwire server error", "error", err)
+				}
+			}()
+		}
+
 		// Handle graceful shutdown for all modes
 		go func() {
 			sigCh := make(chan os.Signal, 1)
@@ -201,6 +238,13 @@ var serveCmd = &cobra.Command{
 			// Stop functions first if enabled
 			if functionsEnabled {
 				srv.StopFunctions()
+			}
+
+			// Shutdown pgwire server if enabled
+			if pgServer != nil {
+				if err := pgServer.Shutdown(shutdownCtx); err != nil {
+					log.Warn("pgwire server shutdown error", "error", err)
+				}
 			}
 
 			// Shutdown HTTP server
@@ -514,4 +558,9 @@ func init() {
 	// HTTPS flags
 	serveCmd.Flags().String("https", "", "Domain for automatic Let's Encrypt HTTPS")
 	serveCmd.Flags().Int("http-port", 80, "HTTP port for ACME challenges (only used with --https)")
+
+	// PostgreSQL wire protocol flags
+	serveCmd.Flags().Int("pg-port", 0, "PostgreSQL wire protocol port (0 = disabled)")
+	serveCmd.Flags().String("pg-password", "", "PostgreSQL wire protocol password (empty = no auth)")
+	serveCmd.Flags().Bool("pg-no-auth", false, "Disable PostgreSQL wire protocol authentication")
 }

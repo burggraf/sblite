@@ -279,19 +279,19 @@ func TestTranslator_IsTranslatable(t *testing.T) {
 			isTranslatable: true,
 		},
 		{
-			name:          "WINDOW function - not translatable",
+			name:          "WINDOW function - now translatable",
 			query:         "SELECT ROW_NUMBER() OVER (PARTITION BY dept) FROM employees",
-			isTranslatable: false,
+			isTranslatable: true,
 		},
 		{
-			name:          "ARRAY - not translatable",
+			name:          "ARRAY - now translatable",
 			query:         "SELECT ARRAY[1,2,3]",
-			isTranslatable: false,
+			isTranslatable: true,
 		},
 		{
-			name:          "ARRAY_AGG - not translatable",
+			name:          "ARRAY_AGG - now translatable",
 			query:         "SELECT ARRAY_AGG(name) FROM users",
-			isTranslatable: false,
+			isTranslatable: true,
 		},
 		{
 			name:          "FOR UPDATE - not translatable",
@@ -374,9 +374,9 @@ func TestTranslator_TranslateWithFallback(t *testing.T) {
 			wasTranslated:  true,
 		},
 		{
-			name:           "Non-translatable query - returns original",
-			input:          "SELECT ARRAY_AGG(name) FROM users",
-			expectedOutput: "SELECT ARRAY_AGG(name) FROM users",
+			name:           "UNNEST query - not translatable, returns original",
+			input:          "SELECT * FROM UNNEST(ARRAY[1,2,3])",
+			expectedOutput: "SELECT * FROM UNNEST(ARRAY[1,2,3])",
 			wasTranslated:  false,
 		},
 	}
