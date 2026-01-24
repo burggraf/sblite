@@ -17,6 +17,7 @@
 - **golang-jwt/jwt/v5** - JWT signing/validation
 - **bcrypt** - Password hashing (`golang.org/x/crypto/bcrypt`)
 - **Cobra** - CLI framework
+- **psql-wire** - PostgreSQL wire protocol (`github.com/jeroenrinzema/psql-wire`)
 
 ## Project Structure
 
@@ -94,6 +95,17 @@ sblite/
 │   │   ├── file.go           # File handler with rotation
 │   │   ├── database.go       # SQLite handler
 │   │   └── middleware.go     # HTTP request logging
+│   ├── pgtranslate/          # PostgreSQL to SQLite translation
+│   │   ├── token.go          # Lexer tokens
+│   │   ├── ast.go            # AST node types
+│   │   ├── parser.go         # SQL parser
+│   │   ├── generator.go      # SQL code generator
+│   │   ├── translator.go     # Regex-based translator
+│   │   └── functions.go      # Function mappings
+│   ├── pgwire/               # PostgreSQL wire protocol server
+│   │   ├── server.go         # Wire protocol server
+│   │   ├── catalog.go        # pg_catalog emulation
+│   │   └── types.go          # SQLite to PostgreSQL OID mappings
 │   └── server/               # HTTP server
 │       ├── server.go         # Chi router setup, route registration
 │       ├── auth_handlers.go  # /auth/v1/* endpoints
@@ -123,6 +135,10 @@ go build -o sblite .
 # Start server with HTTPS (Let's Encrypt)
 ./sblite serve --https example.com
 ./sblite serve --https example.com --functions  # With edge functions
+
+# Start server with PostgreSQL wire protocol
+./sblite serve --pg-port 5432                   # Enable psql/pgAdmin connections
+./sblite serve --pg-port 5432 --pg-password secret  # With password auth
 
 # Run Go tests
 go test ./...
@@ -230,6 +246,37 @@ Certificates are cached in `<db-dir>/certs/` and renewed automatically.
 | `--edge-runtime-dir` | `SBLITE_EDGE_RUNTIME_DIR` | `<db-dir>/edge-runtime/` | Directory for edge runtime binary |
 
 The edge runtime binary is stored in `<db-dir>/edge-runtime/` by default (relative to the database file). This can be overridden with `--edge-runtime-dir` or `SBLITE_EDGE_RUNTIME_DIR`.
+
+### PostgreSQL Wire Protocol Configuration
+
+sblite can expose a PostgreSQL-compatible wire protocol, allowing tools like `psql`, pgAdmin, and DBeaver to connect directly.
+
+```bash
+# Start with PostgreSQL protocol on port 5432
+./sblite serve --pg-port 5432
+
+# With password authentication
+./sblite serve --pg-port 5432 --pg-password mysecret
+
+# Without authentication (development only)
+./sblite serve --pg-port 5432 --pg-no-auth
+```
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `--pg-port` | - | `0` (disabled) | PostgreSQL wire protocol port |
+| `--pg-password` | `SBLITE_PG_PASSWORD` | (none) | Password for authentication |
+| `--pg-no-auth` | - | `false` | Disable authentication |
+
+**Features:**
+- PostgreSQL syntax auto-translated to SQLite
+- Supports `psql`, pgAdmin, DBeaver, and other PostgreSQL clients
+- pg_catalog emulation for metadata queries
+- Handles SET/SHOW statements
+
+**Limitations:**
+- No transaction isolation (SQLite serializable only)
+- Some PostgreSQL-specific functions may not work
 
 ### Dashboard Storage Configuration
 
@@ -639,6 +686,9 @@ See `e2e/TESTS.md` for the complete test inventory (173 tests, 115 active, 58 sk
 - PostgreSQL Functions (RPC) - SQL functions via supabase.rpc()
 - Realtime subscriptions (WebSocket) - Broadcast, Presence, Postgres Changes
 - Vector search (pgvector-compatible) - cosine, L2, dot product metrics
+- PostgreSQL wire protocol server (psql, pgAdmin, DBeaver support)
+- PostgreSQL-to-SQLite translation (arrays, window functions, regex operators)
+- Auto-translation in migration runner
 
 ### Planned
 - (no planned features at this time)
