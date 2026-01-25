@@ -203,6 +203,7 @@ This will:
 | `SBLITE_DB_PATH` | `./data.db` | SQLite database path |
 | `SBLITE_HTTPS_DOMAIN` | (none) | Domain for automatic Let's Encrypt HTTPS |
 | `SBLITE_HTTP_PORT` | `80` | HTTP port for ACME challenges (with HTTPS) |
+| `SBLITE_STATIC_DIR` | `./public` | Directory for static file hosting |
 
 ### Database Auto-Initialization
 
@@ -240,6 +241,39 @@ The dashboard requires a password for access. You can set or reset it via CLI:
 - `dashboard reset-password` invalidates all existing sessions
 - Minimum password length: 8 characters
 - All commands support `--db` flag to specify database path
+
+### Static File Hosting
+
+sblite can serve static files (HTML, CSS, JS) from a directory, enabling you to host your frontend alongside the API.
+
+```bash
+# Serve static files from ./public (default)
+./sblite serve
+
+# Serve from custom directory
+./sblite serve --static-dir ./dist
+```
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `--static-dir` | `SBLITE_STATIC_DIR` | `./public` | Directory for static files |
+
+**Features:**
+- Serves files from root (`/`) path
+- API routes (`/auth/v1/*`, `/rest/v1/*`, etc.) take priority
+- SPA fallback: paths without extensions return `index.html` for client-side routing
+- Silently skipped if directory doesn't exist
+
+**Example with React/Vue/etc:**
+```bash
+# Build your frontend
+cd frontend && npm run build
+
+# Serve with sblite
+./sblite serve --static-dir ./frontend/dist
+```
+
+Your app will be available at `http://localhost:8080/` with API at `http://localhost:8080/rest/v1/`.
 
 ### HTTPS Configuration
 

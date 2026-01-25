@@ -111,11 +111,18 @@ var serveCmd = &cobra.Command{
 		// Build storage configuration (pass db for dashboard settings)
 		storageConfig := buildStorageConfig(cmd, database.DB)
 
+		// Static file serving configuration
+		staticDir, _ := cmd.Flags().GetString("static-dir")
+		if envStaticDir := os.Getenv("SBLITE_STATIC_DIR"); envStaticDir != "" && !cmd.Flags().Changed("static-dir") {
+			staticDir = envStaticDir
+		}
+
 		srv := server.NewWithConfig(database, server.ServerConfig{
 			JWTSecret:     jwtSecret,
 			MailConfig:    mailConfig,
 			MigrationsDir: migrationsDir,
 			StorageConfig: storageConfig,
+			StaticDir:     staticDir,
 		})
 
 		// Set dashboard config for settings display
@@ -580,4 +587,7 @@ func init() {
 	serveCmd.Flags().Int("pg-port", 0, "PostgreSQL wire protocol port (0 = disabled)")
 	serveCmd.Flags().String("pg-password", "", "PostgreSQL wire protocol password (empty = no auth)")
 	serveCmd.Flags().Bool("pg-no-auth", false, "Disable PostgreSQL wire protocol authentication")
+
+	// Static file serving flags
+	serveCmd.Flags().String("static-dir", "./public", "Directory for static file hosting")
 }

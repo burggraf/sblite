@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -82,6 +85,9 @@ type Server struct {
 
 	// Dashboard store for auth settings
 	dashboardStore *dashboard.Store
+
+	// Static file serving
+	staticDir string
 }
 
 // ServerConfig holds server configuration.
@@ -89,8 +95,9 @@ type ServerConfig struct {
 	JWTSecret     string
 	MailConfig    *mail.Config
 	MigrationsDir string
-	StoragePath   string         // Path for local file storage (deprecated, use StorageConfig)
+	StoragePath   string          // Path for local file storage (deprecated, use StorageConfig)
 	StorageConfig *storage.Config // Full storage configuration
+	StaticDir     string          // Directory for static file hosting
 }
 
 func New(database *db.DB, jwtSecret string, mailConfig *mail.Config, migrationsDir string, storagePath string) *Server {
@@ -129,6 +136,7 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 		jwtSecret:       cfg.JWTSecret,
 		oauthRegistry:   oauth.NewRegistry(),
 		oauthStateStore: oauth.NewStateStore(database.DB),
+		staticDir:       cfg.StaticDir,
 	}
 
 	// Initialize admin handler (uses schema)
@@ -408,6 +416,14 @@ func (s *Server) setupRoutes() {
 			})
 		})
 	}
+
+	// Static file serving (catch-all, must be last)
+	if s.staticDir != "" {
+		if info, err := os.Stat(s.staticDir); err == nil && info.IsDir() {
+			log.Info("serving static files", "dir", s.staticDir)
+			s.router.Get("/*", s.handleStatic)
+		}
+	}
 }
 
 func (s *Server) Router() *chi.Mux {
@@ -416,6 +432,53 @@ func (s *Server) Router() *chi.Mux {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+}
+
+// handleStatic serves static files with SPA fallback support.
+func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	// Clean and resolve the path
+	path := r.URL.Path
+	if path == "/" {
+		path = "/index.html"
+	}
+
+	// Build full file path
+	filePath := filepath.Join(s.staticDir, filepath.Clean(path))
+
+	// Security: ensure path is within static dir
+	absStaticDir, _ := filepath.Abs(s.staticDir)
+	absFilePath, _ := filepath.Abs(filePath)
+	if !strings.HasPrefix(absFilePath, absStaticDir) {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Check if file exists
+	info, err := os.Stat(filePath)
+	if err == nil && !info.IsDir() {
+		// File exists, serve it
+		w.Header().Del("Content-Type") // Remove JSON content-type from global middleware
+		http.ServeFile(w, r, filePath)
+		return
+	}
+
+	// File doesn't exist - check for SPA fallback
+	// If path has an extension (e.g., .js, .css), return 404
+	if filepath.Ext(path) != "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	// No extension - serve index.html for SPA routing
+	indexPath := filepath.Join(s.staticDir, "index.html")
+	if _, err := os.Stat(indexPath); err == nil {
+		w.Header().Del("Content-Type") // Remove JSON content-type from global middleware
+		http.ServeFile(w, r, indexPath)
+		return
+	}
+
+	// No index.html either
+	http.NotFound(w, r)
 }
 
 func (s *Server) ListenAndServe(addr string) error {
