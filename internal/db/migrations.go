@@ -343,6 +343,55 @@ CREATE INDEX IF NOT EXISTS idx_resumable_uploads_expires ON _resumable_uploads(e
 CREATE INDEX IF NOT EXISTS idx_resumable_uploads_bucket ON _resumable_uploads(bucket_id, object_name);
 `
 
+// Migration state schema for tracking Supabase migration progress
+const migrationStateSchema = `
+-- Main migrations table: tracks overall migration jobs
+CREATE TABLE IF NOT EXISTS _migrations (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'failed', 'rolled_back')),
+    supabase_project_ref TEXT,
+    supabase_project_name TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT,
+    error_message TEXT,
+    credentials_encrypted TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_migrations_status ON _migrations(status);
+CREATE INDEX IF NOT EXISTS idx_migrations_created_at ON _migrations(created_at DESC);
+
+-- Migration items: individual components being migrated
+CREATE TABLE IF NOT EXISTS _migration_items (
+    id TEXT PRIMARY KEY,
+    migration_id TEXT NOT NULL REFERENCES _migrations(id) ON DELETE CASCADE,
+    item_type TEXT NOT NULL CHECK (item_type IN ('schema', 'data', 'users', 'identities', 'rls', 'storage_buckets', 'storage_files', 'functions', 'secrets', 'auth_config', 'oauth_config', 'email_templates')),
+    item_name TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'failed', 'skipped', 'rolled_back')),
+    started_at TEXT,
+    completed_at TEXT,
+    error_message TEXT,
+    rollback_info TEXT,
+    metadata TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_migration_items_migration_id ON _migration_items(migration_id);
+CREATE INDEX IF NOT EXISTS idx_migration_items_status ON _migration_items(status);
+
+-- Migration verifications: validation results at different layers
+CREATE TABLE IF NOT EXISTS _migration_verifications (
+    id TEXT PRIMARY KEY,
+    migration_id TEXT NOT NULL REFERENCES _migrations(id) ON DELETE CASCADE,
+    layer TEXT NOT NULL CHECK (layer IN ('basic', 'integrity', 'functional')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'passed', 'failed')),
+    started_at TEXT,
+    completed_at TEXT,
+    results TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_migration_verifications_migration_id ON _migration_verifications(migration_id);
+`
+
 const defaultTemplates = `
 INSERT OR IGNORE INTO auth_email_templates (id, type, subject, body_html, body_text, updated_at) VALUES
 ('tpl-confirmation', 'confirmation', 'Confirm your email',
@@ -516,6 +565,11 @@ func (db *DB) RunMigrations() error {
 	_, err = db.Exec(rpcFunctionsSchema)
 	if err != nil {
 		return fmt.Errorf("failed to run RPC functions schema migration: %w", err)
+	}
+
+	_, err = db.Exec(migrationStateSchema)
+	if err != nil {
+		return fmt.Errorf("failed to run migration state schema migration: %w", err)
 	}
 
 	// Add description column to _columns if it doesn't exist (for existing databases)
