@@ -2,7 +2,7 @@
 
 **Status:** Implemented
 **Version:** 1.0
-**Last Updated:** 2026-01-24
+**Last Updated:** 2026-01-25
 
 ## Overview
 
@@ -13,10 +13,10 @@ sblite includes a PostgreSQL wire protocol server that allows native PostgreSQL 
 ### Start the Server with PostgreSQL Protocol
 
 ```bash
-# Enable PostgreSQL protocol on port 5432
+# Enable PostgreSQL protocol on port 5432 (uses dashboard password)
 ./sblite serve --pg-port 5432
 
-# With password authentication
+# Override with explicit password
 ./sblite serve --pg-port 5432 --pg-password mysecretpassword
 
 # Disable authentication entirely (development only!)
@@ -26,12 +26,12 @@ sblite includes a PostgreSQL wire protocol server that allows native PostgreSQL 
 ### Connect with psql
 
 ```bash
-# Connect (no auth)
-psql -h localhost -p 5432 -d sblite
-
-# Connect with password
+# Connect with dashboard password
 psql -h localhost -p 5432 -d sblite -U sblite
-# Enter password when prompted
+# Enter your dashboard password when prompted
+
+# Connect with explicit password (if --pg-password was used)
+PGPASSWORD=mysecretpassword psql -h localhost -p 5432 -d sblite -U sblite
 ```
 
 ### Connect with Other Tools
@@ -89,8 +89,17 @@ print(cur.fetchall())
 | Flag | Environment Variable | Default | Description |
 |------|---------------------|---------|-------------|
 | `--pg-port` | - | (disabled) | TCP port for PostgreSQL wire protocol |
-| `--pg-password` | - | (none) | Password for client authentication |
+| `--pg-password` | `SBLITE_PG_PASSWORD` | (none) | Override password (uses dashboard password if not set) |
 | `--pg-no-auth` | - | `false` | Disable authentication (development only) |
+
+### Authentication Priority
+
+The pgwire server determines authentication in this order:
+
+1. **`--pg-no-auth`** — If set, authentication is disabled entirely
+2. **`--pg-password` or `SBLITE_PG_PASSWORD`** — If set, uses this explicit password
+3. **Dashboard password** — If the dashboard has a password configured, uses that
+4. **No password configured** — Rejects all connections with a warning
 
 ### Combined Usage
 
@@ -234,14 +243,31 @@ PRAGMA table_info(tablename);
 
 ### Authentication
 
-By default, the wire protocol requires a password if `--pg-password` is set:
+By default, the wire protocol uses the **same password as the web dashboard**. This provides a unified authentication experience:
 
 ```bash
-# Require password authentication
-./sblite serve --pg-port 5432 --pg-password mysecretpassword
+# First, set up the dashboard password
+./sblite dashboard setup --password "mypassword"
+
+# Start with pgwire - automatically uses dashboard password
+./sblite serve --pg-port 5432
 ```
 
-Without `--pg-password` or with `--pg-no-auth`, connections are allowed without authentication. This is suitable for local development but **never use in production**.
+If no dashboard password is configured and no `--pg-password` is provided, **all connections will be rejected**. This is a security feature to prevent accidental unauthenticated access.
+
+To use a different password for pgwire (separate from dashboard):
+
+```bash
+# Override with explicit password
+./sblite serve --pg-port 5432 --pg-password differentpassword
+```
+
+To disable authentication entirely (development only):
+
+```bash
+# WARNING: Never use in production!
+./sblite serve --pg-port 5432 --pg-no-auth
+```
 
 ### Network Security
 
@@ -304,7 +330,24 @@ Ensure the server is running with `--pg-port`:
 psql: error: password authentication failed
 ```
 
-Check that you're using the correct password set with `--pg-password`.
+This can happen for several reasons:
+
+1. **Wrong password** — Check that you're using the correct password:
+   - If using dashboard password: use the same password you use to log into the web dashboard
+   - If using `--pg-password`: use that explicit password
+
+2. **No password configured** — If you see this warning in the server logs:
+   ```
+   pgwire server requires dashboard password to be set first
+   ```
+   You need to set up a password first:
+   ```bash
+   ./sblite dashboard setup --password "mypassword"
+   ```
+   Or use an explicit password:
+   ```bash
+   ./sblite serve --pg-port 5432 --pg-password "mypassword"
+   ```
 
 ### Query Errors
 
