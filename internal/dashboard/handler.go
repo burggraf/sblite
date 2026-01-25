@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"database/sql"
@@ -257,6 +258,16 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/data", h.handleExportData)
 			r.Get("/backup", h.handleExportBackup)
 			r.Get("/rls", h.handleExportRLS)
+			r.Get("/functions", h.handleExportFunctions)
+			r.Get("/secrets", h.handleExportSecrets)
+			r.Route("/auth", func(r chi.Router) {
+				r.Get("/users", h.handleExportAuthUsers)
+				r.Get("/config", h.handleExportAuthConfig)
+				r.Get("/templates", h.handleExportEmailTemplates)
+			})
+			r.Route("/storage", func(r chi.Router) {
+				r.Get("/buckets", h.handleExportStorageBuckets)
+			})
 		})
 
 		// Logs API routes (require auth)
@@ -3121,6 +3132,486 @@ func (h *Handler) handleExportRLS(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=rls-policies.sql")
+	w.Write([]byte(sb.String()))
+}
+
+// handleExportAuthUsers exports auth users as JSON.
+func (h *Handler) handleExportAuthUsers(w http.ResponseWriter, r *http.Request) {
+	includePasswords := r.URL.Query().Get("include_passwords") == "true"
+
+	rows, err := h.db.Query(`
+		SELECT id, email, encrypted_password, email_confirmed_at,
+		       raw_app_meta_data, raw_user_meta_data, role, is_anonymous,
+		       created_at, updated_at, last_sign_in_at
+		FROM auth_users
+		WHERE deleted_at IS NULL
+		ORDER BY created_at
+	`)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to query users"})
+		return
+	}
+	defer rows.Close()
+
+	type ExportUser struct {
+		ID                string          `json:"id"`
+		Email             string          `json:"email,omitempty"`
+		EncryptedPassword string          `json:"encrypted_password,omitempty"`
+		EmailConfirmedAt  *string         `json:"email_confirmed_at,omitempty"`
+		AppMetadata       json.RawMessage `json:"app_metadata"`
+		UserMetadata      json.RawMessage `json:"user_metadata"`
+		Role              string          `json:"role"`
+		IsAnonymous       bool            `json:"is_anonymous"`
+		CreatedAt         string          `json:"created_at"`
+		UpdatedAt         string          `json:"updated_at"`
+		LastSignInAt      *string         `json:"last_sign_in_at,omitempty"`
+	}
+
+	var users []ExportUser
+	for rows.Next() {
+		var u ExportUser
+		var encPassword sql.NullString
+		var emailConfirmed, lastSignIn sql.NullString
+		var appMeta, userMeta string
+		var isAnon int
+
+		err := rows.Scan(&u.ID, &u.Email, &encPassword, &emailConfirmed,
+			&appMeta, &userMeta, &u.Role, &isAnon, &u.CreatedAt, &u.UpdatedAt, &lastSignIn)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to scan user"})
+			return
+		}
+
+		if includePasswords && encPassword.Valid {
+			u.EncryptedPassword = encPassword.String
+		}
+		if emailConfirmed.Valid {
+			u.EmailConfirmedAt = &emailConfirmed.String
+		}
+		if lastSignIn.Valid {
+			u.LastSignInAt = &lastSignIn.String
+		}
+		u.AppMetadata = json.RawMessage(appMeta)
+		u.UserMetadata = json.RawMessage(userMeta)
+		u.IsAnonymous = isAnon == 1
+
+		users = append(users, u)
+	}
+
+	if err := rows.Err(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to iterate users"})
+		return
+	}
+
+	export := struct {
+		ExportedAt string       `json:"exported_at"`
+		Count      int          `json:"count"`
+		Users      []ExportUser `json:"users"`
+		Note       string       `json:"note"`
+	}{
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		Count:      len(users),
+		Users:      users,
+		Note:       "Import users into Supabase auth.users table. Bcrypt password hashes are compatible.",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=auth-users.json")
+	json.NewEncoder(w).Encode(export)
+}
+
+// handleExportAuthConfig exports auth configuration settings as JSON.
+func (h *Handler) handleExportAuthConfig(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(`
+		SELECT key, value FROM _dashboard
+		WHERE key LIKE 'auth_%' OR key LIKE 'jwt_%' OR key LIKE 'smtp_%'
+		ORDER BY key
+	`)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to query auth config"})
+		return
+	}
+	defer rows.Close()
+
+	settings := make(map[string]string)
+	sensitiveKeys := []string{"secret", "password", "pass"}
+
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to scan config"})
+			return
+		}
+
+		// Redact sensitive values
+		lowerKey := strings.ToLower(key)
+		isSensitive := false
+		for _, s := range sensitiveKeys {
+			if strings.Contains(lowerKey, s) {
+				isSensitive = true
+				break
+			}
+		}
+
+		if isSensitive && value != "" {
+			settings[key] = "[REDACTED]"
+		} else {
+			settings[key] = value
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to iterate config"})
+		return
+	}
+
+	export := struct {
+		ExportedAt string            `json:"exported_at"`
+		Settings   map[string]string `json:"settings"`
+		Note       string            `json:"note"`
+	}{
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		Settings:   settings,
+		Note:       "Auth configuration exported from sblite. Sensitive values are redacted. Configure these in your Supabase dashboard under Authentication settings.",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=auth-config.json")
+	json.NewEncoder(w).Encode(export)
+}
+
+// handleExportEmailTemplates exports email templates as JSON.
+func (h *Handler) handleExportEmailTemplates(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(`
+		SELECT id, type, subject, body_html, body_text, updated_at
+		FROM auth_email_templates
+		ORDER BY type
+	`)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to query templates"})
+		return
+	}
+	defer rows.Close()
+
+	type ExportTemplate struct {
+		ID        string  `json:"id"`
+		Type      string  `json:"type"`
+		Subject   string  `json:"subject"`
+		BodyHTML  string  `json:"body_html"`
+		BodyText  *string `json:"body_text,omitempty"`
+		UpdatedAt string  `json:"updated_at"`
+	}
+
+	var templates []ExportTemplate
+	for rows.Next() {
+		var t ExportTemplate
+		var bodyText sql.NullString
+
+		if err := rows.Scan(&t.ID, &t.Type, &t.Subject, &t.BodyHTML, &bodyText, &t.UpdatedAt); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to scan template"})
+			return
+		}
+
+		if bodyText.Valid {
+			t.BodyText = &bodyText.String
+		}
+		templates = append(templates, t)
+	}
+
+	if err := rows.Err(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to iterate templates"})
+		return
+	}
+
+	export := struct {
+		ExportedAt string           `json:"exported_at"`
+		Count      int              `json:"count"`
+		Templates  []ExportTemplate `json:"templates"`
+		Note       string           `json:"note"`
+	}{
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		Count:      len(templates),
+		Templates:  templates,
+		Note:       "Email templates exported from sblite. Configure these in your Supabase dashboard under Authentication > Email Templates.",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=email-templates.json")
+	json.NewEncoder(w).Encode(export)
+}
+
+// handleExportStorageBuckets exports storage bucket configurations as JSON.
+func (h *Handler) handleExportStorageBuckets(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(`
+		SELECT id, name, owner, owner_id, public, file_size_limit, allowed_mime_types, created_at, updated_at
+		FROM storage_buckets
+		ORDER BY name
+	`)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to query buckets"})
+		return
+	}
+	defer rows.Close()
+
+	type ExportBucket struct {
+		ID               string   `json:"id"`
+		Name             string   `json:"name"`
+		Owner            *string  `json:"owner,omitempty"`
+		OwnerID          *string  `json:"owner_id,omitempty"`
+		Public           bool     `json:"public"`
+		FileSizeLimit    *int64   `json:"file_size_limit,omitempty"`
+		AllowedMimeTypes []string `json:"allowed_mime_types,omitempty"`
+		CreatedAt        string   `json:"created_at"`
+		UpdatedAt        string   `json:"updated_at"`
+	}
+
+	var buckets []ExportBucket
+	for rows.Next() {
+		var b ExportBucket
+		var owner, ownerID sql.NullString
+		var public int
+		var fileSizeLimit sql.NullInt64
+		var allowedMimeTypes sql.NullString
+
+		if err := rows.Scan(&b.ID, &b.Name, &owner, &ownerID, &public, &fileSizeLimit, &allowedMimeTypes, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to scan bucket"})
+			return
+		}
+
+		if owner.Valid {
+			b.Owner = &owner.String
+		}
+		if ownerID.Valid {
+			b.OwnerID = &ownerID.String
+		}
+		b.Public = public == 1
+		if fileSizeLimit.Valid {
+			b.FileSizeLimit = &fileSizeLimit.Int64
+		}
+
+		// Parse allowed_mime_types as JSON array
+		if allowedMimeTypes.Valid && allowedMimeTypes.String != "" {
+			var mimeTypes []string
+			if err := json.Unmarshal([]byte(allowedMimeTypes.String), &mimeTypes); err == nil {
+				b.AllowedMimeTypes = mimeTypes
+			}
+		}
+
+		buckets = append(buckets, b)
+	}
+
+	if err := rows.Err(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to iterate buckets"})
+		return
+	}
+
+	export := struct {
+		ExportedAt string         `json:"exported_at"`
+		Count      int            `json:"count"`
+		Buckets    []ExportBucket `json:"buckets"`
+		Note       string         `json:"note"`
+	}{
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		Count:      len(buckets),
+		Buckets:    buckets,
+		Note:       "Storage bucket configurations exported from sblite. Create these buckets in your Supabase dashboard under Storage. File contents must be migrated separately.",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=storage-buckets.json")
+	json.NewEncoder(w).Encode(export)
+}
+
+// handleExportFunctions exports edge functions as a ZIP file.
+func (h *Handler) handleExportFunctions(w http.ResponseWriter, r *http.Request) {
+	if h.functionsService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Edge functions are not enabled"})
+		return
+	}
+
+	functionsDir := h.functionsService.FunctionsDir()
+	if _, err := os.Stat(functionsDir); os.IsNotExist(err) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Functions directory does not exist"})
+		return
+	}
+
+	// Create ZIP in memory
+	var buf bytes.Buffer
+	zipWriter := zip.NewWriter(&buf)
+
+	// Add README with deployment instructions
+	readme := `# Edge Functions Export
+
+Exported from sblite on ` + time.Now().UTC().Format(time.RFC3339) + `
+
+## Deployment Instructions
+
+1. Copy the function directories to your Supabase project's supabase/functions/ directory
+2. Deploy using the Supabase CLI:
+   ` + "```" + `
+   supabase functions deploy <function-name>
+   ` + "```" + `
+
+3. Or deploy all functions:
+   ` + "```" + `
+   supabase functions deploy
+   ` + "```" + `
+
+## Notes
+
+- Review each function's index.ts for any sblite-specific code
+- Update environment variables in Supabase dashboard
+- Secrets must be set separately using: supabase secrets set KEY=value
+`
+
+	readmeFile, err := zipWriter.Create("README.md")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to create README in ZIP"})
+		return
+	}
+	if _, err := readmeFile.Write([]byte(readme)); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to write README"})
+		return
+	}
+
+	// Walk the functions directory and add files
+	err = filepath.Walk(functionsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip the _main directory (internal sblite service)
+		relPath, _ := filepath.Rel(functionsDir, path)
+		if strings.HasPrefix(relPath, "_main") || relPath == "_main" {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Skip directories (they're created implicitly)
+		if info.IsDir() {
+			return nil
+		}
+
+		// Create file in ZIP with relative path
+		zipPath := filepath.Join("functions", relPath)
+		zipFile, err := zipWriter.Create(zipPath)
+		if err != nil {
+			return err
+		}
+
+		// Read and write file contents
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		_, err = zipFile.Write(content)
+		return err
+	})
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to add files to ZIP: " + err.Error()})
+		return
+	}
+
+	if err := zipWriter.Close(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to finalize ZIP"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=edge-functions.zip")
+	w.Write(buf.Bytes())
+}
+
+// handleExportSecrets exports secret names as an .env.template file.
+func (h *Handler) handleExportSecrets(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(`
+		SELECT name FROM _functions_secrets
+		ORDER BY name
+	`)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to query secrets"})
+		return
+	}
+	defer rows.Close()
+
+	var sb strings.Builder
+	sb.WriteString("# Secrets exported from sblite\n")
+	sb.WriteString("# Generated at: " + time.Now().UTC().Format(time.RFC3339) + "\n")
+	sb.WriteString("# Fill in the values and set in Supabase using:\n")
+	sb.WriteString("#   supabase secrets set --env-file .env\n")
+	sb.WriteString("# Or individually:\n")
+	sb.WriteString("#   supabase secrets set KEY=value\n")
+	sb.WriteString("#\n")
+	sb.WriteString("# WARNING: Never commit this file with actual values to version control!\n\n")
+
+	secretCount := 0
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to scan secret"})
+			return
+		}
+
+		sb.WriteString(name + "=\n")
+		secretCount++
+	}
+
+	if err := rows.Err(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to iterate secrets"})
+		return
+	}
+
+	if secretCount == 0 {
+		sb.WriteString("# No secrets configured\n")
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=.env.template")
 	w.Write([]byte(sb.String()))
 }
 
