@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+import { supabase, getStorageUrl } from '../lib/supabase'
 import { useAuth, useCart } from '../App'
 
 function ProductCard({ product, isAdmin, onEdit, onDelete }) {
@@ -56,7 +56,7 @@ function ProductCard({ product, isAdmin, onEdit, onDelete }) {
   return (
     <div className="product-card" data-testid="product-card">
       <img
-        src={product.image_url}
+        src={getStorageUrl(product.image_url)}
         alt={product.name}
         className="product-image"
         loading="lazy"

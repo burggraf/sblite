@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, getStorageUrl } from '../lib/supabase'
 import { useCart } from '../App'
 
 function CartItem({ item, onUpdate }) {
@@ -43,7 +43,7 @@ function CartItem({ item, onUpdate }) {
   return (
     <div className="cart-item" data-testid="cart-item">
       <img
-        src={product.image_url}
+        src={getStorageUrl(product.image_url)}
         alt={product.name}
         className="cart-item-image"
       />

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { getStorageUrl } from '../lib/supabase'
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -28,7 +29,7 @@ function ProductFormModal({ isOpen, onClose, product, onSave }) {
       setImageUrl(product.image_url || '')
       setStock(product.stock?.toString() || '0')
       // Set preview to existing image if it exists
-      setImagePreview(product.image_url || '')
+      setImagePreview(getStorageUrl(product.image_url) || '')
     } else {
       setName('')
       setDescription('')
@@ -83,7 +84,7 @@ function ProductFormModal({ isOpen, onClose, product, onSave }) {
       URL.revokeObjectURL(imagePreview)
     }
     setImageFile(null)
-    setImagePreview(isEditing ? (product?.image_url || '') : '')
+    setImagePreview(isEditing ? (getStorageUrl(product?.image_url) || '') : '')
     setImageError('')
     if (fileInputRef.current) {
       fileInputRef.current.value = ''

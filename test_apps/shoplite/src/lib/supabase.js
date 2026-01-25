@@ -28,3 +28,20 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: true  // Enable for magic link and password reset redirects
   }
 })
+
+// Transform storage URLs to use the current Supabase URL
+// This handles URLs stored in the database that may point to localhost or other origins
+const STORAGE_PATH_PATTERN = /\/storage\/v1\/object\/public\//
+export function getStorageUrl(url) {
+  if (!url) return url
+  // Check if it's a storage URL (contains the storage path pattern)
+  const match = url.match(STORAGE_PATH_PATTERN)
+  if (match) {
+    // Extract the path portion starting from /storage/...
+    const pathIndex = url.indexOf('/storage/v1/object/public/')
+    const storagePath = url.substring(pathIndex)
+    return supabaseUrl + storagePath
+  }
+  // Return external URLs unchanged
+  return url
+}
