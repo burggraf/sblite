@@ -2748,7 +2748,7 @@ const App = {
                                         </td>
                                         <td style="font-family: monospace; font-size: 0.85em;">${this.escapeHtml(email.to)}</td>
                                         <td>
-                                            <a href="#" onclick="event.preventDefault(); App.viewEmail('${email.id}')" style="color: var(--primary); font-weight: 500;">
+                                            <a href="#" onclick="event.preventDefault(); App.viewEmail('${email.id}')" style="color: var(--link); font-weight: 500;">
                                                 ${this.escapeHtml(email.subject)}
                                             </a>
                                         </td>
@@ -10524,7 +10524,7 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
 
         const statusColors = {
             pending: 'var(--text-secondary)',
-            in_progress: 'var(--primary)',
+            in_progress: 'var(--accent)',
             completed: 'var(--success)',
             failed: 'var(--error)',
             skipped: 'var(--text-secondary)',
