@@ -37,6 +37,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | File storage | :white_check_mark: |
 | Vector search (pgvector-compatible) | :white_check_mark: |
 | Built-in HTTPS (Let's Encrypt) | :white_check_mark: |
+| Static file hosting (SPA support) | :white_check_mark: |
 
 ## Quick Start
 
@@ -63,6 +64,7 @@ go build -o sblite
 ./sblite serve --mail-mode=catch      # Development: captures emails, web UI at /_/mail
 ./sblite serve --mail-mode=smtp       # Production: sends real emails via SMTP
 ./sblite serve --https example.com    # HTTPS with automatic Let's Encrypt certificate
+./sblite serve --static-dir ./dist    # Serve frontend from ./dist (default: ./public)
 ```
 
 ### Access the Dashboard
@@ -196,6 +198,29 @@ See [HTTPS Documentation](docs/https.md) for detailed configuration and troubles
 ./sblite serve --log-mode=database --log-fields=request_id,user_id
 ```
 
+### Static File Hosting
+
+| Environment Variable | CLI Flag | Default | Description |
+|---------------------|----------|---------|-------------|
+| `SBLITE_STATIC_DIR` | `--static-dir` | `./public` | Directory for static files |
+
+Serve your frontend alongside the API from a single binary:
+
+```bash
+# Serve from default ./public directory
+./sblite serve
+
+# Serve from custom directory (e.g., React/Vue build output)
+./sblite serve --static-dir ./frontend/dist
+```
+
+**Features:**
+- SPA support: paths without extensions return `index.html` for client-side routing
+- API routes (`/auth/v1/*`, `/rest/v1/*`, etc.) take priority over static files
+- Silently skipped if directory doesn't exist
+
+See [Static File Hosting](docs/static-hosting.md) for detailed configuration and SPA setup.
+
 ## API Endpoints
 
 ### Authentication (`/auth/v1`)
@@ -294,6 +319,7 @@ Enable with `--realtime` flag. Supports Broadcast, Presence, and Postgres Change
 - [API Docs Dashboard](docs/api-docs-dashboard.md) - Auto-generated API documentation with code examples
 - [Realtime](docs/realtime.md) - WebSocket subscriptions for Broadcast, Presence, and Postgres Changes
 - [Vector Search](docs/vector-search.md) - pgvector-compatible similarity search for AI/ML applications
+- [Static File Hosting](docs/static-hosting.md) - Serve your frontend alongside the API with SPA support
 
 ### Operations
 - [Release Guide](docs/RELEASES.md) - Creating releases, building edge runtime, and platform support
