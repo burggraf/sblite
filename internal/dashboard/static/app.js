@@ -9914,7 +9914,8 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
                 throw new Error('Failed to load migrations');
             }
             const data = await res.json();
-            this.state.migration.migrations = data.migrations || [];
+            // API returns array directly, not {migrations: [...]}
+            this.state.migration.migrations = Array.isArray(data) ? data : (data.migrations || []);
         } catch (e) {
             this.state.migration.error = e.message;
         }
