@@ -10,3 +10,4 @@ sblite
 pnpm-lock.yaml
 storage/
 functions/
+public/
