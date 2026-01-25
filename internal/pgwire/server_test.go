@@ -112,6 +112,94 @@ func TestServer_PasswordAuth(t *testing.T) {
 	}
 }
 
+func TestServer_PasswordAuth_NoPasswordConfigured(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create server with no password configured
+	cfg := Config{
+		Address:  ":5437",
+		Password: "", // No password configured
+	}
+
+	srv, err := NewServer(db, cfg)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	// All authentication attempts should fail when no password is configured
+	tests := []struct {
+		name     string
+		password string
+	}{
+		{"empty password attempt", ""},
+		{"any password attempt", "somepassword"},
+		{"complex password attempt", "s3cr3t!@#"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ok, err := srv.passwordAuth(nil, "sblite", "user", tt.password)
+			if err != nil {
+				t.Errorf("passwordAuth() error = %v", err)
+				return
+			}
+			if ok {
+				t.Errorf("passwordAuth() should reject all attempts when no password configured, got ok=true")
+			}
+		})
+	}
+}
+
+func TestServer_PasswordAuth_WithVerifier(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a custom verifier that accepts "secret123"
+	verifier := func(password string) bool {
+		return password == "secret123"
+	}
+
+	cfg := Config{
+		Address:          ":5438",
+		PasswordVerifier: verifier,
+	}
+
+	srv, err := NewServer(db, cfg)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		password string
+		wantOK   bool
+	}{
+		{"correct password via verifier", "secret123", true},
+		{"wrong password via verifier", "wrongpassword", false},
+		{"empty password via verifier", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ok, err := srv.passwordAuth(nil, "sblite", "user", tt.password)
+			if err != nil {
+				t.Errorf("passwordAuth() error = %v", err)
+				return
+			}
+			if ok != tt.wantOK {
+				t.Errorf("passwordAuth() = %v, want %v", ok, tt.wantOK)
+			}
+		})
+	}
+}
+
 func TestRegisterTableMetadata_WithUUIDColumns(t *testing.T) {
 	// Create in-memory database with shared cache for same connection
 	db, err := sql.Open("sqlite", "file::memory:?cache=shared")

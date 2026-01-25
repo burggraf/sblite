@@ -140,8 +140,9 @@ go build -o sblite .
 ./sblite serve --https example.com --functions  # With edge functions
 
 # Start server with PostgreSQL wire protocol
-./sblite serve --pg-port 5432                   # Enable psql/pgAdmin connections
-./sblite serve --pg-port 5432 --pg-password secret  # With password auth
+./sblite serve --pg-port 5432                       # Uses dashboard password for auth
+./sblite serve --pg-port 5432 --pg-password secret  # Override with explicit password
+./sblite serve --pg-port 5432 --pg-no-auth          # Disable auth (development only)
 
 # Run Go tests
 go test ./...
@@ -344,21 +345,27 @@ The edge runtime binary is stored in `<db-dir>/edge-runtime/` by default (relati
 sblite can expose a PostgreSQL-compatible wire protocol, allowing tools like `psql`, pgAdmin, and DBeaver to connect directly.
 
 ```bash
-# Start with PostgreSQL protocol on port 5432
+# Start with PostgreSQL protocol (uses dashboard password)
 ./sblite serve --pg-port 5432
 
-# With password authentication
+# Override with explicit password
 ./sblite serve --pg-port 5432 --pg-password mysecret
 
-# Without authentication (development only)
+# Disable authentication (development only)
 ./sblite serve --pg-port 5432 --pg-no-auth
 ```
 
 | Flag | Env Variable | Default | Description |
 |------|--------------|---------|-------------|
 | `--pg-port` | - | `0` (disabled) | PostgreSQL wire protocol port |
-| `--pg-password` | `SBLITE_PG_PASSWORD` | (none) | Password for authentication |
+| `--pg-password` | `SBLITE_PG_PASSWORD` | (none) | Override password (uses dashboard password if not set) |
 | `--pg-no-auth` | - | `false` | Disable authentication |
+
+**Authentication:**
+- By default, uses the same password as the web dashboard
+- If no dashboard password is configured, connections are rejected
+- Use `--pg-password` to override with a different password
+- Use `--pg-no-auth` to disable authentication (not recommended for production)
 
 **Features:**
 - PostgreSQL syntax auto-translated to SQLite

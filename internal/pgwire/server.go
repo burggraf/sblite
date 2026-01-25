@@ -19,13 +19,18 @@ import (
 	"github.com/markb/sblite/internal/pgtranslate"
 )
 
+// PasswordVerifier is a function that verifies a password.
+// Returns true if the password is valid.
+type PasswordVerifier func(password string) bool
+
 // Config holds the pgwire server configuration.
 type Config struct {
-	Address       string       // TCP address to listen on (e.g., ":5432")
-	Password      string       // Password for authentication (empty = no auth)
-	NoAuth        bool         // Disable authentication entirely
-	Logger        *slog.Logger
-	MigrationsDir string       // Directory for auto-generated migration files (empty = disabled)
+	Address          string           // TCP address to listen on (e.g., ":5432")
+	Password         string           // Password for authentication (used if PasswordVerifier is nil)
+	PasswordVerifier PasswordVerifier // Custom password verification function (e.g., dashboard auth)
+	NoAuth           bool             // Disable authentication entirely
+	Logger           *slog.Logger
+	MigrationsDir    string // Directory for auto-generated migration files (empty = disabled)
 }
 
 // Server implements a PostgreSQL wire protocol server.
@@ -60,7 +65,8 @@ func NewServer(db *sql.DB, cfg Config) (*Server, error) {
 	}
 
 	// Configure authentication
-	if !cfg.NoAuth && cfg.Password != "" {
+	// Always require authentication unless explicitly disabled with NoAuth
+	if !cfg.NoAuth {
 		opts = append(opts, wire.SessionAuthStrategy(
 			wire.ClearTextPassword(s.passwordAuth),
 		))
@@ -78,6 +84,16 @@ func NewServer(db *sql.DB, cfg Config) (*Server, error) {
 
 // passwordAuth validates the provided password.
 func (s *Server) passwordAuth(ctx context.Context, database, username, password string) (context.Context, bool, error) {
+	// Use custom verifier if provided (e.g., dashboard bcrypt auth)
+	if s.config.PasswordVerifier != nil {
+		return ctx, s.config.PasswordVerifier(password), nil
+	}
+
+	// Fall back to plaintext password comparison
+	// Reject all connections if no password is configured
+	if s.config.Password == "" {
+		return ctx, false, nil
+	}
 	return ctx, password == s.config.Password, nil
 }
 

@@ -230,6 +230,27 @@ var serveCmd = &cobra.Command{
 				MigrationsDir: migrationsDir,
 			}
 
+			// If no explicit password provided, use dashboard password
+			authMode := "disabled"
+			if !pgNoAuth {
+				if pgPassword != "" {
+					authMode = "password (--pg-password)"
+				} else {
+					// Use dashboard auth - same password as web dashboard
+					dashStore := dashboard.NewStore(database.DB)
+					dashAuth := dashboard.NewAuth(dashStore)
+					if dashAuth.NeedsSetup() {
+						log.Warn("pgwire server requires dashboard password to be set first",
+							"hint", "run 'sblite dashboard setup' or set --pg-password",
+						)
+						authMode = "rejected (no password configured)"
+					} else {
+						pgConfig.PasswordVerifier = dashAuth.VerifyPassword
+						authMode = "dashboard password"
+					}
+				}
+			}
+
 			var err error
 			pgServer, err = pgwire.NewServer(database.DB, pgConfig)
 			if err != nil {
@@ -237,10 +258,7 @@ var serveCmd = &cobra.Command{
 			}
 
 			go func() {
-				log.Info("pgwire server listening",
-					"addr", pgConfig.Address,
-					"auth", !pgNoAuth && pgPassword != "",
-				)
+				log.Info("pgwire server listening", "addr", pgConfig.Address, "auth", authMode)
 				if err := pgServer.ListenAndServe(); err != nil {
 					log.Warn("pgwire server error", "error", err)
 				}
