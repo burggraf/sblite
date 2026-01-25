@@ -1603,3 +1603,935 @@ func decryptSecret(encrypted, jwtSecret string) (string, error) {
 
 	return string(plaintext), nil
 }
+
+// RunBasicVerification runs basic verification checks for a migration.
+// It creates a verification record, executes the checks, and stores the results.
+func (s *Service) RunBasicVerification(migrationID string) error {
+	m, err := s.GetMigration(migrationID)
+	if err != nil {
+		return fmt.Errorf("get migration: %w", err)
+	}
+
+	// Verify migration has a project selected
+	if m.SupabaseProjectRef == "" {
+		return fmt.Errorf("no Supabase project selected for migration")
+	}
+
+	// Create verification record
+	verification, err := s.state.CreateVerification(migrationID, LayerBasic)
+	if err != nil {
+		return fmt.Errorf("create verification: %w", err)
+	}
+
+	// Mark as running
+	now := time.Now().UTC()
+	verification.Status = VerifyRunning
+	verification.StartedAt = &now
+	if err := s.state.UpdateVerification(verification); err != nil {
+		return fmt.Errorf("update verification status: %w", err)
+	}
+
+	// Get migration items
+	items, err := s.state.GetItems(migrationID)
+	if err != nil {
+		s.markVerificationFailed(verification, fmt.Errorf("get items: %w", err))
+		return fmt.Errorf("get items: %w", err)
+	}
+
+	// Get Supabase client
+	client, err := s.getSupabaseClient(migrationID)
+	if err != nil {
+		s.markVerificationFailed(verification, fmt.Errorf("get supabase client: %w", err))
+		return fmt.Errorf("get supabase client: %w", err)
+	}
+
+	// Get Postgres connection
+	pgDB, err := s.getPostgresConnection(m)
+	if err != nil {
+		s.markVerificationFailed(verification, fmt.Errorf("get postgres connection: %w", err))
+		return fmt.Errorf("get postgres connection: %w", err)
+	}
+	defer pgDB.Close()
+
+	// Convert items to verification format
+	verifyItems := make([]*verificationItem, len(items))
+	for i, item := range items {
+		verifyItems[i] = &verificationItem{
+			ID:          item.ID,
+			MigrationID: item.MigrationID,
+			ItemType:    string(item.ItemType),
+			ItemName:    item.ItemName,
+			Status:      string(item.Status),
+			Metadata:    item.Metadata,
+		}
+	}
+
+	// Create verifier
+	verifier := newBasicVerifier(s.db, pgDB, &supabaseClientAdapter{client}, m, verifyItems)
+
+	// Run checks
+	result, err := verifier.runBasicChecks()
+	if err != nil {
+		s.markVerificationFailed(verification, err)
+		return fmt.Errorf("run basic checks: %w", err)
+	}
+
+	// Store results
+	resultsJSON, err := json.Marshal(result)
+	if err != nil {
+		s.markVerificationFailed(verification, fmt.Errorf("marshal results: %w", err))
+		return fmt.Errorf("marshal results: %w", err)
+	}
+
+	completedAt := time.Now().UTC()
+	verification.CompletedAt = &completedAt
+	verification.Results = resultsJSON
+
+	if result.Summary.Failed > 0 {
+		verification.Status = VerifyFailed
+	} else {
+		verification.Status = VerifyPassed
+	}
+
+	if err := s.state.UpdateVerification(verification); err != nil {
+		return fmt.Errorf("update verification: %w", err)
+	}
+
+	return nil
+}
+
+// markVerificationFailed marks a verification as failed with an error.
+func (s *Service) markVerificationFailed(v *Verification, err error) {
+	now := time.Now().UTC()
+	v.Status = VerifyFailed
+	v.CompletedAt = &now
+
+	result := map[string]interface{}{
+		"error": err.Error(),
+	}
+	resultsJSON, _ := json.Marshal(result)
+	v.Results = resultsJSON
+
+	s.state.UpdateVerification(v)
+}
+
+// GetVerifications retrieves all verifications for a migration.
+func (s *Service) GetVerifications(migrationID string) ([]*Verification, error) {
+	return s.state.GetVerifications(migrationID)
+}
+
+// verificationItem is an internal representation of MigrationItem for verification.
+type verificationItem struct {
+	ID          string          `json:"id"`
+	MigrationID string          `json:"migration_id"`
+	ItemType    string          `json:"item_type"`
+	ItemName    string          `json:"item_name"`
+	Status      string          `json:"status"`
+	Metadata    json.RawMessage `json:"metadata,omitempty"`
+}
+
+// supabaseClientAdapter adapts SupabaseClient to the verification interface.
+type supabaseClientAdapter struct {
+	client *SupabaseClient
+}
+
+func (a *supabaseClientAdapter) ListFunctions(projectRef string) ([]functionInfo, error) {
+	funcs, err := a.client.ListFunctions(projectRef)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]functionInfo, len(funcs))
+	for i, f := range funcs {
+		result[i] = functionInfo{
+			Slug:      f.Slug,
+			Name:      f.Name,
+			Status:    f.Status,
+			VerifyJWT: f.VerifyJWT,
+		}
+	}
+	return result, nil
+}
+
+func (a *supabaseClientAdapter) ListSecrets(projectRef string) ([]secretInfo, error) {
+	secrets, err := a.client.ListSecrets(projectRef)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]secretInfo, len(secrets))
+	for i, s := range secrets {
+		result[i] = secretInfo{Name: s.Name}
+	}
+	return result, nil
+}
+
+func (a *supabaseClientAdapter) GetAuthConfig(projectRef string) (map[string]interface{}, error) {
+	return a.client.GetAuthConfig(projectRef)
+}
+
+// Internal types for verification (to avoid circular imports)
+
+type functionInfo struct {
+	Slug      string
+	Name      string
+	Status    string
+	VerifyJWT bool
+}
+
+type secretInfo struct {
+	Name string
+}
+
+type verificationCheckResult struct {
+	Name    string      `json:"name"`
+	Passed  bool        `json:"passed"`
+	Message string      `json:"message,omitempty"`
+	Details interface{} `json:"details,omitempty"`
+}
+
+type verificationResult struct {
+	Layer   VerificationLayer  `json:"layer"`
+	Status  VerificationStatus `json:"status"`
+	Checks  []verificationCheckResult `json:"checks"`
+	Summary struct {
+		Total  int `json:"total"`
+		Passed int `json:"passed"`
+		Failed int `json:"failed"`
+	} `json:"summary"`
+}
+
+// supabaseClientVerifier is the interface for Supabase client operations needed by verification.
+type supabaseClientVerifier interface {
+	ListFunctions(projectRef string) ([]functionInfo, error)
+	ListSecrets(projectRef string) ([]secretInfo, error)
+	GetAuthConfig(projectRef string) (map[string]interface{}, error)
+}
+
+// basicVerifier performs basic verification checks after migration.
+type basicVerifier struct {
+	sbliteDB       *sql.DB
+	supabaseDB     *sql.DB
+	supabaseClient supabaseClientVerifier
+	migration      *Migration
+	items          []*verificationItem
+}
+
+func newBasicVerifier(
+	sbliteDB *sql.DB,
+	supabaseDB *sql.DB,
+	supabaseClient supabaseClientVerifier,
+	migration *Migration,
+	items []*verificationItem,
+) *basicVerifier {
+	return &basicVerifier{
+		sbliteDB:       sbliteDB,
+		supabaseDB:     supabaseDB,
+		supabaseClient: supabaseClient,
+		migration:      migration,
+		items:          items,
+	}
+}
+
+func (v *basicVerifier) runBasicChecks() (*verificationResult, error) {
+	result := &verificationResult{
+		Layer:  LayerBasic,
+		Status: VerifyRunning,
+		Checks: []verificationCheckResult{},
+	}
+
+	// Group items by type for efficient checking
+	itemsByType := make(map[string][]*verificationItem)
+	for _, item := range v.items {
+		if item.Status == "completed" {
+			itemsByType[item.ItemType] = append(itemsByType[item.ItemType], item)
+		}
+	}
+
+	// Run checks based on what was migrated
+	if _, ok := itemsByType["schema"]; ok {
+		checks := v.checkTablesExist()
+		result.Checks = append(result.Checks, checks...)
+	}
+
+	if dataItems, ok := itemsByType["data"]; ok {
+		checks := v.checkColumnsMatch(dataItems)
+		result.Checks = append(result.Checks, checks...)
+	}
+
+	if funcItems, ok := itemsByType["functions"]; ok {
+		checks := v.checkFunctionsDeployed(funcItems)
+		result.Checks = append(result.Checks, checks...)
+	}
+
+	if _, ok := itemsByType["storage_buckets"]; ok {
+		checks := v.checkBucketsExist()
+		result.Checks = append(result.Checks, checks...)
+	}
+
+	if _, ok := itemsByType["rls"]; ok {
+		checks := v.checkRLSEnabled()
+		result.Checks = append(result.Checks, checks...)
+	}
+
+	if _, ok := itemsByType["secrets"]; ok {
+		checks := v.checkSecretsExist()
+		result.Checks = append(result.Checks, checks...)
+	}
+
+	if _, ok := itemsByType["auth_config"]; ok {
+		checks := v.checkAuthConfig()
+		result.Checks = append(result.Checks, checks...)
+	}
+
+	// Calculate summary
+	for _, check := range result.Checks {
+		result.Summary.Total++
+		if check.Passed {
+			result.Summary.Passed++
+		} else {
+			result.Summary.Failed++
+		}
+	}
+
+	// Set final status
+	if result.Summary.Failed > 0 {
+		result.Status = VerifyFailed
+	} else {
+		result.Status = VerifyPassed
+	}
+
+	return result, nil
+}
+
+func (v *basicVerifier) checkTablesExist() []verificationCheckResult {
+	var results []verificationCheckResult
+
+	// Get tables from sblite _columns
+	sbliteTables, err := v.getSbliteTables()
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "tables_exist",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get sblite tables: %v", err),
+		})
+		return results
+	}
+
+	if len(sbliteTables) == 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "tables_exist",
+			Passed:  true,
+			Message: "No tables to verify",
+		})
+		return results
+	}
+
+	// Get tables from Supabase
+	supabaseTables, err := v.getSupabaseTables()
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "tables_exist",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get Supabase tables: %v", err),
+		})
+		return results
+	}
+
+	// Build lookup set
+	supabaseTableSet := make(map[string]bool)
+	for _, t := range supabaseTables {
+		supabaseTableSet[t] = true
+	}
+
+	// Check each sblite table exists in Supabase
+	var missing []string
+	var found []string
+	for _, table := range sbliteTables {
+		if supabaseTableSet[table] {
+			found = append(found, table)
+		} else {
+			missing = append(missing, table)
+		}
+	}
+
+	if len(missing) > 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "tables_exist",
+			Passed:  false,
+			Message: fmt.Sprintf("%d of %d tables missing in Supabase", len(missing), len(sbliteTables)),
+			Details: map[string]interface{}{
+				"missing": missing,
+				"found":   found,
+			},
+		})
+	} else {
+		results = append(results, verificationCheckResult{
+			Name:    "tables_exist",
+			Passed:  true,
+			Message: fmt.Sprintf("All %d tables exist in Supabase", len(sbliteTables)),
+			Details: map[string]interface{}{
+				"tables": found,
+			},
+		})
+	}
+
+	return results
+}
+
+func (v *basicVerifier) checkColumnsMatch(dataItems []*verificationItem) []verificationCheckResult {
+	var results []verificationCheckResult
+
+	for _, item := range dataItems {
+		tableName := item.ItemName
+
+		// Get column count from sblite
+		sbliteCount, err := v.getSbliteColumnCount(tableName)
+		if err != nil {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("columns_match_%s", tableName),
+				Passed:  false,
+				Message: fmt.Sprintf("Failed to get sblite columns for %s: %v", tableName, err),
+			})
+			continue
+		}
+
+		// Get column count from Supabase
+		supabaseCount, err := v.getSupabaseColumnCount(tableName)
+		if err != nil {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("columns_match_%s", tableName),
+				Passed:  false,
+				Message: fmt.Sprintf("Failed to get Supabase columns for %s: %v", tableName, err),
+			})
+			continue
+		}
+
+		if sbliteCount == supabaseCount {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("columns_match_%s", tableName),
+				Passed:  true,
+				Message: fmt.Sprintf("Table %s has %d columns (matching)", tableName, sbliteCount),
+			})
+		} else {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("columns_match_%s", tableName),
+				Passed:  false,
+				Message: fmt.Sprintf("Table %s column count mismatch: sblite=%d, Supabase=%d", tableName, sbliteCount, supabaseCount),
+				Details: map[string]interface{}{
+					"sblite_columns":   sbliteCount,
+					"supabase_columns": supabaseCount,
+				},
+			})
+		}
+	}
+
+	return results
+}
+
+func (v *basicVerifier) checkFunctionsDeployed(funcItems []*verificationItem) []verificationCheckResult {
+	var results []verificationCheckResult
+
+	// Get functions from Supabase
+	functions, err := v.supabaseClient.ListFunctions(v.migration.SupabaseProjectRef)
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "functions_deployed",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to list Supabase functions: %v", err),
+		})
+		return results
+	}
+
+	// Build lookup set
+	functionSet := make(map[string]functionInfo)
+	for _, f := range functions {
+		functionSet[f.Slug] = f
+	}
+
+	// Check each expected function
+	var missing []string
+	var found []string
+	for _, item := range funcItems {
+		funcName := item.ItemName
+		if _, ok := functionSet[funcName]; ok {
+			found = append(found, funcName)
+		} else {
+			missing = append(missing, funcName)
+		}
+	}
+
+	if len(missing) > 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "functions_deployed",
+			Passed:  false,
+			Message: fmt.Sprintf("%d of %d functions missing in Supabase", len(missing), len(funcItems)),
+			Details: map[string]interface{}{
+				"missing": missing,
+				"found":   found,
+			},
+		})
+	} else if len(found) > 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "functions_deployed",
+			Passed:  true,
+			Message: fmt.Sprintf("All %d functions deployed in Supabase", len(found)),
+			Details: map[string]interface{}{
+				"functions": found,
+			},
+		})
+	}
+
+	return results
+}
+
+func (v *basicVerifier) checkBucketsExist() []verificationCheckResult {
+	var results []verificationCheckResult
+
+	// Get buckets from sblite
+	sbliteBuckets, err := v.getSbliteBuckets()
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "buckets_exist",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get sblite buckets: %v", err),
+		})
+		return results
+	}
+
+	if len(sbliteBuckets) == 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "buckets_exist",
+			Passed:  true,
+			Message: "No buckets to verify",
+		})
+		return results
+	}
+
+	// Get buckets from Supabase
+	supabaseBuckets, err := v.getSupabaseBuckets()
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "buckets_exist",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get Supabase buckets: %v", err),
+		})
+		return results
+	}
+
+	// Build lookup set
+	supabaseBucketSet := make(map[string]bool)
+	for _, b := range supabaseBuckets {
+		supabaseBucketSet[b] = true
+	}
+
+	// Check each sblite bucket exists in Supabase
+	var missing []string
+	var found []string
+	for _, bucket := range sbliteBuckets {
+		if supabaseBucketSet[bucket] {
+			found = append(found, bucket)
+		} else {
+			missing = append(missing, bucket)
+		}
+	}
+
+	if len(missing) > 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "buckets_exist",
+			Passed:  false,
+			Message: fmt.Sprintf("%d of %d buckets missing in Supabase", len(missing), len(sbliteBuckets)),
+			Details: map[string]interface{}{
+				"missing": missing,
+				"found":   found,
+			},
+		})
+	} else {
+		results = append(results, verificationCheckResult{
+			Name:    "buckets_exist",
+			Passed:  true,
+			Message: fmt.Sprintf("All %d buckets exist in Supabase", len(sbliteBuckets)),
+			Details: map[string]interface{}{
+				"buckets": found,
+			},
+		})
+	}
+
+	return results
+}
+
+func (v *basicVerifier) checkRLSEnabled() []verificationCheckResult {
+	var results []verificationCheckResult
+
+	// Get tables with RLS from sblite
+	sbliteRLSTables, err := v.getSbliteRLSTables()
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "rls_enabled",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get sblite RLS tables: %v", err),
+		})
+		return results
+	}
+
+	if len(sbliteRLSTables) == 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "rls_enabled",
+			Passed:  true,
+			Message: "No RLS tables to verify",
+		})
+		return results
+	}
+
+	// Get RLS-enabled tables from Supabase
+	supabaseRLSTables, err := v.getSupabaseRLSTables()
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "rls_enabled",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get Supabase RLS tables: %v", err),
+		})
+		return results
+	}
+
+	// Build lookup set
+	supabaseRLSSet := make(map[string]bool)
+	for _, t := range supabaseRLSTables {
+		supabaseRLSSet[t] = true
+	}
+
+	// Check each sblite RLS table has RLS enabled in Supabase
+	var missingRLS []string
+	var hasRLS []string
+	for _, table := range sbliteRLSTables {
+		if supabaseRLSSet[table] {
+			hasRLS = append(hasRLS, table)
+		} else {
+			missingRLS = append(missingRLS, table)
+		}
+	}
+
+	if len(missingRLS) > 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "rls_enabled",
+			Passed:  false,
+			Message: fmt.Sprintf("RLS not enabled on %d of %d tables", len(missingRLS), len(sbliteRLSTables)),
+			Details: map[string]interface{}{
+				"missing_rls": missingRLS,
+				"has_rls":     hasRLS,
+			},
+		})
+	} else {
+		results = append(results, verificationCheckResult{
+			Name:    "rls_enabled",
+			Passed:  true,
+			Message: fmt.Sprintf("RLS enabled on all %d expected tables", len(sbliteRLSTables)),
+			Details: map[string]interface{}{
+				"tables": hasRLS,
+			},
+		})
+	}
+
+	return results
+}
+
+func (v *basicVerifier) checkSecretsExist() []verificationCheckResult {
+	var results []verificationCheckResult
+
+	// Get secret names from sblite
+	sbliteSecrets, err := v.getSbliteSecretNames()
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "secrets_exist",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get sblite secrets: %v", err),
+		})
+		return results
+	}
+
+	if len(sbliteSecrets) == 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "secrets_exist",
+			Passed:  true,
+			Message: "No secrets to verify",
+		})
+		return results
+	}
+
+	// Get secret names from Supabase
+	supabaseSecrets, err := v.supabaseClient.ListSecrets(v.migration.SupabaseProjectRef)
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "secrets_exist",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get Supabase secrets: %v", err),
+		})
+		return results
+	}
+
+	// Build lookup set
+	supabaseSecretSet := make(map[string]bool)
+	for _, s := range supabaseSecrets {
+		supabaseSecretSet[s.Name] = true
+	}
+
+	// Check each sblite secret exists in Supabase
+	var missing []string
+	var found []string
+	for _, secret := range sbliteSecrets {
+		if supabaseSecretSet[secret] {
+			found = append(found, secret)
+		} else {
+			missing = append(missing, secret)
+		}
+	}
+
+	if len(missing) > 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "secrets_exist",
+			Passed:  false,
+			Message: fmt.Sprintf("%d of %d secrets missing in Supabase", len(missing), len(sbliteSecrets)),
+			Details: map[string]interface{}{
+				"missing": missing,
+				"found":   found,
+			},
+		})
+	} else {
+		results = append(results, verificationCheckResult{
+			Name:    "secrets_exist",
+			Passed:  true,
+			Message: fmt.Sprintf("All %d secrets exist in Supabase", len(sbliteSecrets)),
+			Details: map[string]interface{}{
+				"secrets": found,
+			},
+		})
+	}
+
+	return results
+}
+
+func (v *basicVerifier) checkAuthConfig() []verificationCheckResult {
+	var results []verificationCheckResult
+
+	// Get expected auth config from sblite
+	var allowAnonymous string
+	err := v.sbliteDB.QueryRow("SELECT value FROM _dashboard WHERE key = 'allow_anonymous'").Scan(&allowAnonymous)
+	if err != nil && err != sql.ErrNoRows {
+		results = append(results, verificationCheckResult{
+			Name:    "auth_config",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get sblite auth config: %v", err),
+		})
+		return results
+	}
+
+	// Get auth config from Supabase
+	config, err := v.supabaseClient.GetAuthConfig(v.migration.SupabaseProjectRef)
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "auth_config",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get Supabase auth config: %v", err),
+		})
+		return results
+	}
+
+	// Check anonymous users setting
+	if allowAnonymous == "true" {
+		if val, ok := config["EXTERNAL_ANONYMOUS_USERS_ENABLED"].(bool); ok && val {
+			results = append(results, verificationCheckResult{
+				Name:    "auth_config_anonymous_users",
+				Passed:  true,
+				Message: "Anonymous users setting matches (enabled)",
+			})
+		} else {
+			results = append(results, verificationCheckResult{
+				Name:    "auth_config_anonymous_users",
+				Passed:  false,
+				Message: "Anonymous users should be enabled but is not",
+				Details: map[string]interface{}{
+					"expected": true,
+					"actual":   config["EXTERNAL_ANONYMOUS_USERS_ENABLED"],
+				},
+			})
+		}
+	} else {
+		results = append(results, verificationCheckResult{
+			Name:    "auth_config",
+			Passed:  true,
+			Message: "Auth configuration verified",
+		})
+	}
+
+	return results
+}
+
+// Helper methods for querying sblite
+
+func (v *basicVerifier) getSbliteTables() ([]string, error) {
+	rows, err := v.sbliteDB.Query("SELECT DISTINCT table_name FROM _columns ORDER BY table_name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tables = append(tables, name)
+	}
+	return tables, rows.Err()
+}
+
+func (v *basicVerifier) getSbliteColumnCount(tableName string) (int, error) {
+	var count int
+	err := v.sbliteDB.QueryRow("SELECT COUNT(*) FROM _columns WHERE table_name = ?", tableName).Scan(&count)
+	return count, err
+}
+
+func (v *basicVerifier) getSbliteBuckets() ([]string, error) {
+	rows, err := v.sbliteDB.Query("SELECT id FROM storage_buckets ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var buckets []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		buckets = append(buckets, id)
+	}
+	return buckets, rows.Err()
+}
+
+func (v *basicVerifier) getSbliteRLSTables() ([]string, error) {
+	rows, err := v.sbliteDB.Query("SELECT DISTINCT table_name FROM _rls_policies WHERE enabled = 1 ORDER BY table_name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tables = append(tables, name)
+	}
+	return tables, rows.Err()
+}
+
+func (v *basicVerifier) getSbliteSecretNames() ([]string, error) {
+	rows, err := v.sbliteDB.Query("SELECT name FROM _functions_secrets ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var secrets []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		secrets = append(secrets, name)
+	}
+	return secrets, rows.Err()
+}
+
+// Helper methods for querying Supabase PostgreSQL
+
+func (v *basicVerifier) getSupabaseTables() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := v.supabaseDB.QueryContext(ctx, `
+		SELECT table_name
+		FROM information_schema.tables
+		WHERE table_schema = 'public'
+		AND table_type = 'BASE TABLE'
+		ORDER BY table_name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tables = append(tables, name)
+	}
+	return tables, rows.Err()
+}
+
+func (v *basicVerifier) getSupabaseColumnCount(tableName string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var count int
+	err := v.supabaseDB.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1
+	`, tableName).Scan(&count)
+	return count, err
+}
+
+func (v *basicVerifier) getSupabaseBuckets() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := v.supabaseDB.QueryContext(ctx, `
+		SELECT id FROM storage.buckets ORDER BY id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var buckets []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		buckets = append(buckets, id)
+	}
+	return buckets, rows.Err()
+}
+
+func (v *basicVerifier) getSupabaseRLSTables() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := v.supabaseDB.QueryContext(ctx, `
+		SELECT tablename
+		FROM pg_tables
+		WHERE schemaname = 'public'
+		AND rowsecurity = true
+		ORDER BY tablename
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tables = append(tables, name)
+	}
+	return tables, rows.Err()
+}

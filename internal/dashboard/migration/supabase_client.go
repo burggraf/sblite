@@ -311,3 +311,62 @@ func (c *SupabaseClient) UpdateAuthConfig(projectRef string, config AuthConfig) 
 
 	return nil
 }
+
+// FunctionInfo represents information about a deployed edge function.
+type FunctionInfo struct {
+	ID        string `json:"id"`
+	Slug      string `json:"slug"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	Version   int    `json:"version"`
+	VerifyJWT bool   `json:"verify_jwt"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// SecretInfo represents information about a secret (name only, value not returned).
+type SecretInfo struct {
+	Name string `json:"name"`
+}
+
+// ListFunctions returns all edge functions deployed to a project.
+func (c *SupabaseClient) ListFunctions(projectRef string) ([]FunctionInfo, error) {
+	resp, err := c.doRequest(http.MethodGet, "/v1/projects/"+projectRef+"/functions", nil)
+	if err != nil {
+		return nil, fmt.Errorf("listing functions: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("listing functions: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var functions []FunctionInfo
+	if err := json.NewDecoder(resp.Body).Decode(&functions); err != nil {
+		return nil, fmt.Errorf("decoding functions: %w", err)
+	}
+
+	return functions, nil
+}
+
+// ListSecrets returns all secret names for a project (values are not returned).
+func (c *SupabaseClient) ListSecrets(projectRef string) ([]SecretInfo, error) {
+	resp, err := c.doRequest(http.MethodGet, "/v1/projects/"+projectRef+"/secrets", nil)
+	if err != nil {
+		return nil, fmt.Errorf("listing secrets: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("listing secrets: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var secrets []SecretInfo
+	if err := json.NewDecoder(resp.Body).Decode(&secrets); err != nil {
+		return nil, fmt.Errorf("decoding secrets: %w", err)
+	}
+
+	return secrets, nil
+}
