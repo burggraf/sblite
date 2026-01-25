@@ -256,6 +256,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/schema", h.handleExportSchema)
 			r.Get("/data", h.handleExportData)
 			r.Get("/backup", h.handleExportBackup)
+			r.Get("/rls", h.handleExportRLS)
 		})
 
 		// Logs API routes (require auth)
@@ -3005,6 +3006,122 @@ func (h *Handler) handleExportBackup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", stat.Size()))
 
 	io.Copy(w, file)
+}
+
+// handleExportRLS exports RLS policies as PostgreSQL SQL.
+func (h *Handler) handleExportRLS(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(`
+		SELECT table_name, policy_name, command, using_expr, check_expr, enabled
+		FROM _rls_policies
+		ORDER BY table_name, policy_name
+	`)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to query policies"})
+		return
+	}
+	defer rows.Close()
+
+	var sb strings.Builder
+	sb.WriteString("-- RLS Policies exported from sblite\n")
+	sb.WriteString("-- Generated at: " + time.Now().Format(time.RFC3339) + "\n")
+	sb.WriteString("-- Review and adjust before executing in Supabase\n\n")
+
+	// Track which tables have policies
+	tablesWithPolicies := make(map[string]bool)
+
+	for rows.Next() {
+		var tableName, policyName, command string
+		var usingExpr, checkExpr sql.NullString
+		var enabled int
+
+		if err := rows.Scan(&tableName, &policyName, &command, &usingExpr, &checkExpr, &enabled); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to scan policy"})
+			return
+		}
+
+		tablesWithPolicies[tableName] = true
+
+		// Skip disabled policies (but note them)
+		if enabled == 0 {
+			sb.WriteString(fmt.Sprintf("-- DISABLED: Policy %s on %s\n", policyName, tableName))
+			continue
+		}
+
+		// Build CREATE POLICY statement
+		sb.WriteString(fmt.Sprintf("CREATE POLICY \"%s\" ON \"%s\"\n", policyName, tableName))
+
+		// Map command
+		switch command {
+		case "ALL":
+			sb.WriteString("  FOR ALL\n")
+		case "SELECT":
+			sb.WriteString("  FOR SELECT\n")
+		case "INSERT":
+			sb.WriteString("  FOR INSERT\n")
+		case "UPDATE":
+			sb.WriteString("  FOR UPDATE\n")
+		case "DELETE":
+			sb.WriteString("  FOR DELETE\n")
+		}
+
+		sb.WriteString("  TO authenticated\n")
+
+		if usingExpr.Valid && usingExpr.String != "" {
+			sb.WriteString(fmt.Sprintf("  USING (%s)\n", usingExpr.String))
+		}
+
+		if checkExpr.Valid && checkExpr.String != "" {
+			sb.WriteString(fmt.Sprintf("  WITH CHECK (%s)\n", checkExpr.String))
+		}
+
+		sb.WriteString(";\n\n")
+	}
+
+	if err := rows.Err(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to iterate policies"})
+		return
+	}
+
+	// Get tables with RLS enabled from _rls_tables
+	rlsRows, err := h.db.Query(`
+		SELECT table_name FROM _rls_tables WHERE enabled = 1
+	`)
+	if err == nil {
+		defer rlsRows.Close()
+
+		var tablesWithRLS []string
+		for rlsRows.Next() {
+			var tableName string
+			if err := rlsRows.Scan(&tableName); err == nil {
+				tablesWithRLS = append(tablesWithRLS, tableName)
+			}
+		}
+
+		if err := rlsRows.Err(); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to iterate RLS tables"})
+			return
+		}
+
+		// Add ALTER TABLE statements to enable RLS
+		if len(tablesWithRLS) > 0 {
+			sb.WriteString("-- Enable RLS on tables\n")
+			for _, tableName := range tablesWithRLS {
+				sb.WriteString(fmt.Sprintf("ALTER TABLE \"%s\" ENABLE ROW LEVEL SECURITY;\n", tableName))
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=rls-policies.sql")
+	w.Write([]byte(sb.String()))
 }
 
 func isValidIdentifier(s string) bool {
