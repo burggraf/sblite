@@ -230,7 +230,7 @@ func (s *StateStore) ListMigrations() ([]*Migration, error) {
 	}
 	defer rows.Close()
 
-	var migrations []*Migration
+	migrations := make([]*Migration, 0)
 	for rows.Next() {
 		var m Migration
 		var projectRef, projectName sql.NullString
