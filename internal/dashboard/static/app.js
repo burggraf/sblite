@@ -40,6 +40,17 @@ const App = {
             loading: false,
             filter: 'all',  // 'all', 'regular', 'anonymous'
         },
+        mail: {
+            enabled: false,     // Whether mail catcher is enabled
+            list: [],           // Caught emails
+            filter: '',         // Filter by type
+            autoRefresh: true,  // Auto-refresh enabled
+            autoRefreshInterval: null,
+            selectedEmail: null, // Currently viewed email
+            showModal: false,
+            activeTab: 'html',  // 'html' or 'text'
+            loading: false,
+        },
         policies: {
             tables: [],           // Tables with RLS info
             selectedTable: null,  // Currently selected table
@@ -457,9 +468,21 @@ const App = {
     },
 
     navigate(view) {
+        // Cleanup mail auto-refresh when leaving mail view
+        if (this.state.currentView === 'mail' && view !== 'mail') {
+            if (this.state.mail.autoRefreshInterval) {
+                clearInterval(this.state.mail.autoRefreshInterval);
+                this.state.mail.autoRefreshInterval = null;
+            }
+            this.state.mail._initialized = false;
+        }
+
         this.state.currentView = view;
         if (view === 'users') {
             this.loadUsers();
+        } else if (view === 'mail') {
+            // Mail view initialization happens in renderMailView
+            this.render();
         } else if (view === 'policies') {
             this.loadPoliciesTables();
         } else if (view === 'settings') {
@@ -578,6 +601,8 @@ const App = {
                             <div class="nav-section-title">Auth</div>
                             <a class="nav-item ${this.state.currentView === 'users' ? 'active' : ''}"
                                onclick="App.navigate('users')">Users</a>
+                            <a class="nav-item ${this.state.currentView === 'mail' ? 'active' : ''}"
+                               onclick="App.navigate('mail')">Mail</a>
                         </div>
 
                         <div class="nav-section">
@@ -638,6 +663,8 @@ const App = {
                 return this.renderTablesView();
             case 'users':
                 return this.renderUsersView();
+            case 'mail':
+                return this.renderMailView();
             case 'policies':
                 return this.renderPoliciesView();
             case 'settings':
@@ -2460,6 +2487,299 @@ const App = {
             this.state.error = 'Failed to update RLS state';
             this.render();
         }
+    },
+
+    // ============ Mail Catcher Methods ============
+
+    async loadMailStatus() {
+        try {
+            const response = await fetch('/_/api/mail/status');
+            if (response.ok) {
+                const data = await response.json();
+                this.state.mail.enabled = data.enabled;
+            }
+        } catch (e) {
+            console.error('Failed to check mail status:', e);
+        }
+    },
+
+    async loadEmails() {
+        if (!this.state.mail.enabled) return;
+
+        this.state.mail.loading = true;
+        this.render();
+
+        try {
+            const response = await fetch('/_/api/mail/emails');
+            if (response.ok) {
+                this.state.mail.list = await response.json() || [];
+            }
+        } catch (e) {
+            console.error('Failed to load emails:', e);
+        } finally {
+            this.state.mail.loading = false;
+            this.render();
+        }
+    },
+
+    async viewEmail(id) {
+        try {
+            const response = await fetch(`/_/api/mail/emails/${id}`);
+            if (response.ok) {
+                this.state.mail.selectedEmail = await response.json();
+                this.state.mail.showModal = true;
+                this.state.mail.activeTab = 'html';
+                this.render();
+            }
+        } catch (e) {
+            console.error('Failed to load email:', e);
+            this.state.error = 'Failed to load email';
+            this.render();
+        }
+    },
+
+    async deleteEmail(id) {
+        try {
+            const response = await fetch(`/_/api/mail/emails/${id}`, { method: 'DELETE' });
+            if (response.ok) {
+                await this.loadEmails();
+            }
+        } catch (e) {
+            console.error('Failed to delete email:', e);
+            this.state.error = 'Failed to delete email';
+            this.render();
+        }
+    },
+
+    async clearAllEmails() {
+        if (!confirm('Are you sure you want to delete all emails?')) return;
+
+        try {
+            const response = await fetch('/_/api/mail/emails', { method: 'DELETE' });
+            if (response.ok) {
+                await this.loadEmails();
+            }
+        } catch (e) {
+            console.error('Failed to clear emails:', e);
+            this.state.error = 'Failed to clear emails';
+            this.render();
+        }
+    },
+
+    filterEmails(type) {
+        this.state.mail.filter = type;
+        this.render();
+    },
+
+    toggleMailAutoRefresh() {
+        this.state.mail.autoRefresh = !this.state.mail.autoRefresh;
+
+        if (this.state.mail.autoRefresh) {
+            this.state.mail.autoRefreshInterval = setInterval(() => this.loadEmails(), 5000);
+        } else if (this.state.mail.autoRefreshInterval) {
+            clearInterval(this.state.mail.autoRefreshInterval);
+            this.state.mail.autoRefreshInterval = null;
+        }
+        this.render();
+    },
+
+    closeMailModal() {
+        this.state.mail.showModal = false;
+        this.state.mail.selectedEmail = null;
+        this.render();
+    },
+
+    switchMailTab(tab) {
+        this.state.mail.activeTab = tab;
+        this.render();
+    },
+
+    formatMailTime(timestamp) {
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diff = now - date;
+
+        if (diff < 60000) return 'Just now';
+        if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+        if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+
+        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    },
+
+    getMailBadgeClass(type) {
+        const classes = {
+            confirmation: 'badge-success',
+            recovery: 'badge-warning',
+            magic_link: 'badge-primary',
+            email_change: 'badge-purple',
+            invite: 'badge-danger'
+        };
+        return classes[type] || 'badge-secondary';
+    },
+
+    renderMailView() {
+        const { enabled, list, filter, autoRefresh, loading } = this.state.mail;
+
+        // First load - check status and load emails
+        if (!this.state.mail._initialized) {
+            this.state.mail._initialized = true;
+            this.loadMailStatus().then(() => {
+                if (this.state.mail.enabled) {
+                    this.loadEmails();
+                    // Start auto-refresh if enabled
+                    if (autoRefresh && !this.state.mail.autoRefreshInterval) {
+                        this.state.mail.autoRefreshInterval = setInterval(() => this.loadEmails(), 5000);
+                    }
+                }
+                this.render();
+            });
+            return '<div class="loading">Loading...</div>';
+        }
+
+        if (!enabled) {
+            return `
+                <div class="card-title">Mail Catcher</div>
+                <div class="card">
+                    <div class="empty-state">
+                        <p>Mail catcher is not enabled.</p>
+                        <p style="margin-top: 1rem; color: var(--text-muted);">
+                            To enable the mail catcher, set the mail mode to "catch" in Settings > Email Configuration.
+                        </p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Filter emails
+        const filteredEmails = filter
+            ? list.filter(e => e.type === filter)
+            : list;
+
+        return `
+            <div class="card-title">
+                Mail Catcher
+                <span class="badge badge-secondary" style="margin-left: 0.5rem;">${list.length} email${list.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div class="card">
+                <div class="mail-controls" style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <label style="font-weight: 500;">Filter:</label>
+                        <select class="form-select" style="width: auto;" onchange="App.filterEmails(this.value)">
+                            <option value="" ${filter === '' ? 'selected' : ''}>All Types</option>
+                            <option value="confirmation" ${filter === 'confirmation' ? 'selected' : ''}>Confirmation</option>
+                            <option value="recovery" ${filter === 'recovery' ? 'selected' : ''}>Recovery</option>
+                            <option value="magic_link" ${filter === 'magic_link' ? 'selected' : ''}>Magic Link</option>
+                            <option value="email_change" ${filter === 'email_change' ? 'selected' : ''}>Email Change</option>
+                            <option value="invite" ${filter === 'invite' ? 'selected' : ''}>Invite</option>
+                        </select>
+                    </div>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" ${autoRefresh ? 'checked' : ''} onchange="App.toggleMailAutoRefresh()">
+                        Auto-refresh (5s)
+                    </label>
+                    <div style="margin-left: auto; display: flex; gap: 0.5rem;">
+                        <button class="btn btn-secondary btn-sm" onclick="App.loadEmails()">
+                            ${loading ? 'Loading...' : 'Refresh'}
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="App.clearAllEmails()" ${list.length === 0 ? 'disabled' : ''}>
+                            Clear All
+                        </button>
+                    </div>
+                </div>
+
+                ${filteredEmails.length === 0 ? `
+                    <div class="empty-state">
+                        <p>${filter ? 'No emails match the current filter.' : 'No emails caught yet.'}</p>
+                        <p style="margin-top: 0.5rem; color: var(--text-muted);">
+                            Emails sent by the application will appear here.
+                        </p>
+                    </div>
+                ` : `
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th style="width: 100px;">Type</th>
+                                    <th style="width: 200px;">To</th>
+                                    <th>Subject</th>
+                                    <th style="width: 120px;">Time</th>
+                                    <th style="width: 80px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${filteredEmails.map(email => `
+                                    <tr>
+                                        <td>
+                                            <span class="badge ${this.getMailBadgeClass(email.type)}">${email.type || 'unknown'}</span>
+                                        </td>
+                                        <td style="font-family: monospace; font-size: 0.85em;">${this.escapeHtml(email.to)}</td>
+                                        <td>
+                                            <a href="#" onclick="event.preventDefault(); App.viewEmail('${email.id}')" style="color: var(--primary); font-weight: 500;">
+                                                ${this.escapeHtml(email.subject)}
+                                            </a>
+                                        </td>
+                                        <td style="color: var(--text-muted); font-size: 0.85em;">
+                                            ${this.formatMailTime(email.created_at)}
+                                        </td>
+                                        <td>
+                                            <button class="btn btn-danger btn-sm" onclick="App.deleteEmail('${email.id}')" style="padding: 0.25rem 0.5rem;">
+                                                Delete
+                                            </button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `}
+            </div>
+            ${this.renderMailModal()}
+        `;
+    },
+
+    renderMailModal() {
+        const { showModal, selectedEmail, activeTab } = this.state.mail;
+        if (!showModal || !selectedEmail) return '';
+
+        return `
+            <div class="modal-overlay" onclick="App.closeMailModal()">
+                <div class="modal modal-lg" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <h3>${this.escapeHtml(selectedEmail.subject)}</h3>
+                        <button class="modal-close" onclick="App.closeMailModal()">&times;</button>
+                    </div>
+                    <div style="padding: 0 1.5rem; border-bottom: 1px solid var(--border);">
+                        <div style="display: flex; gap: 2rem; font-size: 0.9em; padding: 0.75rem 0;">
+                            <span><strong>To:</strong> ${this.escapeHtml(selectedEmail.to)}</span>
+                            <span><strong>From:</strong> ${this.escapeHtml(selectedEmail.from)}</span>
+                            <span><strong>Time:</strong> ${new Date(selectedEmail.created_at).toLocaleString()}</span>
+                        </div>
+                    </div>
+                    <div style="display: flex; border-bottom: 1px solid var(--border); padding: 0 1.5rem;">
+                        <button class="tab-btn ${activeTab === 'html' ? 'active' : ''}" onclick="App.switchMailTab('html')">
+                            HTML
+                        </button>
+                        <button class="tab-btn ${activeTab === 'text' ? 'active' : ''}" onclick="App.switchMailTab('text')">
+                            Text
+                        </button>
+                    </div>
+                    <div class="modal-body" style="max-height: 60vh; overflow: auto;">
+                        ${activeTab === 'html' ? `
+                            <div style="background: white; border: 1px solid var(--border); border-radius: 8px; min-height: 300px;">
+                                <iframe
+                                    id="emailPreviewFrame"
+                                    sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                                    style="width: 100%; height: 400px; border: none;"
+                                    srcdoc="${this.escapeHtml(selectedEmail.body_html ? '<base target=&quot;_blank&quot;>' + selectedEmail.body_html : '<p style=&quot;color: #888; padding: 1rem;&quot;>No HTML content</p>')}"
+                                ></iframe>
+                            </div>
+                        ` : `
+                            <pre style="background: var(--bg-secondary); padding: 1rem; border-radius: 8px; white-space: pre-wrap; font-family: monospace; font-size: 0.9em; margin: 0;">${this.escapeHtml(selectedEmail.body_text || 'No text content')}</pre>
+                        `}
+                    </div>
+                </div>
+            </div>
+        `;
     },
 
     renderPoliciesView() {

@@ -3059,6 +3059,31 @@ small.text-muted {
     color: var(--text-muted);
 }
 
+.badge-secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.badge-success {
+    background: #d4edda;
+    color: #155724;
+}
+
+.badge-primary {
+    background: #cce5ff;
+    color: #004085;
+}
+
+.badge-danger {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.badge-purple {
+    background: #e2d5f7;
+    color: #4a2c7d;
+}
+
 /* =====================
    Function Editor Layout
    ===================== */

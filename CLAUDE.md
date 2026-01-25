@@ -547,6 +547,11 @@ Web dashboard accessible at `http://localhost:8080/_`
 | `/_/api/apidocs/functions` | GET | List all RPC functions with metadata |
 | `/_/api/apidocs/functions/{name}` | GET | Get function details |
 | `/_/api/apidocs/functions/{name}/description` | PATCH | Update function description |
+| `/_/api/mail/status` | GET | Check if mail catcher is enabled |
+| `/_/api/mail/emails` | GET | List caught emails (supports limit, offset) |
+| `/_/api/mail/emails/{id}` | GET | Get single caught email |
+| `/_/api/mail/emails/{id}` | DELETE | Delete single caught email |
+| `/_/api/mail/emails` | DELETE | Clear all caught emails |
 
 ### Query Operators
 

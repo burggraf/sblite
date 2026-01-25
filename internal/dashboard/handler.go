@@ -28,7 +28,6 @@ import (
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
-	"github.com/markb/sblite/internal/mail/viewer"
 	"github.com/markb/sblite/internal/pgtranslate"
 	"github.com/markb/sblite/internal/rpc"
 	"github.com/markb/sblite/internal/storage"
@@ -57,7 +56,6 @@ type Handler struct {
 	rpcInterceptor   *rpc.Interceptor
 	rpcExecutor      *rpc.Executor
 	catchMailer      *mail.CatchMailer
-	mailViewer       *viewer.Handler
 	migrationsDir    string
 	startTime        time.Time
 	serverConfig     *ServerConfig
@@ -148,9 +146,6 @@ func (h *Handler) SetMailReloadFunc(f func(*MailConfig) error) {
 // SetCatchMailer sets the catch mailer for the mail viewer.
 func (h *Handler) SetCatchMailer(cm *mail.CatchMailer) {
 	h.catchMailer = cm
-	if cm != nil {
-		h.mailViewer = viewer.NewHandler(cm)
-	}
 }
 
 // SetRealtimeService sets the realtime service for stats
@@ -351,15 +346,17 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Use(h.requireAuth)
 			r.Get("/stats", h.handleRealtimeStats)
 		})
-	})
 
-	// Mail viewer routes (require auth, only when catch mailer is configured)
-	if h.mailViewer != nil {
+		// Mail catcher routes (require auth)
 		r.Route("/mail", func(r chi.Router) {
 			r.Use(h.requireAuth)
-			h.mailViewer.RegisterRoutes(r)
+			r.Get("/status", h.handleMailStatus)
+			r.Get("/emails", h.handleListEmails)
+			r.Get("/emails/{id}", h.handleGetEmail)
+			r.Delete("/emails/{id}", h.handleDeleteEmail)
+			r.Delete("/emails", h.handleClearEmails)
 		})
-	}
+	})
 
 	// Static files - use Route group to ensure priority
 	r.Route("/static", func(r chi.Router) {
@@ -5971,4 +5968,103 @@ func parseArgValue(s string) interface{} {
 
 	// Return as string
 	return s
+}
+
+// Mail catcher handlers
+
+// handleMailStatus returns whether the mail catcher is enabled.
+func (h *Handler) handleMailStatus(w http.ResponseWriter, r *http.Request) {
+	enabled := h.catchMailer != nil
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"enabled": enabled})
+}
+
+// handleListEmails returns the list of caught emails.
+func (h *Handler) handleListEmails(w http.ResponseWriter, r *http.Request) {
+	if h.catchMailer == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]interface{}{})
+		return
+	}
+
+	limit := 100
+	offset := 0
+
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	emails, err := h.catchMailer.ListEmails(limit, offset)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(emails)
+}
+
+// handleGetEmail returns a single caught email by ID.
+func (h *Handler) handleGetEmail(w http.ResponseWriter, r *http.Request) {
+	if h.catchMailer == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Mail catcher not enabled"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	email, err := h.catchMailer.GetEmail(id)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Email not found"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(email)
+}
+
+// handleDeleteEmail deletes a single caught email by ID.
+func (h *Handler) handleDeleteEmail(w http.ResponseWriter, r *http.Request) {
+	if h.catchMailer == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Mail catcher not enabled"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	if err := h.catchMailer.DeleteEmail(id); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleClearEmails deletes all caught emails.
+func (h *Handler) handleClearEmails(w http.ResponseWriter, r *http.Request) {
+	if h.catchMailer == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Mail catcher not enabled"})
+		return
+	}
+
+	if err := h.catchMailer.ClearAll(); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
