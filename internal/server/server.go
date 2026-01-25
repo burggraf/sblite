@@ -17,6 +17,7 @@ import (
 	"github.com/markb/sblite/internal/admin"
 	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/dashboard"
+	"github.com/markb/sblite/internal/dashboard/migration"
 	"github.com/markb/sblite/internal/db"
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
@@ -237,6 +238,11 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 // SetDashboardConfig sets the dashboard server configuration for display in settings.
 func (s *Server) SetDashboardConfig(cfg *dashboard.ServerConfig) {
 	s.dashboardHandler.SetServerConfig(cfg)
+}
+
+// SetMigrationService sets the migration service for Supabase migration.
+func (s *Server) SetMigrationService(svc *migration.Service) {
+	s.dashboardHandler.SetMigrationService(svc)
 }
 
 // applyPersistedSettings applies settings persisted in the dashboard to the server config.

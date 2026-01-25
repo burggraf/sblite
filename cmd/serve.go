@@ -16,6 +16,7 @@ import (
 
 	"github.com/markb/sblite/internal/auth"
 	"github.com/markb/sblite/internal/dashboard"
+	"github.com/markb/sblite/internal/dashboard/migration"
 	"github.com/markb/sblite/internal/db"
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
@@ -135,6 +136,15 @@ var serveCmd = &cobra.Command{
 			LogFile: logConfig.FilePath,
 			LogDB:   logConfig.DBPath,
 		})
+
+		// Initialize migration service
+		functionsDir, _ := cmd.Flags().GetString("functions-dir")
+		migrationSvc := migration.NewService(database.DB, &migration.ServerConfig{
+			FunctionsDir: functionsDir,
+			StorageDir:   storageConfig.LocalPath,
+			JWTSecret:    jwtSecret,
+		})
+		srv.SetMigrationService(migrationSvc)
 
 		addr := fmt.Sprintf("%s:%d", host, port)
 		log.Info("starting server",
