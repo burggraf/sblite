@@ -228,6 +228,34 @@ const App = {
             autoRefresh: false,
             autoRefreshInterval: null,
         },
+        migration: {
+            activeTab: 'export',    // 'export', 'migrate', 'verify', 'history'
+            migrations: [],         // List of past migrations
+            currentMigration: null, // Current migration session
+            step: 'connect',        // 'connect', 'select', 'review', 'migrate'
+            connecting: false,      // Connection in progress
+            token: '',              // Supabase Management API token
+            projects: [],           // List of user's Supabase projects
+            selectedProject: null,  // Selected project for migration
+            databasePassword: '',   // PostgreSQL database password
+            items: {                // Selection state for migration items
+                schema: true,
+                data: true,
+                users: true,
+                rls: true,
+                storage_buckets: true,
+                storage_files: true,
+                functions: true,
+                secrets: true,
+                auth_config: true,
+                oauth_config: true,
+                email_templates: true,
+            },
+            verifications: [],      // Verification results
+            loading: false,
+            error: null,
+            pollingInterval: null,  // For migration progress updates
+        },
     },
 
     async init() {
@@ -503,6 +531,8 @@ const App = {
             this.initApiDocs();
         } else if (view === 'realtime') {
             this.loadRealtimeStats();
+        } else if (view === 'migration') {
+            this.loadMigrations();
         } else {
             this.render();
         }
@@ -641,6 +671,8 @@ const App = {
                                onclick="App.navigate('apiConsole')">API Console</a>
                             <a class="nav-item ${this.state.currentView === 'sqlBrowser' ? 'active' : ''}"
                                onclick="App.navigate('sqlBrowser')">SQL Browser</a>
+                            <a class="nav-item ${this.state.currentView === 'migration' ? 'active' : ''}"
+                               onclick="App.navigate('migration')">Migration</a>
                         </div>
                     </nav>
 
@@ -685,6 +717,8 @@ const App = {
                 return this.renderApiDocsView();
             case 'realtime':
                 return this.renderRealtimeView();
+            case 'migration':
+                return this.renderMigrationView();
             default:
                 return '<div class="card">Select a section from the sidebar</div>';
         }
@@ -9865,6 +9899,1029 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
                 </div>
             </div>
         `;
+    },
+
+    // ==================== Migration ====================
+
+    async loadMigrations() {
+        this.state.migration.loading = true;
+        this.state.migration.error = null;
+        this.render();
+
+        try {
+            const res = await fetch('/_/api/migrations');
+            if (!res.ok) {
+                throw new Error('Failed to load migrations');
+            }
+            const data = await res.json();
+            this.state.migration.migrations = data.migrations || [];
+        } catch (e) {
+            this.state.migration.error = e.message;
+        }
+        this.state.migration.loading = false;
+        this.render();
+    },
+
+    setMigrationTab(tab) {
+        this.state.migration.activeTab = tab;
+        if (tab === 'history') {
+            this.loadMigrations();
+        }
+        this.render();
+    },
+
+    renderMigrationView() {
+        const { activeTab, loading, error } = this.state.migration;
+
+        return `
+            <div class="card-title">Export & Migration</div>
+
+            <div class="migration-tabs">
+                <button class="migration-tab ${activeTab === 'export' ? 'active' : ''}"
+                        onclick="App.setMigrationTab('export')">Export</button>
+                <button class="migration-tab ${activeTab === 'migrate' ? 'active' : ''}"
+                        onclick="App.setMigrationTab('migrate')">Migrate</button>
+                <button class="migration-tab ${activeTab === 'verify' ? 'active' : ''}"
+                        onclick="App.setMigrationTab('verify')">Verify</button>
+                <button class="migration-tab ${activeTab === 'history' ? 'active' : ''}"
+                        onclick="App.setMigrationTab('history')">History</button>
+            </div>
+
+            ${error ? `<div class="message message-error" style="margin-bottom: 1rem;">${this.escapeHtml(error)}</div>` : ''}
+
+            <div class="migration-content">
+                ${loading ? '<div class="loading">Loading...</div>' : this.renderMigrationTabContent()}
+            </div>
+        `;
+    },
+
+    renderMigrationTabContent() {
+        switch (this.state.migration.activeTab) {
+            case 'export':
+                return this.renderExportTab();
+            case 'migrate':
+                return this.renderMigrateTab();
+            case 'verify':
+                return this.renderVerifyTab();
+            case 'history':
+                return this.renderHistoryTab();
+            default:
+                return this.renderExportTab();
+        }
+    },
+
+    renderExportTab() {
+        return `
+            <div class="card">
+                <div class="card-header">Manual Export</div>
+                <p class="text-muted" style="padding: 1rem 1rem 0;">
+                    Download individual components for manual import into Supabase.
+                    Each export includes instructions for importing.
+                </p>
+                <div class="export-grid">
+                    <div class="export-item">
+                        <div class="export-item-header">
+                            <span class="export-item-icon">&#128451;</span>
+                            <div>
+                                <div class="export-item-title">Schema (DDL)</div>
+                                <div class="export-item-desc">PostgreSQL DDL for all tables</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="App.downloadExport('schema')">Download .sql</button>
+                    </div>
+
+                    <div class="export-item">
+                        <div class="export-item-header">
+                            <span class="export-item-icon">&#128202;</span>
+                            <div>
+                                <div class="export-item-title">Data</div>
+                                <div class="export-item-desc">All table data as JSON</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="App.downloadExport('data')">Download .json</button>
+                    </div>
+
+                    <div class="export-item">
+                        <div class="export-item-header">
+                            <span class="export-item-icon">&#128274;</span>
+                            <div>
+                                <div class="export-item-title">RLS Policies</div>
+                                <div class="export-item-desc">Row Level Security policies</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="App.downloadExport('rls')">Download .sql</button>
+                    </div>
+
+                    <div class="export-item">
+                        <div class="export-item-header">
+                            <span class="export-item-icon">&#128100;</span>
+                            <div>
+                                <div class="export-item-title">Auth Users</div>
+                                <div class="export-item-desc">User accounts (hashed passwords)</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="App.downloadExport('auth/users')">Download .json</button>
+                    </div>
+
+                    <div class="export-item">
+                        <div class="export-item-header">
+                            <span class="export-item-icon">&#9881;</span>
+                            <div>
+                                <div class="export-item-title">Auth Config</div>
+                                <div class="export-item-desc">JWT settings, signup config</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="App.downloadExport('auth/config')">Download .json</button>
+                    </div>
+
+                    <div class="export-item">
+                        <div class="export-item-header">
+                            <span class="export-item-icon">&#9993;</span>
+                            <div>
+                                <div class="export-item-title">Email Templates</div>
+                                <div class="export-item-desc">Custom email templates</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="App.downloadExport('auth/templates')">Download .json</button>
+                    </div>
+
+                    <div class="export-item">
+                        <div class="export-item-header">
+                            <span class="export-item-icon">&#128230;</span>
+                            <div>
+                                <div class="export-item-title">Storage Buckets</div>
+                                <div class="export-item-desc">Bucket configurations</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="App.downloadExport('storage/buckets')">Download .json</button>
+                    </div>
+
+                    <div class="export-item">
+                        <div class="export-item-header">
+                            <span class="export-item-icon">&#9889;</span>
+                            <div>
+                                <div class="export-item-title">Edge Functions</div>
+                                <div class="export-item-desc">All function code and config</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="App.downloadExport('functions')">Download .zip</button>
+                    </div>
+
+                    <div class="export-item">
+                        <div class="export-item-header">
+                            <span class="export-item-icon">&#128273;</span>
+                            <div>
+                                <div class="export-item-title">Secrets</div>
+                                <div class="export-item-desc">Secret names (values not exported)</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="App.downloadExport('secrets')">Download .txt</button>
+                    </div>
+
+                    <div class="export-item">
+                        <div class="export-item-header">
+                            <span class="export-item-icon">&#128190;</span>
+                            <div>
+                                <div class="export-item-title">Database Backup</div>
+                                <div class="export-item-desc">Full SQLite database file</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="App.downloadExport('backup')">Download .db</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    downloadExport(type) {
+        // For data export, include all tables
+        if (type === 'data') {
+            const tables = this.state.tables.list.map(t => t.name).join(',');
+            if (!tables) {
+                alert('No tables to export');
+                return;
+            }
+            window.location.href = `/_/api/export/data?tables=${encodeURIComponent(tables)}&format=json`;
+        } else {
+            window.location.href = `/_/api/export/${type}`;
+        }
+    },
+
+    renderMigrateTab() {
+        const { step, currentMigration } = this.state.migration;
+
+        // If we have an active migration in progress, show progress
+        if (currentMigration && (currentMigration.status === 'in_progress' || currentMigration.status === 'pending')) {
+            return this.renderMigrationProgress();
+        }
+
+        return `
+            <div class="card">
+                <div class="card-header">Automated Migration to Supabase</div>
+                <div class="migration-wizard">
+                    <div class="wizard-steps">
+                        <div class="wizard-step ${step === 'connect' ? 'active' : ''} ${this.getStepStatus('connect')}">
+                            <span class="step-number">1</span>
+                            <span class="step-label">Connect</span>
+                        </div>
+                        <div class="wizard-step ${step === 'select' ? 'active' : ''} ${this.getStepStatus('select')}">
+                            <span class="step-number">2</span>
+                            <span class="step-label">Project</span>
+                        </div>
+                        <div class="wizard-step ${step === 'review' ? 'active' : ''} ${this.getStepStatus('review')}">
+                            <span class="step-number">3</span>
+                            <span class="step-label">Items</span>
+                        </div>
+                        <div class="wizard-step ${step === 'migrate' ? 'active' : ''} ${this.getStepStatus('migrate')}">
+                            <span class="step-number">4</span>
+                            <span class="step-label">Review</span>
+                        </div>
+                    </div>
+                    <div class="wizard-content">
+                        ${this.renderMigrationStep()}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    getStepStatus(step) {
+        const steps = ['connect', 'select', 'review', 'migrate'];
+        const currentIndex = steps.indexOf(this.state.migration.step);
+        const stepIndex = steps.indexOf(step);
+        if (stepIndex < currentIndex) return 'completed';
+        return '';
+    },
+
+    renderMigrationStep() {
+        const { step } = this.state.migration;
+        switch (step) {
+            case 'connect':
+                return this.renderConnectStep();
+            case 'select':
+                return this.renderSelectProjectStep();
+            case 'review':
+                return this.renderSelectItemsStep();
+            case 'migrate':
+                return this.renderReviewStep();
+            default:
+                return this.renderConnectStep();
+        }
+    },
+
+    renderConnectStep() {
+        const { token, connecting, error } = this.state.migration;
+
+        return `
+            <div class="step-content">
+                <h3>Connect to Supabase</h3>
+                <p class="text-muted">
+                    Enter your Supabase Management API token. You can generate one at
+                    <a href="https://supabase.com/dashboard/account/tokens" target="_blank">supabase.com/dashboard/account/tokens</a>.
+                </p>
+
+                <div class="form-group" style="margin-top: 1rem;">
+                    <label class="form-label">Management API Token</label>
+                    <input type="password" class="form-input" id="supabase-token"
+                           placeholder="sbp_xxxxxxxxxxxxxxxxxxxx"
+                           value="${token}"
+                           onchange="App.state.migration.token = this.value">
+                </div>
+
+                <div class="step-actions">
+                    <button class="btn btn-primary" onclick="App.connectSupabase()" ${connecting ? 'disabled' : ''}>
+                        ${connecting ? 'Connecting...' : 'Connect'}
+                    </button>
+                </div>
+            </div>
+        `;
+    },
+
+    async connectSupabase() {
+        const token = document.getElementById('supabase-token')?.value || this.state.migration.token;
+        if (!token) {
+            this.state.migration.error = 'Please enter a token';
+            this.render();
+            return;
+        }
+
+        this.state.migration.connecting = true;
+        this.state.migration.error = null;
+        this.render();
+
+        try {
+            // Start a new migration session
+            const startRes = await fetch('/_/api/migration/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            if (!startRes.ok) {
+                throw new Error('Failed to start migration session');
+            }
+            const { id } = await startRes.json();
+            this.state.migration.currentMigration = { id };
+
+            // Connect with the token
+            const connectRes = await fetch(`/_/api/migration/${id}/connect`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token })
+            });
+            if (!connectRes.ok) {
+                const err = await connectRes.json();
+                throw new Error(err.error || 'Failed to connect');
+            }
+
+            // Fetch projects
+            const projectsRes = await fetch(`/_/api/migration/${id}/projects`);
+            if (!projectsRes.ok) {
+                throw new Error('Failed to fetch projects');
+            }
+            const projectsData = await projectsRes.json();
+            this.state.migration.projects = projectsData.projects || [];
+            this.state.migration.token = token;
+            this.state.migration.step = 'select';
+        } catch (e) {
+            this.state.migration.error = e.message;
+        }
+
+        this.state.migration.connecting = false;
+        this.render();
+    },
+
+    renderSelectProjectStep() {
+        const { projects, selectedProject, databasePassword } = this.state.migration;
+
+        return `
+            <div class="step-content">
+                <h3>Select Supabase Project</h3>
+                <p class="text-muted">
+                    Choose the target project for migration.
+                </p>
+
+                <div class="form-group" style="margin-top: 1rem;">
+                    <label class="form-label">Project</label>
+                    <select class="form-input" onchange="App.selectProject(this.value)">
+                        <option value="">Select a project...</option>
+                        ${projects.map(p => `
+                            <option value="${p.ref}" ${selectedProject?.ref === p.ref ? 'selected' : ''}>
+                                ${this.escapeHtml(p.name)} (${p.ref})
+                            </option>
+                        `).join('')}
+                    </select>
+                </div>
+
+                ${selectedProject ? `
+                    <div class="project-info" style="margin-top: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 4px;">
+                        <div><strong>Region:</strong> ${this.escapeHtml(selectedProject.region || 'Unknown')}</div>
+                        <div><strong>Status:</strong> ${this.escapeHtml(selectedProject.status || 'Unknown')}</div>
+                    </div>
+
+                    <div class="form-group" style="margin-top: 1rem;">
+                        <label class="form-label">Database Password</label>
+                        <input type="password" class="form-input" id="db-password"
+                               placeholder="Your Supabase database password"
+                               value="${databasePassword}"
+                               onchange="App.state.migration.databasePassword = this.value">
+                        <small class="text-muted">Required for data migration. This is the password you set when creating the project.</small>
+                    </div>
+                ` : ''}
+
+                <div class="step-actions">
+                    <button class="btn btn-secondary" onclick="App.migrationBack()">Back</button>
+                    <button class="btn btn-primary" onclick="App.confirmProject()" ${!selectedProject ? 'disabled' : ''}>
+                        Continue
+                    </button>
+                </div>
+            </div>
+        `;
+    },
+
+    selectProject(ref) {
+        const project = this.state.migration.projects.find(p => p.ref === ref);
+        this.state.migration.selectedProject = project || null;
+        this.render();
+    },
+
+    async confirmProject() {
+        const { currentMigration, selectedProject, databasePassword } = this.state.migration;
+        if (!selectedProject) return;
+
+        try {
+            // Select the project
+            const res = await fetch(`/_/api/migration/${currentMigration.id}/select`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    project_ref: selectedProject.ref,
+                    database_password: databasePassword
+                })
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error || 'Failed to select project');
+            }
+
+            this.state.migration.step = 'review';
+            this.render();
+        } catch (e) {
+            this.state.migration.error = e.message;
+            this.render();
+        }
+    },
+
+    renderSelectItemsStep() {
+        const { items } = this.state.migration;
+        const itemList = [
+            { key: 'schema', label: 'Database Schema', desc: 'Tables, indexes, constraints' },
+            { key: 'data', label: 'Database Data', desc: 'All table rows' },
+            { key: 'users', label: 'Auth Users', desc: 'User accounts and passwords' },
+            { key: 'rls', label: 'RLS Policies', desc: 'Row Level Security policies' },
+            { key: 'storage_buckets', label: 'Storage Buckets', desc: 'Bucket configurations' },
+            { key: 'storage_files', label: 'Storage Files', desc: 'All uploaded files' },
+            { key: 'functions', label: 'Edge Functions', desc: 'Function code and config' },
+            { key: 'secrets', label: 'Secrets', desc: 'Secret values for functions' },
+            { key: 'auth_config', label: 'Auth Configuration', desc: 'JWT, signup settings' },
+            { key: 'oauth_config', label: 'OAuth Config', desc: 'Provider settings (requires manual app setup)' },
+            { key: 'email_templates', label: 'Email Templates', desc: 'Custom email templates' },
+        ];
+
+        return `
+            <div class="step-content">
+                <h3>Select Items to Migrate</h3>
+                <p class="text-muted">
+                    Choose what to migrate. Items can be migrated incrementally.
+                </p>
+
+                <div class="migration-items-list" style="margin-top: 1rem;">
+                    ${itemList.map(item => `
+                        <label class="migration-item-checkbox">
+                            <input type="checkbox" ${items[item.key] ? 'checked' : ''}
+                                   onchange="App.toggleMigrationItem('${item.key}', this.checked)">
+                            <div class="migration-item-info">
+                                <div class="migration-item-label">${item.label}</div>
+                                <div class="migration-item-desc text-muted">${item.desc}</div>
+                            </div>
+                        </label>
+                    `).join('')}
+                </div>
+
+                <div class="step-actions">
+                    <button class="btn btn-secondary" onclick="App.migrationBack()">Back</button>
+                    <button class="btn btn-primary" onclick="App.proceedToReview()">
+                        Review Migration
+                    </button>
+                </div>
+            </div>
+        `;
+    },
+
+    toggleMigrationItem(key, checked) {
+        this.state.migration.items[key] = checked;
+        this.render();
+    },
+
+    proceedToReview() {
+        this.state.migration.step = 'migrate';
+        this.render();
+    },
+
+    renderReviewStep() {
+        const { items, selectedProject } = this.state.migration;
+        const selectedItems = Object.entries(items)
+            .filter(([_, selected]) => selected)
+            .map(([key]) => key);
+
+        const itemLabels = {
+            schema: 'Database Schema',
+            data: 'Database Data',
+            users: 'Auth Users',
+            rls: 'RLS Policies',
+            storage_buckets: 'Storage Buckets',
+            storage_files: 'Storage Files',
+            functions: 'Edge Functions',
+            secrets: 'Secrets',
+            auth_config: 'Auth Configuration',
+            oauth_config: 'OAuth Configuration',
+            email_templates: 'Email Templates',
+        };
+
+        return `
+            <div class="step-content">
+                <h3>Review Migration</h3>
+                <p class="text-muted">
+                    Review your migration settings before starting.
+                </p>
+
+                <div class="review-section" style="margin-top: 1rem;">
+                    <h4>Target Project</h4>
+                    <div style="padding: 0.5rem 0;">
+                        <strong>${this.escapeHtml(selectedProject?.name || 'Unknown')}</strong>
+                        <span class="text-muted">(${selectedProject?.ref})</span>
+                    </div>
+                </div>
+
+                <div class="review-section" style="margin-top: 1rem;">
+                    <h4>Items to Migrate (${selectedItems.length})</h4>
+                    <ul class="review-items-list">
+                        ${selectedItems.map(key => `<li>${itemLabels[key] || key}</li>`).join('')}
+                    </ul>
+                </div>
+
+                <div class="message message-warning" style="margin-top: 1rem;">
+                    <strong>Warning:</strong> This will modify your Supabase project.
+                    Existing data with the same keys may be overwritten.
+                </div>
+
+                <div class="step-actions">
+                    <button class="btn btn-secondary" onclick="App.migrationBack()">Back</button>
+                    <button class="btn btn-danger" onclick="App.startMigration()">
+                        Start Migration
+                    </button>
+                </div>
+            </div>
+        `;
+    },
+
+    migrationBack() {
+        const steps = ['connect', 'select', 'review', 'migrate'];
+        const currentIndex = steps.indexOf(this.state.migration.step);
+        if (currentIndex > 0) {
+            this.state.migration.step = steps[currentIndex - 1];
+            this.render();
+        }
+    },
+
+    async startMigration() {
+        const { currentMigration, items } = this.state.migration;
+        if (!currentMigration?.id) {
+            this.state.migration.error = 'No active migration session';
+            this.render();
+            return;
+        }
+
+        try {
+            const res = await fetch(`/_/api/migration/${currentMigration.id}/run`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items })
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error || 'Failed to start migration');
+            }
+
+            // Start polling for progress
+            this.startMigrationPolling();
+            this.render();
+        } catch (e) {
+            this.state.migration.error = e.message;
+            this.render();
+        }
+    },
+
+    startMigrationPolling() {
+        // Poll every 2 seconds
+        this.state.migration.pollingInterval = setInterval(() => {
+            this.loadMigrationStatus();
+        }, 2000);
+    },
+
+    stopMigrationPolling() {
+        if (this.state.migration.pollingInterval) {
+            clearInterval(this.state.migration.pollingInterval);
+            this.state.migration.pollingInterval = null;
+        }
+    },
+
+    async loadMigrationStatus() {
+        const { currentMigration } = this.state.migration;
+        if (!currentMigration?.id) return;
+
+        try {
+            const res = await fetch(`/_/api/migration/${currentMigration.id}`);
+            if (!res.ok) return;
+
+            const data = await res.json();
+            this.state.migration.currentMigration = data;
+
+            // Stop polling if migration is complete or failed
+            if (data.status === 'completed' || data.status === 'failed' || data.status === 'rolled_back') {
+                this.stopMigrationPolling();
+            }
+
+            this.render();
+        } catch (e) {
+            console.error('Failed to load migration status:', e);
+        }
+    },
+
+    renderMigrationProgress() {
+        const { currentMigration } = this.state.migration;
+        const items = currentMigration?.items || [];
+        const status = currentMigration?.status || 'pending';
+
+        const statusColors = {
+            pending: 'var(--text-secondary)',
+            in_progress: 'var(--primary)',
+            completed: 'var(--success)',
+            failed: 'var(--error)',
+            skipped: 'var(--text-secondary)',
+        };
+
+        const statusIcons = {
+            pending: '&#9675;',
+            in_progress: '&#9881;',
+            completed: '&#10003;',
+            failed: '&#10007;',
+            skipped: '&#8213;',
+        };
+
+        const completedCount = items.filter(i => i.status === 'completed').length;
+        const failedCount = items.filter(i => i.status === 'failed').length;
+        const progress = items.length > 0 ? Math.round((completedCount / items.length) * 100) : 0;
+
+        return `
+            <div class="card">
+                <div class="card-header">
+                    Migration Progress
+                    ${status === 'in_progress' ? '<span class="badge">Running</span>' : ''}
+                    ${status === 'completed' ? '<span class="badge success">Completed</span>' : ''}
+                    ${status === 'failed' ? '<span class="badge error">Failed</span>' : ''}
+                </div>
+
+                <div class="migration-progress-bar" style="margin: 1rem;">
+                    <div class="progress-track">
+                        <div class="progress-fill" style="width: ${progress}%"></div>
+                    </div>
+                    <div class="progress-text">${progress}% complete (${completedCount}/${items.length})</div>
+                </div>
+
+                ${failedCount > 0 ? `
+                    <div class="message message-error" style="margin: 0 1rem 1rem;">
+                        ${failedCount} item(s) failed. You can retry or rollback the migration.
+                    </div>
+                ` : ''}
+
+                <div class="migration-items-progress" style="margin: 1rem;">
+                    ${items.map(item => `
+                        <div class="migration-item-progress">
+                            <span class="item-status" style="color: ${statusColors[item.status]}">${statusIcons[item.status]}</span>
+                            <span class="item-name">${this.formatMigrationItemName(item.item_type, item.item_name)}</span>
+                            <span class="item-status-text text-muted">${item.status}</span>
+                            ${item.error_message ? `<div class="item-error text-muted" style="font-size: 0.8em; color: var(--error);">${this.escapeHtml(item.error_message)}</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+
+                <div class="step-actions" style="padding: 1rem; border-top: 1px solid var(--border);">
+                    ${status === 'completed' ? `
+                        <button class="btn btn-primary" onclick="App.goToVerify()">Run Verification</button>
+                        <button class="btn btn-secondary" onclick="App.resetMigration()">New Migration</button>
+                    ` : status === 'failed' ? `
+                        <button class="btn btn-primary" onclick="App.retryMigration()">Retry Failed</button>
+                        <button class="btn btn-danger" onclick="App.rollbackMigration()">Rollback</button>
+                        <button class="btn btn-secondary" onclick="App.resetMigration()">Cancel</button>
+                    ` : `
+                        <button class="btn btn-secondary" onclick="App.cancelMigration()">Cancel</button>
+                    `}
+                </div>
+            </div>
+        `;
+    },
+
+    formatMigrationItemName(type, name) {
+        const labels = {
+            schema: 'Schema',
+            data: 'Data',
+            users: 'Users',
+            rls: 'RLS Policies',
+            storage_buckets: 'Storage Buckets',
+            storage_files: 'Storage Files',
+            functions: 'Functions',
+            secrets: 'Secrets',
+            auth_config: 'Auth Config',
+            oauth_config: 'OAuth Config',
+            email_templates: 'Email Templates',
+        };
+        const label = labels[type] || type;
+        return name ? `${label}: ${name}` : label;
+    },
+
+    goToVerify() {
+        this.state.migration.activeTab = 'verify';
+        this.render();
+    },
+
+    async retryMigration() {
+        const { currentMigration } = this.state.migration;
+        if (!currentMigration?.id) return;
+
+        try {
+            const res = await fetch(`/_/api/migration/${currentMigration.id}/retry`, {
+                method: 'POST'
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error || 'Failed to retry');
+            }
+            this.startMigrationPolling();
+            this.render();
+        } catch (e) {
+            this.state.migration.error = e.message;
+            this.render();
+        }
+    },
+
+    async rollbackMigration() {
+        if (!confirm('Are you sure you want to rollback? This will attempt to undo all completed migration items.')) {
+            return;
+        }
+
+        const { currentMigration } = this.state.migration;
+        if (!currentMigration?.id) return;
+
+        this.state.migration.loading = true;
+        this.render();
+
+        try {
+            const res = await fetch(`/_/api/migration/${currentMigration.id}/rollback`, {
+                method: 'POST'
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error || 'Failed to rollback');
+            }
+            await this.loadMigrationStatus();
+        } catch (e) {
+            this.state.migration.error = e.message;
+        }
+
+        this.state.migration.loading = false;
+        this.render();
+    },
+
+    async cancelMigration() {
+        this.stopMigrationPolling();
+
+        const { currentMigration } = this.state.migration;
+        if (currentMigration?.id) {
+            try {
+                await fetch(`/_/api/migration/${currentMigration.id}`, {
+                    method: 'DELETE'
+                });
+            } catch (e) {
+                console.error('Failed to cancel migration:', e);
+            }
+        }
+
+        this.resetMigration();
+    },
+
+    resetMigration() {
+        this.stopMigrationPolling();
+        this.state.migration.currentMigration = null;
+        this.state.migration.step = 'connect';
+        this.state.migration.token = '';
+        this.state.migration.projects = [];
+        this.state.migration.selectedProject = null;
+        this.state.migration.databasePassword = '';
+        this.state.migration.items = {
+            schema: true,
+            data: true,
+            users: true,
+            rls: true,
+            storage_buckets: true,
+            storage_files: true,
+            functions: true,
+            secrets: true,
+            auth_config: true,
+            oauth_config: true,
+            email_templates: true,
+        };
+        this.state.migration.error = null;
+        this.render();
+    },
+
+    renderVerifyTab() {
+        const { currentMigration, verifications } = this.state.migration;
+
+        if (!currentMigration || currentMigration.status !== 'completed') {
+            return `
+                <div class="card">
+                    <div class="card-header">Verification</div>
+                    <div class="empty-state" style="padding: 2rem;">
+                        <p>Complete a migration first to run verification checks.</p>
+                        <button class="btn btn-primary" onclick="App.setMigrationTab('migrate')" style="margin-top: 1rem;">
+                            Start Migration
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="card">
+                <div class="card-header">Verification</div>
+                <p class="text-muted" style="padding: 1rem 1rem 0;">
+                    Run verification checks to confirm migration success.
+                </p>
+
+                <div class="verification-layers" style="padding: 1rem;">
+                    <div class="verification-layer">
+                        <div class="verification-layer-header">
+                            <div>
+                                <h4>Basic Checks</h4>
+                                <p class="text-muted">Verify tables exist, functions deployed, buckets created</p>
+                            </div>
+                            <button class="btn btn-primary btn-sm" onclick="App.runVerification('basic')">
+                                Run
+                            </button>
+                        </div>
+                        ${this.renderVerificationResults('basic')}
+                    </div>
+
+                    <div class="verification-layer">
+                        <div class="verification-layer-header">
+                            <div>
+                                <h4>Data Integrity</h4>
+                                <p class="text-muted">Compare row counts and sample data</p>
+                            </div>
+                            <button class="btn btn-primary btn-sm" onclick="App.runVerification('integrity')">
+                                Run
+                            </button>
+                        </div>
+                        ${this.renderVerificationResults('integrity')}
+                    </div>
+
+                    <div class="verification-layer">
+                        <div class="verification-layer-header">
+                            <div>
+                                <h4>Functional Tests</h4>
+                                <p class="text-muted">Test queries, file operations, function invocation</p>
+                            </div>
+                            <button class="btn btn-primary btn-sm" onclick="App.runVerification('functional')">
+                                Run
+                            </button>
+                        </div>
+                        ${this.renderVerificationResults('functional')}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    renderVerificationResults(layer) {
+        const { verifications } = this.state.migration;
+        const verification = verifications.find(v => v.layer === layer);
+
+        if (!verification) {
+            return '<div class="verification-results empty">Not run yet</div>';
+        }
+
+        const results = verification.results || [];
+        const passed = results.filter(r => r.passed).length;
+        const total = results.length;
+
+        return `
+            <div class="verification-results">
+                <div class="verification-summary ${verification.status === 'passed' ? 'success' : verification.status === 'failed' ? 'error' : ''}">
+                    ${verification.status === 'running' ? 'Running...' : `${passed}/${total} passed`}
+                </div>
+                ${results.length > 0 ? `
+                    <div class="verification-details">
+                        ${results.map(r => `
+                            <div class="verification-result ${r.passed ? 'passed' : 'failed'}">
+                                <span class="result-icon">${r.passed ? '&#10003;' : '&#10007;'}</span>
+                                <span class="result-name">${this.escapeHtml(r.name)}</span>
+                                ${r.message ? `<span class="result-message text-muted">${this.escapeHtml(r.message)}</span>` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    async runVerification(layer) {
+        const { currentMigration } = this.state.migration;
+        if (!currentMigration?.id) return;
+
+        // Mark as running
+        const existing = this.state.migration.verifications.find(v => v.layer === layer);
+        if (existing) {
+            existing.status = 'running';
+            existing.results = [];
+        } else {
+            this.state.migration.verifications.push({ layer, status: 'running', results: [] });
+        }
+        this.render();
+
+        try {
+            const res = await fetch(`/_/api/migration/${currentMigration.id}/verify/${layer}`, {
+                method: 'POST'
+            });
+            if (!res.ok) {
+                throw new Error('Verification failed');
+            }
+
+            const data = await res.json();
+            const idx = this.state.migration.verifications.findIndex(v => v.layer === layer);
+            if (idx >= 0) {
+                this.state.migration.verifications[idx] = {
+                    layer,
+                    status: data.status,
+                    results: data.results || []
+                };
+            }
+        } catch (e) {
+            const idx = this.state.migration.verifications.findIndex(v => v.layer === layer);
+            if (idx >= 0) {
+                this.state.migration.verifications[idx].status = 'failed';
+                this.state.migration.verifications[idx].results = [{ name: 'Error', passed: false, message: e.message }];
+            }
+        }
+
+        this.render();
+    },
+
+    renderHistoryTab() {
+        const { migrations, loading } = this.state.migration;
+
+        if (loading) {
+            return '<div class="loading">Loading migration history...</div>';
+        }
+
+        if (migrations.length === 0) {
+            return `
+                <div class="card">
+                    <div class="card-header">Migration History</div>
+                    <div class="empty-state" style="padding: 2rem;">
+                        <p>No migrations yet.</p>
+                        <button class="btn btn-primary" onclick="App.setMigrationTab('migrate')" style="margin-top: 1rem;">
+                            Start First Migration
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="card">
+                <div class="card-header">Migration History</div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Project</th>
+                            <th>Status</th>
+                            <th>Items</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${migrations.map(m => `
+                            <tr>
+                                <td>${this.formatDate(m.created_at)}</td>
+                                <td>${this.escapeHtml(m.supabase_project_name || m.supabase_project_ref || 'Unknown')}</td>
+                                <td>
+                                    <span class="badge ${m.status === 'completed' ? 'success' : m.status === 'failed' ? 'error' : ''}">
+                                        ${m.status}
+                                    </span>
+                                </td>
+                                <td>${m.item_count || 0} items</td>
+                                <td>
+                                    <button class="btn btn-secondary btn-sm" onclick="App.viewMigration('${m.id}')">
+                                        View
+                                    </button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    },
+
+    formatDate(dateStr) {
+        if (!dateStr) return 'Unknown';
+        const date = new Date(dateStr);
+        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+    },
+
+    async viewMigration(id) {
+        try {
+            const res = await fetch(`/_/api/migration/${id}`);
+            if (!res.ok) throw new Error('Failed to load migration');
+
+            const data = await res.json();
+            this.state.migration.currentMigration = data;
+            this.state.migration.activeTab = 'migrate';
+            this.render();
+        } catch (e) {
+            this.state.migration.error = e.message;
+            this.render();
+        }
     }
 };
 

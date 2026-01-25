@@ -4272,3 +4272,431 @@ small.text-muted {
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
+
+/* Migration Styles */
+.migration-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.5rem;
+}
+
+.migration-tab {
+    padding: 0.75rem 1.25rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    border-bottom: 2px solid transparent;
+    transition: color 0.2s, border-color 0.2s;
+    font-weight: 500;
+}
+
+.migration-tab:hover {
+    color: var(--text-primary);
+}
+
+.migration-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+/* Export Grid */
+.export-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.export-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.export-card h4 {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.export-card p {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    flex: 1;
+}
+
+.export-card .btn {
+    align-self: flex-start;
+}
+
+/* Migration Wizard */
+.migration-wizard {
+    max-width: 800px;
+}
+
+.wizard-steps {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.wizard-step {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+.wizard-step.active {
+    background: var(--accent-muted);
+    color: var(--accent);
+}
+
+.wizard-step.completed {
+    color: var(--success);
+}
+
+.wizard-step-number {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.wizard-step.active .wizard-step-number {
+    background: var(--accent);
+    color: var(--bg-primary);
+}
+
+.wizard-step.completed .wizard-step-number {
+    background: var(--success);
+    color: var(--bg-primary);
+}
+
+.wizard-content {
+    padding: 1.5rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.wizard-content h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.wizard-content p {
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+}
+
+/* Migration Items Selection */
+.migration-items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.migration-item-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.migration-item-checkbox:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-tertiary);
+}
+
+.migration-item-checkbox input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+}
+
+.migration-item-checkbox label {
+    cursor: pointer;
+    font-weight: 500;
+}
+
+/* Migration Progress */
+.migration-progress {
+    margin-top: 1.5rem;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.progress-bar-container {
+    height: 8px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+}
+
+.progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.progress-bar.error {
+    background: var(--error);
+}
+
+.migration-items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.migration-item-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+.migration-item-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.migration-item-status .status-icon {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+}
+
+.migration-item-status.pending .status-icon { color: var(--text-muted); }
+.migration-item-status.in_progress .status-icon { color: var(--warning); }
+.migration-item-status.completed .status-icon { color: var(--success); }
+.migration-item-status.failed .status-icon { color: var(--error); }
+.migration-item-status.skipped .status-icon { color: var(--text-muted); }
+
+.migration-item-error {
+    font-size: 0.75rem;
+    color: var(--error);
+    max-width: 300px;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+/* Verification Layer Cards */
+.verification-layers {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.verification-layer {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+}
+
+.verification-layer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.verification-layer h4 {
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.verification-layer p {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+.verification-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.verification-status.passed {
+    background: rgba(62, 207, 142, 0.15);
+    color: var(--success);
+}
+
+.verification-status.failed {
+    background: rgba(240, 68, 56, 0.15);
+    color: var(--error);
+}
+
+.verification-status.pending {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.verification-status.running {
+    background: rgba(245, 166, 35, 0.15);
+    color: var(--warning);
+}
+
+.verification-checks {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+}
+
+.verification-check {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    font-size: 0.875rem;
+}
+
+.verification-check.passed { color: var(--success); }
+.verification-check.failed { color: var(--error); }
+
+/* Migration History Table */
+.migration-history-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.migration-history-table th,
+.migration-history-table td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.migration-history-table th {
+    background: var(--bg-secondary);
+    font-weight: 500;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+
+.migration-history-table tr:hover td {
+    background: var(--bg-secondary);
+}
+
+.migration-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.migration-status-badge.pending {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.migration-status-badge.in_progress {
+    background: rgba(245, 166, 35, 0.15);
+    color: var(--warning);
+}
+
+.migration-status-badge.completed {
+    background: rgba(62, 207, 142, 0.15);
+    color: var(--success);
+}
+
+.migration-status-badge.failed {
+    background: rgba(240, 68, 56, 0.15);
+    color: var(--error);
+}
+
+.migration-status-badge.rolled_back {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+}
+
+/* Token Input */
+.token-input-wrapper {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.token-input-wrapper input {
+    flex: 1;
+    font-family: monospace;
+}
+
+/* Functional Test Options */
+.functional-test-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+
+.functional-test-options label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.875rem;
+}
+
+.functional-test-options input[type="text"] {
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+}
+
+.functional-test-options input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+}

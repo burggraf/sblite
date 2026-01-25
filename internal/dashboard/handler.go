@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/markb/sblite/internal/dashboard/migration"
 	"github.com/markb/sblite/internal/fts"
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
@@ -57,6 +58,7 @@ type Handler struct {
 	rpcInterceptor   *rpc.Interceptor
 	rpcExecutor      *rpc.Executor
 	catchMailer      *mail.CatchMailer
+	migrationService *migration.Service
 	migrationsDir    string
 	startTime        time.Time
 	serverConfig     *ServerConfig
@@ -152,6 +154,11 @@ func (h *Handler) SetCatchMailer(cm *mail.CatchMailer) {
 // SetRealtimeService sets the realtime service for stats
 func (h *Handler) SetRealtimeService(svc RealtimeStatsProvider) {
 	h.realtimeService = svc
+}
+
+// SetMigrationService sets the migration service for Supabase migration.
+func (h *Handler) SetMigrationService(svc *migration.Service) {
+	h.migrationService = svc
 }
 
 // RegisterRoutes registers the dashboard routes.
@@ -367,6 +374,30 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/emails/{id}", h.handleGetEmail)
 			r.Delete("/emails/{id}", h.handleDeleteEmail)
 			r.Delete("/emails", h.handleClearEmails)
+		})
+
+		// Migration management routes (require auth)
+		r.Route("/migrations", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/", h.handleMigrationsList)
+		})
+		r.Route("/migration", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Post("/start", h.handleMigrationStart)
+			r.Get("/{id}", h.handleMigrationGet)
+			r.Delete("/{id}", h.handleMigrationDelete)
+			r.Post("/{id}/connect", h.handleMigrationConnect)
+			r.Get("/{id}/projects", h.handleMigrationProjects)
+			r.Post("/{id}/select", h.handleMigrationSelect)
+			r.Post("/{id}/run", h.handleMigrationRun)
+			r.Post("/{id}/retry", h.handleMigrationRetry)
+			r.Post("/{id}/rollback", h.handleMigrationRollback)
+			r.Post("/{id}/password", h.handleSetDatabasePassword)
+			// Verification endpoints
+			r.Post("/{id}/verify/basic", h.handleVerifyBasic)
+			r.Post("/{id}/verify/integrity", h.handleVerifyIntegrity)
+			r.Post("/{id}/verify/functional", h.handleVerifyFunctional)
+			r.Get("/{id}/verify/results", h.handleVerifyResults)
 		})
 	})
 
@@ -6675,4 +6706,511 @@ func (h *Handler) handleClearEmails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Migration API Handlers
+
+// handleMigrationStart creates a new migration session.
+func (h *Handler) handleMigrationStart(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	m, err := h.migrationService.StartMigration()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(m)
+}
+
+// handleMigrationGet retrieves a migration by ID including items and progress.
+func (h *Handler) handleMigrationGet(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	m, err := h.migrationService.GetMigration(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	items, err := h.migrationService.GetItems(id)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	progress, err := h.migrationService.GetProgress(id)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"migration": m,
+		"items":     items,
+		"progress":  progress,
+	})
+}
+
+// handleMigrationConnect stores Supabase credentials and validates the token.
+func (h *Handler) handleMigrationConnect(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if req.Token == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Token is required"})
+		return
+	}
+
+	if err := h.migrationService.ConnectSupabase(id, req.Token); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else if strings.Contains(err.Error(), "invalid token") {
+			w.WriteHeader(http.StatusUnauthorized)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "connected"})
+}
+
+// handleMigrationProjects lists available Supabase projects for the connected account.
+func (h *Handler) handleMigrationProjects(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	projects, err := h.migrationService.ListSupabaseProjects(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else if strings.Contains(err.Error(), "no Supabase credentials") {
+			w.WriteHeader(http.StatusPreconditionFailed)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(projects)
+}
+
+// handleMigrationSelect accepts a selection of items to migrate.
+func (h *Handler) handleMigrationSelect(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	var req migration.SelectItemsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if err := h.migrationService.SelectItems(id, req); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleMigrationRun starts the migration execution.
+func (h *Handler) handleMigrationRun(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	if err := h.migrationService.RunMigration(id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else if strings.Contains(err.Error(), "no Supabase project") {
+			w.WriteHeader(http.StatusPreconditionFailed)
+		} else if strings.Contains(err.Error(), "no items selected") {
+			w.WriteHeader(http.StatusPreconditionFailed)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleMigrationRetry retries failed items by re-running the migration.
+func (h *Handler) handleMigrationRetry(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	// Reset failed items to pending so they can be retried
+	if err := h.migrationService.RetryFailedItems(id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Run the migration again (will only process pending items)
+	if err := h.migrationService.RunMigration(id); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleMigrationRollback undoes a completed or failed migration.
+func (h *Handler) handleMigrationRollback(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	if err := h.migrationService.Rollback(id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else if strings.Contains(err.Error(), "cannot rollback") {
+			w.WriteHeader(http.StatusConflict)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleMigrationDelete deletes a migration and all its items.
+func (h *Handler) handleMigrationDelete(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	if err := h.migrationService.DeleteMigration(id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleMigrationsList returns all migrations for history view.
+func (h *Handler) handleMigrationsList(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	migrations, err := h.migrationService.ListMigrations()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(migrations)
+}
+
+// handleSetDatabasePassword stores the Supabase database password for direct PostgreSQL connections.
+func (h *Handler) handleSetDatabasePassword(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if req.Password == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Password is required"})
+		return
+	}
+
+	if err := h.migrationService.SetDatabasePassword(id, req.Password); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleVerifyBasic runs basic verification checks for a migration.
+func (h *Handler) handleVerifyBasic(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	if err := h.migrationService.RunBasicVerification(id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else if strings.Contains(err.Error(), "no Supabase project") {
+			w.WriteHeader(http.StatusPreconditionFailed)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleVerifyIntegrity runs data integrity verification checks for a migration.
+func (h *Handler) handleVerifyIntegrity(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	if err := h.migrationService.RunIntegrityVerification(id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else if strings.Contains(err.Error(), "no Supabase project") {
+			w.WriteHeader(http.StatusPreconditionFailed)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleVerifyFunctional runs functional verification tests for a migration.
+func (h *Handler) handleVerifyFunctional(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	var opts migration.FunctionalTestOptions
+	if err := json.NewDecoder(r.Body).Decode(&opts); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if err := h.migrationService.RunFunctionalVerification(id, opts); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else if strings.Contains(err.Error(), "no Supabase project") {
+			w.WriteHeader(http.StatusPreconditionFailed)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleVerifyResults returns all verification results for a migration.
+func (h *Handler) handleVerifyResults(w http.ResponseWriter, r *http.Request) {
+	if h.migrationService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Migration service not configured"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing migration ID"})
+		return
+	}
+
+	verifications, err := h.migrationService.GetVerifications(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"verifications": verifications,
+	})
 }

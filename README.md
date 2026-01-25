@@ -8,7 +8,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 - **Scale to zero** - No idle resource consumption
 - **Single binary** - Easy deployment with no external dependencies
 - **Supabase compatible** - Works with the official `@supabase/supabase-js` client
-- **Migration path** - One-way migration to full Supabase when you outgrow it
+- **Migration path** - [One-click migration](docs/migrating-to-supabase.md) to full Supabase when you outgrow it
 
 ## Features
 
@@ -320,6 +320,7 @@ Enable with `--realtime` flag. Supports Broadcast, Presence, and Postgres Change
 - [Realtime](docs/realtime.md) - WebSocket subscriptions for Broadcast, Presence, and Postgres Changes
 - [Vector Search](docs/vector-search.md) - pgvector-compatible similarity search for AI/ML applications
 - [Static File Hosting](docs/static-hosting.md) - Serve your frontend alongside the API with SPA support
+- [Migrating to Supabase](docs/migrating-to-supabase.md) - Export data and migrate to full Supabase with one-click or manual process
 
 ### Operations
 - [Deployment Guide](docs/deployment.md) - VPS setup, systemd, Docker, HTTPS, backups, and security checklist

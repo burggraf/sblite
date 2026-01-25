@@ -402,6 +402,49 @@ func (s *Service) GetProgress(migrationID string) (*MigrationProgress, error) {
 	return progress, nil
 }
 
+// RetryFailedItems resets all failed items to pending so they can be retried.
+func (s *Service) RetryFailedItems(migrationID string) error {
+	// Verify migration exists
+	m, err := s.GetMigration(migrationID)
+	if err != nil {
+		return err
+	}
+
+	// Only allow retry on failed migrations
+	if m.Status != StatusFailed {
+		return fmt.Errorf("can only retry failed migrations (current status: %s)", m.Status)
+	}
+
+	// Get all items for this migration
+	items, err := s.state.GetItems(migrationID)
+	if err != nil {
+		return fmt.Errorf("get items: %w", err)
+	}
+
+	// Reset failed items to pending
+	for _, item := range items {
+		if item.Status == ItemFailed {
+			item.Status = ItemPending
+			item.ErrorMessage = ""
+			item.StartedAt = nil
+			item.CompletedAt = nil
+			if err := s.state.UpdateItem(item); err != nil {
+				return fmt.Errorf("reset item %s: %w", item.ID, err)
+			}
+		}
+	}
+
+	// Reset migration status to pending
+	m.Status = StatusPending
+	m.ErrorMessage = ""
+	m.CompletedAt = nil
+	if err := s.state.UpdateMigration(m); err != nil {
+		return fmt.Errorf("reset migration status: %w", err)
+	}
+
+	return nil
+}
+
 // getSupabaseClient returns a Supabase client for the given migration.
 // It creates a new client from stored credentials if not already cached.
 func (s *Service) getSupabaseClient(migrationID string) (*SupabaseClient, error) {
@@ -2534,4 +2577,1813 @@ func (v *basicVerifier) getSupabaseRLSTables() ([]string, error) {
 		tables = append(tables, name)
 	}
 	return tables, rows.Err()
+}
+
+// RunIntegrityVerification runs data integrity verification checks for a migration.
+// It creates a verification record, executes the checks, and stores the results.
+func (s *Service) RunIntegrityVerification(migrationID string) error {
+	m, err := s.GetMigration(migrationID)
+	if err != nil {
+		return fmt.Errorf("get migration: %w", err)
+	}
+
+	// Verify migration has a project selected
+	if m.SupabaseProjectRef == "" {
+		return fmt.Errorf("no Supabase project selected for migration")
+	}
+
+	// Create verification record
+	verification, err := s.state.CreateVerification(migrationID, LayerIntegrity)
+	if err != nil {
+		return fmt.Errorf("create verification: %w", err)
+	}
+
+	// Mark as running
+	now := time.Now().UTC()
+	verification.Status = VerifyRunning
+	verification.StartedAt = &now
+	if err := s.state.UpdateVerification(verification); err != nil {
+		return fmt.Errorf("update verification status: %w", err)
+	}
+
+	// Get migration items
+	items, err := s.state.GetItems(migrationID)
+	if err != nil {
+		s.markVerificationFailed(verification, fmt.Errorf("get items: %w", err))
+		return fmt.Errorf("get items: %w", err)
+	}
+
+	// Get Postgres connection
+	pgDB, err := s.getPostgresConnection(m)
+	if err != nil {
+		s.markVerificationFailed(verification, fmt.Errorf("get postgres connection: %w", err))
+		return fmt.Errorf("get postgres connection: %w", err)
+	}
+	defer pgDB.Close()
+
+	// Convert items to verification format
+	verifyItems := make([]*verificationItem, len(items))
+	for i, item := range items {
+		verifyItems[i] = &verificationItem{
+			ID:          item.ID,
+			MigrationID: item.MigrationID,
+			ItemType:    string(item.ItemType),
+			ItemName:    item.ItemName,
+			Status:      string(item.Status),
+			Metadata:    item.Metadata,
+		}
+	}
+
+	// Create verifier
+	verifier := newIntegrityVerifier(s.db, pgDB, m, verifyItems)
+
+	// Run checks
+	result, err := verifier.runIntegrityChecks()
+	if err != nil {
+		s.markVerificationFailed(verification, err)
+		return fmt.Errorf("run integrity checks: %w", err)
+	}
+
+	// Store results
+	resultsJSON, err := json.Marshal(result)
+	if err != nil {
+		s.markVerificationFailed(verification, fmt.Errorf("marshal results: %w", err))
+		return fmt.Errorf("marshal results: %w", err)
+	}
+
+	completedAt := time.Now().UTC()
+	verification.CompletedAt = &completedAt
+	verification.Results = resultsJSON
+
+	if result.Summary.Failed > 0 {
+		verification.Status = VerifyFailed
+	} else {
+		verification.Status = VerifyPassed
+	}
+
+	if err := s.state.UpdateVerification(verification); err != nil {
+		return fmt.Errorf("update verification: %w", err)
+	}
+
+	return nil
+}
+
+// integrityVerifier performs data integrity verification checks after migration.
+type integrityVerifier struct {
+	sbliteDB   *sql.DB
+	supabaseDB *sql.DB
+	migration  *Migration
+	items      []*verificationItem
+}
+
+func newIntegrityVerifier(
+	sbliteDB *sql.DB,
+	supabaseDB *sql.DB,
+	migration *Migration,
+	items []*verificationItem,
+) *integrityVerifier {
+	return &integrityVerifier{
+		sbliteDB:   sbliteDB,
+		supabaseDB: supabaseDB,
+		migration:  migration,
+		items:      items,
+	}
+}
+
+func (v *integrityVerifier) runIntegrityChecks() (*verificationResult, error) {
+	result := &verificationResult{
+		Layer:  LayerIntegrity,
+		Status: VerifyRunning,
+		Checks: []verificationCheckResult{},
+	}
+
+	// Group items by type for efficient checking
+	itemsByType := make(map[string][]*verificationItem)
+	for _, item := range v.items {
+		if item.Status == "completed" {
+			itemsByType[item.ItemType] = append(itemsByType[item.ItemType], item)
+		}
+	}
+
+	// Run row count checks for data items
+	if dataItems, ok := itemsByType["data"]; ok {
+		checks := v.checkRowCounts(dataItems)
+		result.Checks = append(result.Checks, checks...)
+
+		// Run sample row comparison
+		sampleChecks := v.checkSampleRows(dataItems)
+		result.Checks = append(result.Checks, sampleChecks...)
+
+		// Run foreign key integrity checks
+		fkChecks := v.checkForeignKeyIntegrity()
+		result.Checks = append(result.Checks, fkChecks...)
+	}
+
+	// Check storage file counts
+	if _, ok := itemsByType["storage_files"]; ok {
+		checks := v.checkStorageFileCounts()
+		result.Checks = append(result.Checks, checks...)
+	}
+
+	// Check user count
+	if _, ok := itemsByType["users"]; ok {
+		checks := v.checkUserCount()
+		result.Checks = append(result.Checks, checks...)
+	}
+
+	// Calculate summary
+	for _, check := range result.Checks {
+		result.Summary.Total++
+		if check.Passed {
+			result.Summary.Passed++
+		} else {
+			result.Summary.Failed++
+		}
+	}
+
+	// Set final status
+	if result.Summary.Failed > 0 {
+		result.Status = VerifyFailed
+	} else {
+		result.Status = VerifyPassed
+	}
+
+	return result, nil
+}
+
+// checkRowCounts compares row counts for all migrated tables.
+func (v *integrityVerifier) checkRowCounts(dataItems []*verificationItem) []verificationCheckResult {
+	var results []verificationCheckResult
+
+	for _, item := range dataItems {
+		tableName := item.ItemName
+
+		// Get row count from sblite
+		sbliteCount, err := v.getSbliteRowCount(tableName)
+		if err != nil {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("row_count_%s", tableName),
+				Passed:  false,
+				Message: fmt.Sprintf("Failed to get sblite row count for %s: %v", tableName, err),
+			})
+			continue
+		}
+
+		// Get row count from Supabase
+		supabaseCount, err := v.getSupabaseRowCount(tableName)
+		if err != nil {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("row_count_%s", tableName),
+				Passed:  false,
+				Message: fmt.Sprintf("Failed to get Supabase row count for %s: %v", tableName, err),
+			})
+			continue
+		}
+
+		if sbliteCount == supabaseCount {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("row_count_%s", tableName),
+				Passed:  true,
+				Message: fmt.Sprintf("Table %s has %d rows (matching)", tableName, sbliteCount),
+				Details: map[string]interface{}{
+					"count": sbliteCount,
+				},
+			})
+		} else {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("row_count_%s", tableName),
+				Passed:  false,
+				Message: fmt.Sprintf("Table %s row count mismatch: sblite=%d, Supabase=%d", tableName, sbliteCount, supabaseCount),
+				Details: map[string]interface{}{
+					"sblite_count":   sbliteCount,
+					"supabase_count": supabaseCount,
+					"difference":     sbliteCount - supabaseCount,
+				},
+			})
+		}
+	}
+
+	return results
+}
+
+// checkSampleRows compares first 10, last 10, and random 10 rows per table.
+func (v *integrityVerifier) checkSampleRows(dataItems []*verificationItem) []verificationCheckResult {
+	var results []verificationCheckResult
+
+	for _, item := range dataItems {
+		tableName := item.ItemName
+
+		// Get primary key or first column for ordering
+		orderColumn, err := v.getOrderColumn(tableName)
+		if err != nil {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("sample_rows_%s", tableName),
+				Passed:  false,
+				Message: fmt.Sprintf("Failed to determine order column for %s: %v", tableName, err),
+			})
+			continue
+		}
+
+		// Compare first 10 rows
+		firstResult := v.compareSampleRows(tableName, orderColumn, "first", 10)
+		results = append(results, firstResult)
+
+		// Compare last 10 rows
+		lastResult := v.compareSampleRows(tableName, orderColumn, "last", 10)
+		results = append(results, lastResult)
+
+		// Compare random 10 rows
+		randomResult := v.compareRandomRows(tableName, 10)
+		results = append(results, randomResult)
+	}
+
+	return results
+}
+
+// compareSampleRows compares a sample of rows between sblite and Supabase.
+func (v *integrityVerifier) compareSampleRows(tableName, orderColumn, position string, limit int) verificationCheckResult {
+	checkName := fmt.Sprintf("sample_%s_%s", position, tableName)
+
+	// Build order direction
+	orderDir := "ASC"
+	if position == "last" {
+		orderDir = "DESC"
+	}
+
+	// Get rows from sblite
+	sbliteRows, err := v.getSampleRows(v.sbliteDB, tableName, orderColumn, orderDir, limit, false)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get sblite %s rows for %s: %v", position, tableName, err),
+		}
+	}
+
+	// Get rows from Supabase
+	supabaseRows, err := v.getSampleRows(v.supabaseDB, tableName, orderColumn, orderDir, limit, true)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get Supabase %s rows for %s: %v", position, tableName, err),
+		}
+	}
+
+	// Compare rows
+	mismatches := v.compareRowSets(sbliteRows, supabaseRows)
+
+	if len(mismatches) == 0 {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  true,
+			Message: fmt.Sprintf("Table %s %s %d rows match", tableName, position, len(sbliteRows)),
+			Details: map[string]interface{}{
+				"rows_compared": len(sbliteRows),
+			},
+		}
+	}
+
+	return verificationCheckResult{
+		Name:    checkName,
+		Passed:  false,
+		Message: fmt.Sprintf("Table %s %s rows have %d mismatches", tableName, position, len(mismatches)),
+		Details: map[string]interface{}{
+			"rows_compared": len(sbliteRows),
+			"mismatches":    mismatches,
+		},
+	}
+}
+
+// compareRandomRows compares random rows between sblite and Supabase.
+func (v *integrityVerifier) compareRandomRows(tableName string, limit int) verificationCheckResult {
+	checkName := fmt.Sprintf("sample_random_%s", tableName)
+
+	// Get random rows from sblite using RANDOM()
+	sbliteRows, err := v.getRandomRows(v.sbliteDB, tableName, limit, false)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get sblite random rows for %s: %v", tableName, err),
+		}
+	}
+
+	if len(sbliteRows) == 0 {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  true,
+			Message: fmt.Sprintf("Table %s has no rows to compare", tableName),
+		}
+	}
+
+	// Get the same rows from Supabase by their primary key values
+	// First, we need to find matching rows
+	orderColumn, err := v.getOrderColumn(tableName)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get order column for %s: %v", tableName, err),
+		}
+	}
+
+	// Extract the order column values from sblite rows
+	var keyValues []interface{}
+	for _, row := range sbliteRows {
+		if val, ok := row[orderColumn]; ok {
+			keyValues = append(keyValues, val)
+		}
+	}
+
+	// Get matching rows from Supabase
+	supabaseRows, err := v.getRowsByKeys(v.supabaseDB, tableName, orderColumn, keyValues, true)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get Supabase matching rows for %s: %v", tableName, err),
+		}
+	}
+
+	// Compare rows
+	mismatches := v.compareRowSets(sbliteRows, supabaseRows)
+
+	if len(mismatches) == 0 {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  true,
+			Message: fmt.Sprintf("Table %s random %d rows match", tableName, len(sbliteRows)),
+			Details: map[string]interface{}{
+				"rows_compared": len(sbliteRows),
+			},
+		}
+	}
+
+	return verificationCheckResult{
+		Name:    checkName,
+		Passed:  false,
+		Message: fmt.Sprintf("Table %s random rows have %d mismatches", tableName, len(mismatches)),
+		Details: map[string]interface{}{
+			"rows_compared": len(sbliteRows),
+			"mismatches":    mismatches,
+		},
+	}
+}
+
+// checkStorageFileCounts compares object counts per bucket.
+func (v *integrityVerifier) checkStorageFileCounts() []verificationCheckResult {
+	var results []verificationCheckResult
+
+	// Get buckets from sblite
+	buckets, err := v.getSbliteBuckets()
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "storage_file_counts",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get sblite buckets: %v", err),
+		})
+		return results
+	}
+
+	if len(buckets) == 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "storage_file_counts",
+			Passed:  true,
+			Message: "No storage buckets to verify",
+		})
+		return results
+	}
+
+	for _, bucket := range buckets {
+		// Get object count from sblite
+		sbliteCount, err := v.getSbliteObjectCount(bucket)
+		if err != nil {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("storage_count_%s", bucket),
+				Passed:  false,
+				Message: fmt.Sprintf("Failed to get sblite object count for bucket %s: %v", bucket, err),
+			})
+			continue
+		}
+
+		// Get object count from Supabase
+		supabaseCount, err := v.getSupabaseObjectCount(bucket)
+		if err != nil {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("storage_count_%s", bucket),
+				Passed:  false,
+				Message: fmt.Sprintf("Failed to get Supabase object count for bucket %s: %v", bucket, err),
+			})
+			continue
+		}
+
+		if sbliteCount == supabaseCount {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("storage_count_%s", bucket),
+				Passed:  true,
+				Message: fmt.Sprintf("Bucket %s has %d objects (matching)", bucket, sbliteCount),
+				Details: map[string]interface{}{
+					"count": sbliteCount,
+				},
+			})
+		} else {
+			results = append(results, verificationCheckResult{
+				Name:    fmt.Sprintf("storage_count_%s", bucket),
+				Passed:  false,
+				Message: fmt.Sprintf("Bucket %s object count mismatch: sblite=%d, Supabase=%d", bucket, sbliteCount, supabaseCount),
+				Details: map[string]interface{}{
+					"sblite_count":   sbliteCount,
+					"supabase_count": supabaseCount,
+					"difference":     sbliteCount - supabaseCount,
+				},
+			})
+		}
+	}
+
+	return results
+}
+
+// checkUserCount compares auth.users count between sblite and Supabase.
+func (v *integrityVerifier) checkUserCount() []verificationCheckResult {
+	var results []verificationCheckResult
+
+	// Get user count from sblite
+	sbliteCount, err := v.getSbliteUserCount()
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "user_count",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get sblite user count: %v", err),
+		})
+		return results
+	}
+
+	// Get user count from Supabase
+	supabaseCount, err := v.getSupabaseUserCount()
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "user_count",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get Supabase user count: %v", err),
+		})
+		return results
+	}
+
+	if sbliteCount == supabaseCount {
+		results = append(results, verificationCheckResult{
+			Name:    "user_count",
+			Passed:  true,
+			Message: fmt.Sprintf("User count matches: %d users", sbliteCount),
+			Details: map[string]interface{}{
+				"count": sbliteCount,
+			},
+		})
+	} else {
+		results = append(results, verificationCheckResult{
+			Name:    "user_count",
+			Passed:  false,
+			Message: fmt.Sprintf("User count mismatch: sblite=%d, Supabase=%d", sbliteCount, supabaseCount),
+			Details: map[string]interface{}{
+				"sblite_count":   sbliteCount,
+				"supabase_count": supabaseCount,
+				"difference":     sbliteCount - supabaseCount,
+			},
+		})
+	}
+
+	return results
+}
+
+// checkForeignKeyIntegrity validates that all foreign key relationships are intact after migration.
+func (v *integrityVerifier) checkForeignKeyIntegrity() []verificationCheckResult {
+	var results []verificationCheckResult
+
+	// Query foreign key constraints from Supabase information_schema
+	query := `
+		SELECT
+			tc.constraint_name,
+			tc.table_name AS from_table,
+			kcu.column_name AS from_column,
+			ccu.table_name AS to_table,
+			ccu.column_name AS to_column
+		FROM information_schema.table_constraints tc
+		JOIN information_schema.key_column_usage kcu
+			ON tc.constraint_name = kcu.constraint_name
+			AND tc.table_schema = kcu.table_schema
+		JOIN information_schema.constraint_column_usage ccu
+			ON ccu.constraint_name = tc.constraint_name
+			AND ccu.table_schema = tc.table_schema
+		WHERE tc.constraint_type = 'FOREIGN KEY'
+		AND tc.table_schema = 'public'
+	`
+
+	rows, err := v.supabaseDB.Query(query)
+	if err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "foreign_key_integrity",
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to query foreign key constraints: %v", err),
+		})
+		return results
+	}
+	defer rows.Close()
+
+	// Collect all foreign key constraints
+	type fkConstraint struct {
+		constraintName string
+		fromTable      string
+		fromColumn     string
+		toTable        string
+		toColumn       string
+	}
+	var constraints []fkConstraint
+
+	for rows.Next() {
+		var fk fkConstraint
+		if err := rows.Scan(&fk.constraintName, &fk.fromTable, &fk.fromColumn, &fk.toTable, &fk.toColumn); err != nil {
+			results = append(results, verificationCheckResult{
+				Name:    "foreign_key_integrity",
+				Passed:  false,
+				Message: fmt.Sprintf("Failed to scan foreign key constraint: %v", err),
+			})
+			return results
+		}
+		constraints = append(constraints, fk)
+	}
+
+	if err := rows.Err(); err != nil {
+		results = append(results, verificationCheckResult{
+			Name:    "foreign_key_integrity",
+			Passed:  false,
+			Message: fmt.Sprintf("Error iterating foreign key constraints: %v", err),
+		})
+		return results
+	}
+
+	if len(constraints) == 0 {
+		results = append(results, verificationCheckResult{
+			Name:    "foreign_key_integrity",
+			Passed:  true,
+			Message: "No foreign key constraints found to verify",
+		})
+		return results
+	}
+
+	// Verify each foreign key constraint
+	for _, fk := range constraints {
+		checkResult := v.verifyForeignKeyConstraint(fk.constraintName, fk.fromTable, fk.fromColumn, fk.toTable, fk.toColumn)
+		results = append(results, checkResult)
+	}
+
+	return results
+}
+
+// verifyForeignKeyConstraint checks that all values in from_column exist in to_column.
+func (v *integrityVerifier) verifyForeignKeyConstraint(constraintName, fromTable, fromColumn, toTable, toColumn string) verificationCheckResult {
+	checkName := fmt.Sprintf("fk_%s", constraintName)
+
+	// Quote identifiers safely
+	quotedFromTable, err := quoteIdentifier(fromTable)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Invalid from_table name: %s", fromTable),
+		}
+	}
+	quotedFromColumn, err := quoteIdentifier(fromColumn)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Invalid from_column name: %s", fromColumn),
+		}
+	}
+	quotedToTable, err := quoteIdentifier(toTable)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Invalid to_table name: %s", toTable),
+		}
+	}
+	quotedToColumn, err := quoteIdentifier(toColumn)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Invalid to_column name: %s", toColumn),
+		}
+	}
+
+	// Query to find orphaned references (values in from_column that don't exist in to_column)
+	// We check in Supabase since that's where the FK constraints actually exist
+	orphanQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM %s f
+		WHERE f.%s IS NOT NULL
+		AND NOT EXISTS (
+			SELECT 1 FROM %s t WHERE t.%s = f.%s
+		)
+	`, quotedFromTable, quotedFromColumn, quotedToTable, quotedToColumn, quotedFromColumn)
+
+	var orphanCount int64
+	err = v.supabaseDB.QueryRow(orphanQuery).Scan(&orphanCount)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to check foreign key %s: %v", constraintName, err),
+			Details: map[string]interface{}{
+				"constraint":  constraintName,
+				"from_table":  fromTable,
+				"from_column": fromColumn,
+				"to_table":    toTable,
+				"to_column":   toColumn,
+			},
+		}
+	}
+
+	// Get total count of non-null foreign key references for context
+	totalQuery := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE %s IS NOT NULL`, quotedFromTable, quotedFromColumn)
+	var totalCount int64
+	if err := v.supabaseDB.QueryRow(totalQuery).Scan(&totalCount); err != nil {
+		totalCount = -1 // Unknown
+	}
+
+	if orphanCount == 0 {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  true,
+			Message: fmt.Sprintf("FK %s: %s.%s -> %s.%s (all %d references valid)", constraintName, fromTable, fromColumn, toTable, toColumn, totalCount),
+			Details: map[string]interface{}{
+				"constraint":      constraintName,
+				"from_table":      fromTable,
+				"from_column":     fromColumn,
+				"to_table":        toTable,
+				"to_column":       toColumn,
+				"total_references": totalCount,
+				"orphaned_count":  0,
+			},
+		}
+	}
+
+	// Get sample of orphaned values for debugging
+	sampleQuery := fmt.Sprintf(`
+		SELECT DISTINCT f.%s
+		FROM %s f
+		WHERE f.%s IS NOT NULL
+		AND NOT EXISTS (
+			SELECT 1 FROM %s t WHERE t.%s = f.%s
+		)
+		LIMIT 5
+	`, quotedFromColumn, quotedFromTable, quotedFromColumn, quotedToTable, quotedToColumn, quotedFromColumn)
+
+	sampleRows, err := v.supabaseDB.Query(sampleQuery)
+	var orphanedSamples []interface{}
+	if err == nil {
+		defer sampleRows.Close()
+		for sampleRows.Next() {
+			var val interface{}
+			if err := sampleRows.Scan(&val); err == nil {
+				orphanedSamples = append(orphanedSamples, val)
+			}
+		}
+		// Check for iteration errors (non-critical for verification result)
+		_ = sampleRows.Err()
+	}
+
+	return verificationCheckResult{
+		Name:    checkName,
+		Passed:  false,
+		Message: fmt.Sprintf("FK %s: %d orphaned references in %s.%s (missing from %s.%s)", constraintName, orphanCount, fromTable, fromColumn, toTable, toColumn),
+		Details: map[string]interface{}{
+			"constraint":       constraintName,
+			"from_table":       fromTable,
+			"from_column":      fromColumn,
+			"to_table":         toTable,
+			"to_column":        toColumn,
+			"total_references": totalCount,
+			"orphaned_count":   orphanCount,
+			"orphaned_samples": orphanedSamples,
+		},
+	}
+}
+
+// Helper methods for integrityVerifier
+
+func (v *integrityVerifier) getSbliteRowCount(tableName string) (int64, error) {
+	quotedTable, err := quoteIdentifier(tableName)
+	if err != nil {
+		return 0, err
+	}
+
+	var count int64
+	err = v.sbliteDB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", quotedTable)).Scan(&count)
+	return count, err
+}
+
+func (v *integrityVerifier) getSupabaseRowCount(tableName string) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	quotedTable, err := quoteIdentifier(tableName)
+	if err != nil {
+		return 0, err
+	}
+
+	var count int64
+	err = v.supabaseDB.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM public.%s", quotedTable)).Scan(&count)
+	return count, err
+}
+
+func (v *integrityVerifier) getOrderColumn(tableName string) (string, error) {
+	// Try to find primary key column from _columns metadata
+	var columnName string
+	err := v.sbliteDB.QueryRow(`
+		SELECT column_name FROM _columns
+		WHERE table_name = ? AND is_primary_key = 1
+		ORDER BY ordinal_position LIMIT 1
+	`, tableName).Scan(&columnName)
+
+	if err == nil {
+		return columnName, nil
+	}
+
+	// Fallback: get first column
+	err = v.sbliteDB.QueryRow(`
+		SELECT column_name FROM _columns
+		WHERE table_name = ?
+		ORDER BY ordinal_position LIMIT 1
+	`, tableName).Scan(&columnName)
+
+	if err == nil {
+		return columnName, nil
+	}
+
+	// Final fallback: use SQLite pragma
+	rows, err := v.sbliteDB.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var dfltValue interface{}
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dfltValue, &pk); err != nil {
+			return "", err
+		}
+		return name, nil
+	}
+
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("error reading table_info: %w", err)
+	}
+
+	return "", fmt.Errorf("no columns found for table %s", tableName)
+}
+
+func (v *integrityVerifier) getSampleRows(db *sql.DB, tableName, orderColumn, orderDir string, limit int, isPostgres bool) ([]map[string]interface{}, error) {
+	quotedTable, err := quoteIdentifier(tableName)
+	if err != nil {
+		return nil, err
+	}
+	quotedColumn, err := quoteIdentifier(orderColumn)
+	if err != nil {
+		return nil, err
+	}
+
+	var query string
+	if isPostgres {
+		query = fmt.Sprintf("SELECT * FROM public.%s ORDER BY %s %s LIMIT %d", quotedTable, quotedColumn, orderDir, limit)
+	} else {
+		query = fmt.Sprintf("SELECT * FROM %s ORDER BY %s %s LIMIT %d", quotedTable, quotedColumn, orderDir, limit)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanRowsToMaps(rows)
+}
+
+func (v *integrityVerifier) getRandomRows(db *sql.DB, tableName string, limit int, isPostgres bool) ([]map[string]interface{}, error) {
+	quotedTable, err := quoteIdentifier(tableName)
+	if err != nil {
+		return nil, err
+	}
+
+	var query string
+	if isPostgres {
+		query = fmt.Sprintf("SELECT * FROM public.%s ORDER BY RANDOM() LIMIT %d", quotedTable, limit)
+	} else {
+		query = fmt.Sprintf("SELECT * FROM %s ORDER BY RANDOM() LIMIT %d", quotedTable, limit)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanRowsToMaps(rows)
+}
+
+func (v *integrityVerifier) getRowsByKeys(db *sql.DB, tableName, keyColumn string, keyValues []interface{}, isPostgres bool) ([]map[string]interface{}, error) {
+	if len(keyValues) == 0 {
+		return nil, nil
+	}
+
+	quotedTable, err := quoteIdentifier(tableName)
+	if err != nil {
+		return nil, err
+	}
+	quotedColumn, err := quoteIdentifier(keyColumn)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build placeholders
+	placeholders := make([]string, len(keyValues))
+	for i := range keyValues {
+		if isPostgres {
+			placeholders[i] = fmt.Sprintf("$%d", i+1)
+		} else {
+			placeholders[i] = "?"
+		}
+	}
+
+	var query string
+	if isPostgres {
+		query = fmt.Sprintf("SELECT * FROM public.%s WHERE %s IN (%s) ORDER BY %s",
+			quotedTable, quotedColumn, strings.Join(placeholders, ","), quotedColumn)
+	} else {
+		query = fmt.Sprintf("SELECT * FROM %s WHERE %s IN (%s) ORDER BY %s",
+			quotedTable, quotedColumn, strings.Join(placeholders, ","), quotedColumn)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, query, keyValues...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanRowsToMaps(rows)
+}
+
+func (v *integrityVerifier) getSbliteBuckets() ([]string, error) {
+	rows, err := v.sbliteDB.Query("SELECT id FROM storage_buckets ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var buckets []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		buckets = append(buckets, id)
+	}
+	return buckets, rows.Err()
+}
+
+func (v *integrityVerifier) getSbliteObjectCount(bucket string) (int64, error) {
+	var count int64
+	err := v.sbliteDB.QueryRow("SELECT COUNT(*) FROM storage_objects WHERE bucket_id = ?", bucket).Scan(&count)
+	return count, err
+}
+
+func (v *integrityVerifier) getSupabaseObjectCount(bucket string) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var count int64
+	err := v.supabaseDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM storage.objects WHERE bucket_id = $1", bucket).Scan(&count)
+	return count, err
+}
+
+func (v *integrityVerifier) getSbliteUserCount() (int64, error) {
+	var count int64
+	err := v.sbliteDB.QueryRow("SELECT COUNT(*) FROM auth_users").Scan(&count)
+	return count, err
+}
+
+func (v *integrityVerifier) getSupabaseUserCount() (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var count int64
+	err := v.supabaseDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM auth.users").Scan(&count)
+	return count, err
+}
+
+// scanRowsToMaps converts sql.Rows to a slice of maps.
+func scanRowsToMaps(rows *sql.Rows) ([]map[string]interface{}, error) {
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []map[string]interface{}
+
+	for rows.Next() {
+		// Create slice of interface{} to hold values
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, err
+		}
+
+		// Convert to map
+		rowMap := make(map[string]interface{})
+		for i, col := range columns {
+			val := values[i]
+			// Convert []byte to string for comparison
+			if b, ok := val.([]byte); ok {
+				rowMap[col] = string(b)
+			} else {
+				rowMap[col] = val
+			}
+		}
+		result = append(result, rowMap)
+	}
+
+	return result, rows.Err()
+}
+
+// compareRowSets compares two sets of rows and returns mismatches.
+func (v *integrityVerifier) compareRowSets(sbliteRows, supabaseRows []map[string]interface{}) []map[string]interface{} {
+	var mismatches []map[string]interface{}
+
+	// Build lookup map from Supabase rows by JSON serialization
+	supabaseMap := make(map[string]map[string]interface{})
+	for _, row := range supabaseRows {
+		key := rowToKey(row)
+		supabaseMap[key] = row
+	}
+
+	// Check each sblite row
+	for _, sbliteRow := range sbliteRows {
+		key := rowToKey(sbliteRow)
+		if _, found := supabaseMap[key]; !found {
+			// Try to find a partial match for better reporting
+			mismatch := map[string]interface{}{
+				"type":       "missing_or_different",
+				"sblite_row": sbliteRow,
+			}
+
+			// Look for matching row by comparing normalized values
+			for _, supabaseRow := range supabaseRows {
+				if rowsPartialMatch(sbliteRow, supabaseRow) {
+					mismatch["type"] = "different"
+					mismatch["supabase_row"] = supabaseRow
+					mismatch["differences"] = findRowDifferences(sbliteRow, supabaseRow)
+					break
+				}
+			}
+
+			mismatches = append(mismatches, mismatch)
+		}
+	}
+
+	return mismatches
+}
+
+// rowToKey creates a comparable key from a row map.
+func rowToKey(row map[string]interface{}) string {
+	// Normalize values for comparison
+	normalized := make(map[string]interface{})
+	for k, v := range row {
+		normalized[k] = normalizeValue(v)
+	}
+	b, _ := json.Marshal(normalized)
+	return string(b)
+}
+
+// normalizeValue normalizes a value for comparison between SQLite and PostgreSQL.
+func normalizeValue(v interface{}) interface{} {
+	if v == nil {
+		return nil
+	}
+
+	switch val := v.(type) {
+	case []byte:
+		return string(val)
+	case int64:
+		return val
+	case float64:
+		// Handle integer floats
+		if val == float64(int64(val)) {
+			return int64(val)
+		}
+		return val
+	case bool:
+		// SQLite stores booleans as 0/1
+		if val {
+			return int64(1)
+		}
+		return int64(0)
+	case time.Time:
+		return val.UTC().Format(time.RFC3339)
+	case string:
+		// Try to parse as time and normalize
+		if t, err := time.Parse(time.RFC3339, val); err == nil {
+			return t.UTC().Format(time.RFC3339)
+		}
+		if t, err := time.Parse("2006-01-02T15:04:05Z07:00", val); err == nil {
+			return t.UTC().Format(time.RFC3339)
+		}
+		return val
+	default:
+		return v
+	}
+}
+
+// rowsPartialMatch checks if two rows have the same primary key / first column.
+func rowsPartialMatch(row1, row2 map[string]interface{}) bool {
+	// Find first common column
+	for k := range row1 {
+		if v2, ok := row2[k]; ok {
+			n1 := normalizeValue(row1[k])
+			n2 := normalizeValue(v2)
+			if fmt.Sprintf("%v", n1) == fmt.Sprintf("%v", n2) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// findRowDifferences returns the columns that differ between two rows.
+func findRowDifferences(row1, row2 map[string]interface{}) []map[string]interface{} {
+	var differences []map[string]interface{}
+
+	for k, v1 := range row1 {
+		v2, ok := row2[k]
+		if !ok {
+			differences = append(differences, map[string]interface{}{
+				"column":        k,
+				"sblite_value":  v1,
+				"supabase_note": "column missing",
+			})
+			continue
+		}
+
+		n1 := normalizeValue(v1)
+		n2 := normalizeValue(v2)
+
+		if fmt.Sprintf("%v", n1) != fmt.Sprintf("%v", n2) {
+			differences = append(differences, map[string]interface{}{
+				"column":         k,
+				"sblite_value":   v1,
+				"supabase_value": v2,
+			})
+		}
+	}
+
+	return differences
+}
+
+// FunctionalTestOptions specifies what functional tests to run.
+type FunctionalTestOptions struct {
+	TestTableName    string `json:"test_table_name"`    // Table for SELECT test
+	TestBucketID     string `json:"test_bucket_id"`     // Bucket for storage test
+	TestFunctionName string `json:"test_function_name"` // Function to invoke
+	TestAuthUser     bool   `json:"test_auth_user"`     // Whether to test user creation
+}
+
+// RunFunctionalVerification runs functional verification tests for a migration.
+// It performs live tests against the Supabase project to verify functionality.
+func (s *Service) RunFunctionalVerification(migrationID string, opts FunctionalTestOptions) error {
+	m, err := s.GetMigration(migrationID)
+	if err != nil {
+		return fmt.Errorf("get migration: %w", err)
+	}
+
+	// Verify migration has a project selected
+	if m.SupabaseProjectRef == "" {
+		return fmt.Errorf("no Supabase project selected for migration")
+	}
+
+	// Create verification record
+	verification, err := s.state.CreateVerification(migrationID, LayerFunctional)
+	if err != nil {
+		return fmt.Errorf("create verification: %w", err)
+	}
+
+	// Mark as running
+	now := time.Now().UTC()
+	verification.Status = VerifyRunning
+	verification.StartedAt = &now
+	if err := s.state.UpdateVerification(verification); err != nil {
+		return fmt.Errorf("update verification status: %w", err)
+	}
+
+	// Get Supabase client for API access
+	client, err := s.getSupabaseClient(migrationID)
+	if err != nil {
+		s.markVerificationFailed(verification, fmt.Errorf("get supabase client: %w", err))
+		return fmt.Errorf("get supabase client: %w", err)
+	}
+
+	// Get API keys for storage and function tests
+	apiKeys, err := client.GetAPIKeys(m.SupabaseProjectRef)
+	if err != nil {
+		s.markVerificationFailed(verification, fmt.Errorf("get api keys: %w", err))
+		return fmt.Errorf("get api keys: %w", err)
+	}
+
+	// Find the required keys
+	var serviceKey, anonKey string
+	for _, key := range apiKeys {
+		switch key.Name {
+		case "service_role":
+			serviceKey = key.APIKey
+		case "anon":
+			anonKey = key.APIKey
+		}
+	}
+
+	if serviceKey == "" {
+		s.markVerificationFailed(verification, fmt.Errorf("service_role key not found"))
+		return fmt.Errorf("service_role key not found")
+	}
+
+	// Get Postgres connection for query test
+	pgDB, err := s.getPostgresConnection(m)
+	if err != nil {
+		s.markVerificationFailed(verification, fmt.Errorf("get postgres connection: %w", err))
+		return fmt.Errorf("get postgres connection: %w", err)
+	}
+	defer pgDB.Close()
+
+	// Create verifier
+	verifier := newFunctionalVerifier(pgDB, m.SupabaseProjectRef, serviceKey, anonKey, opts)
+
+	// Run checks
+	result, err := verifier.runFunctionalChecks()
+	if err != nil {
+		s.markVerificationFailed(verification, err)
+		return fmt.Errorf("run functional checks: %w", err)
+	}
+
+	// Store results
+	resultsJSON, err := json.Marshal(result)
+	if err != nil {
+		s.markVerificationFailed(verification, fmt.Errorf("marshal results: %w", err))
+		return fmt.Errorf("marshal results: %w", err)
+	}
+
+	completedAt := time.Now().UTC()
+	verification.CompletedAt = &completedAt
+	verification.Results = resultsJSON
+
+	if result.Summary.Failed > 0 {
+		verification.Status = VerifyFailed
+	} else {
+		verification.Status = VerifyPassed
+	}
+
+	if err := s.state.UpdateVerification(verification); err != nil {
+		return fmt.Errorf("update verification: %w", err)
+	}
+
+	return nil
+}
+
+// functionalVerifier performs functional verification tests against Supabase.
+type functionalVerifier struct {
+	supabaseDB  *sql.DB
+	projectRef  string
+	serviceKey  string
+	anonKey     string
+	opts        FunctionalTestOptions
+	httpClient  *http.Client
+}
+
+func newFunctionalVerifier(
+	supabaseDB *sql.DB,
+	projectRef string,
+	serviceKey string,
+	anonKey string,
+	opts FunctionalTestOptions,
+) *functionalVerifier {
+	return &functionalVerifier{
+		supabaseDB: supabaseDB,
+		projectRef: projectRef,
+		serviceKey: serviceKey,
+		anonKey:    anonKey,
+		opts:       opts,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
+}
+
+func (v *functionalVerifier) runFunctionalChecks() (*verificationResult, error) {
+	result := &verificationResult{
+		Layer:  LayerFunctional,
+		Status: VerifyRunning,
+		Checks: []verificationCheckResult{},
+	}
+
+	// Run test query if table name provided
+	if v.opts.TestTableName != "" {
+		check := v.testQuery(v.opts.TestTableName)
+		result.Checks = append(result.Checks, check)
+	}
+
+	// Run storage upload/download test if bucket ID provided
+	if v.opts.TestBucketID != "" {
+		check := v.testStorageUploadDownload(v.opts.TestBucketID)
+		result.Checks = append(result.Checks, check)
+	}
+
+	// Run function invocation test if function name provided
+	if v.opts.TestFunctionName != "" {
+		check := v.testFunctionInvocation(v.opts.TestFunctionName)
+		result.Checks = append(result.Checks, check)
+	}
+
+	// Run auth flow test if requested
+	if v.opts.TestAuthUser {
+		check := v.testAuthFlow()
+		result.Checks = append(result.Checks, check)
+	}
+
+	// Calculate summary
+	for _, check := range result.Checks {
+		result.Summary.Total++
+		if check.Passed {
+			result.Summary.Passed++
+		} else {
+			result.Summary.Failed++
+		}
+	}
+
+	// Set final status
+	if result.Summary.Failed > 0 {
+		result.Status = VerifyFailed
+	} else {
+		result.Status = VerifyPassed
+	}
+
+	return result, nil
+}
+
+// testQuery executes a simple SELECT query against the specified table.
+func (v *functionalVerifier) testQuery(tableName string) verificationCheckResult {
+	checkName := fmt.Sprintf("query_test_%s", tableName)
+
+	// Validate and quote the table name
+	quotedTable, err := quoteIdentifier(tableName)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Invalid table name: %s", tableName),
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Execute a simple SELECT query
+	query := fmt.Sprintf("SELECT * FROM public.%s LIMIT 1", quotedTable)
+	rows, err := v.supabaseDB.QueryContext(ctx, query)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Query failed on table %s: %v", tableName, err),
+		}
+	}
+	defer rows.Close()
+
+	// Get column names to verify table structure
+	columns, err := rows.Columns()
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to get columns from %s: %v", tableName, err),
+		}
+	}
+
+	// Count rows returned
+	rowCount := 0
+	for rows.Next() {
+		rowCount++
+	}
+
+	if err := rows.Err(); err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Error iterating results from %s: %v", tableName, err),
+		}
+	}
+
+	return verificationCheckResult{
+		Name:    checkName,
+		Passed:  true,
+		Message: fmt.Sprintf("Query executed successfully on table %s (%d columns, %d rows returned)", tableName, len(columns), rowCount),
+		Details: map[string]interface{}{
+			"table":        tableName,
+			"column_count": len(columns),
+			"row_count":    rowCount,
+		},
+	}
+}
+
+// testStorageUploadDownload tests storage API by uploading, downloading, verifying, and deleting a test file.
+func (v *functionalVerifier) testStorageUploadDownload(bucketID string) verificationCheckResult {
+	checkName := fmt.Sprintf("storage_test_%s", bucketID)
+
+	// Generate unique test file name and content
+	timestamp := time.Now().UnixNano()
+	fileName := fmt.Sprintf("test-verify-%d.txt", timestamp)
+	fileContent := fmt.Sprintf("verification-test-%d", timestamp)
+	filePath := fileName
+
+	baseURL := fmt.Sprintf("https://%s.supabase.co/storage/v1", v.projectRef)
+
+	// Step 1: Upload test file
+	uploadURL := fmt.Sprintf("%s/object/%s/%s", baseURL, bucketID, filePath)
+	uploadReq, err := http.NewRequest(http.MethodPost, uploadURL, strings.NewReader(fileContent))
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to create upload request: %v", err),
+		}
+	}
+	uploadReq.Header.Set("Authorization", "Bearer "+v.serviceKey)
+	uploadReq.Header.Set("Content-Type", "text/plain")
+
+	uploadResp, err := v.httpClient.Do(uploadReq)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Upload request failed: %v", err),
+		}
+	}
+	uploadBody, err := io.ReadAll(uploadResp.Body)
+	uploadResp.Body.Close()
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to read upload response: %v", err),
+		}
+	}
+
+	if uploadResp.StatusCode != http.StatusOK && uploadResp.StatusCode != http.StatusCreated {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Upload failed with status %d: %s", uploadResp.StatusCode, string(uploadBody)),
+			Details: map[string]interface{}{
+				"bucket":    bucketID,
+				"file":      filePath,
+				"operation": "upload",
+			},
+		}
+	}
+
+	// Step 2: Download and verify the file
+	downloadURL := fmt.Sprintf("%s/object/%s/%s", baseURL, bucketID, filePath)
+	downloadReq, err := http.NewRequest(http.MethodGet, downloadURL, nil)
+	if err != nil {
+		// Try to clean up
+		v.deleteStorageObject(bucketID, filePath)
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to create download request: %v", err),
+		}
+	}
+	downloadReq.Header.Set("Authorization", "Bearer "+v.serviceKey)
+
+	downloadResp, err := v.httpClient.Do(downloadReq)
+	if err != nil {
+		v.deleteStorageObject(bucketID, filePath)
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Download request failed: %v", err),
+		}
+	}
+	downloadedContent, err := io.ReadAll(downloadResp.Body)
+	downloadResp.Body.Close()
+	if err != nil {
+		v.deleteStorageObject(bucketID, filePath)
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to read download response: %v", err),
+		}
+	}
+
+	if downloadResp.StatusCode != http.StatusOK {
+		v.deleteStorageObject(bucketID, filePath)
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Download failed with status %d", downloadResp.StatusCode),
+			Details: map[string]interface{}{
+				"bucket":    bucketID,
+				"file":      filePath,
+				"operation": "download",
+			},
+		}
+	}
+
+	// Step 3: Verify content matches
+	if string(downloadedContent) != fileContent {
+		v.deleteStorageObject(bucketID, filePath)
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: "Downloaded content does not match uploaded content",
+			Details: map[string]interface{}{
+				"bucket":           bucketID,
+				"file":             filePath,
+				"expected_content": fileContent,
+				"actual_content":   string(downloadedContent),
+			},
+		}
+	}
+
+	// Step 4: Delete the test file
+	if err := v.deleteStorageObject(bucketID, filePath); err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to delete test file: %v", err),
+			Details: map[string]interface{}{
+				"bucket":    bucketID,
+				"file":      filePath,
+				"operation": "delete",
+			},
+		}
+	}
+
+	return verificationCheckResult{
+		Name:    checkName,
+		Passed:  true,
+		Message: fmt.Sprintf("Storage API test passed for bucket %s (upload, download, verify, delete)", bucketID),
+		Details: map[string]interface{}{
+			"bucket":        bucketID,
+			"test_file":     filePath,
+			"content_size":  len(fileContent),
+			"content_match": true,
+		},
+	}
+}
+
+// deleteStorageObject deletes an object from Supabase storage.
+func (v *functionalVerifier) deleteStorageObject(bucketID, path string) error {
+	baseURL := fmt.Sprintf("https://%s.supabase.co/storage/v1", v.projectRef)
+	deleteURL := fmt.Sprintf("%s/object/%s/%s", baseURL, bucketID, path)
+
+	deleteReq, err := http.NewRequest(http.MethodDelete, deleteURL, nil)
+	if err != nil {
+		return fmt.Errorf("create delete request: %w", err)
+	}
+	deleteReq.Header.Set("Authorization", "Bearer "+v.serviceKey)
+
+	deleteResp, err := v.httpClient.Do(deleteReq)
+	if err != nil {
+		return fmt.Errorf("delete request: %w", err)
+	}
+	deleteResp.Body.Close()
+
+	if deleteResp.StatusCode != http.StatusOK && deleteResp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("delete failed with status %d", deleteResp.StatusCode)
+	}
+
+	return nil
+}
+
+// testFunctionInvocation tests invoking an edge function with a simple payload.
+func (v *functionalVerifier) testFunctionInvocation(funcName string) verificationCheckResult {
+	checkName := fmt.Sprintf("function_test_%s", funcName)
+
+	// Supabase edge function URL format
+	funcURL := fmt.Sprintf("https://%s.supabase.co/functions/v1/%s", v.projectRef, funcName)
+
+	// Create request with test payload
+	payload := []byte(`{"test": true}`)
+	req, err := http.NewRequest(http.MethodPost, funcURL, bytes.NewReader(payload))
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to create request: %v", err),
+		}
+	}
+
+	req.Header.Set("Authorization", "Bearer "+v.anonKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := v.httpClient.Do(req)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Function invocation failed: %v", err),
+		}
+	}
+	respBody, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to read function response: %v", err),
+		}
+	}
+
+	// Accept any 2xx response as success
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  true,
+			Message: fmt.Sprintf("Function %s invoked successfully (status %d)", funcName, resp.StatusCode),
+			Details: map[string]interface{}{
+				"function":    funcName,
+				"status_code": resp.StatusCode,
+				"response":    string(respBody),
+			},
+		}
+	}
+
+	return verificationCheckResult{
+		Name:    checkName,
+		Passed:  false,
+		Message: fmt.Sprintf("Function %s returned non-2xx status: %d", funcName, resp.StatusCode),
+		Details: map[string]interface{}{
+			"function":    funcName,
+			"status_code": resp.StatusCode,
+			"response":    string(respBody),
+		},
+	}
+}
+
+// testAuthFlow tests the auth API by creating a temp user, signing in, and deleting.
+func (v *functionalVerifier) testAuthFlow() verificationCheckResult {
+	checkName := "auth_test"
+
+	// Generate unique test email
+	timestamp := time.Now().UnixNano()
+	testEmail := fmt.Sprintf("test-verify-%d@sblite-migration-test.local", timestamp)
+	testPassword := fmt.Sprintf("testpass%d!", timestamp)
+
+	baseURL := fmt.Sprintf("https://%s.supabase.co", v.projectRef)
+	authURL := baseURL + "/auth/v1"
+
+	// Step 1: Create test user via admin API
+	signupPayload := map[string]string{
+		"email":    testEmail,
+		"password": testPassword,
+	}
+	signupBody, _ := json.Marshal(signupPayload)
+
+	signupReq, err := http.NewRequest(http.MethodPost, authURL+"/admin/users", bytes.NewReader(signupBody))
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to create signup request: %v", err),
+		}
+	}
+	signupReq.Header.Set("Authorization", "Bearer "+v.serviceKey)
+	signupReq.Header.Set("Content-Type", "application/json")
+	signupReq.Header.Set("apikey", v.serviceKey)
+
+	signupResp, err := v.httpClient.Do(signupReq)
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Signup request failed: %v", err),
+		}
+	}
+	signupRespBody, err := io.ReadAll(signupResp.Body)
+	signupResp.Body.Close()
+	if err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to read signup response: %v", err),
+		}
+	}
+
+	if signupResp.StatusCode != http.StatusOK && signupResp.StatusCode != http.StatusCreated {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("User creation failed with status %d: %s", signupResp.StatusCode, string(signupRespBody)),
+			Details: map[string]interface{}{
+				"operation": "create_user",
+			},
+		}
+	}
+
+	// Parse user ID from response
+	var signupResult struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(signupRespBody, &signupResult); err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to parse user creation response: %v", err),
+		}
+	}
+
+	userID := signupResult.ID
+	if userID == "" {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: "User creation did not return a user ID",
+		}
+	}
+
+	// Step 2: Sign in with password grant
+	tokenPayload := map[string]string{
+		"email":    testEmail,
+		"password": testPassword,
+	}
+	tokenBody, _ := json.Marshal(tokenPayload)
+
+	tokenReq, err := http.NewRequest(http.MethodPost, authURL+"/token?grant_type=password", bytes.NewReader(tokenBody))
+	if err != nil {
+		v.deleteTestUser(userID)
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to create token request: %v", err),
+		}
+	}
+	tokenReq.Header.Set("Content-Type", "application/json")
+	tokenReq.Header.Set("apikey", v.anonKey)
+
+	tokenResp, err := v.httpClient.Do(tokenReq)
+	if err != nil {
+		v.deleteTestUser(userID)
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Token request failed: %v", err),
+		}
+	}
+	tokenRespBody, err := io.ReadAll(tokenResp.Body)
+	tokenResp.Body.Close()
+	if err != nil {
+		v.deleteTestUser(userID)
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to read token response: %v", err),
+		}
+	}
+
+	if tokenResp.StatusCode != http.StatusOK {
+		v.deleteTestUser(userID)
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Sign in failed with status %d: %s", tokenResp.StatusCode, string(tokenRespBody)),
+			Details: map[string]interface{}{
+				"operation": "sign_in",
+			},
+		}
+	}
+
+	// Verify we got an access token
+	var tokenResult struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(tokenRespBody, &tokenResult); err != nil || tokenResult.AccessToken == "" {
+		v.deleteTestUser(userID)
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: "Sign in did not return an access token",
+		}
+	}
+
+	// Step 3: Delete the test user
+	if err := v.deleteTestUser(userID); err != nil {
+		return verificationCheckResult{
+			Name:    checkName,
+			Passed:  false,
+			Message: fmt.Sprintf("Failed to delete test user: %v", err),
+			Details: map[string]interface{}{
+				"operation": "delete_user",
+				"user_id":   userID,
+			},
+		}
+	}
+
+	return verificationCheckResult{
+		Name:    checkName,
+		Passed:  true,
+		Message: "Auth API test passed (create user, sign in, delete user)",
+		Details: map[string]interface{}{
+			"test_email":     testEmail,
+			"operations":     []string{"create_user", "sign_in", "delete_user"},
+			"all_successful": true,
+		},
+	}
+}
+
+// deleteTestUser deletes a test user via the Supabase admin API.
+func (v *functionalVerifier) deleteTestUser(userID string) error {
+	authURL := fmt.Sprintf("https://%s.supabase.co/auth/v1", v.projectRef)
+	deleteURL := fmt.Sprintf("%s/admin/users/%s", authURL, userID)
+
+	deleteReq, err := http.NewRequest(http.MethodDelete, deleteURL, nil)
+	if err != nil {
+		return fmt.Errorf("create delete request: %w", err)
+	}
+	deleteReq.Header.Set("Authorization", "Bearer "+v.serviceKey)
+	deleteReq.Header.Set("apikey", v.serviceKey)
+
+	deleteResp, err := v.httpClient.Do(deleteReq)
+	if err != nil {
+		return fmt.Errorf("delete request: %w", err)
+	}
+	deleteResp.Body.Close()
+
+	if deleteResp.StatusCode != http.StatusOK && deleteResp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("delete failed with status %d", deleteResp.StatusCode)
+	}
+
+	return nil
 }
