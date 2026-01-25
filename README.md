@@ -322,6 +322,7 @@ Enable with `--realtime` flag. Supports Broadcast, Presence, and Postgres Change
 - [Static File Hosting](docs/static-hosting.md) - Serve your frontend alongside the API with SPA support
 
 ### Operations
+- [Deployment Guide](docs/deployment.md) - VPS setup, systemd, Docker, HTTPS, backups, and security checklist
 - [Release Guide](docs/RELEASES.md) - Creating releases, building edge runtime, and platform support
 
 ### Design & Implementation
