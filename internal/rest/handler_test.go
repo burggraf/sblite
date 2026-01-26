@@ -1682,3 +1682,138 @@ func TestValidateRow(t *testing.T) {
 		}
 	})
 }
+
+func TestIsInternalTable(t *testing.T) {
+	tests := []struct {
+		name     string
+		table    string
+		expected bool
+	}{
+		// Internal tables (should be blocked)
+		{"underscore prefix: _columns", "_columns", true},
+		{"underscore prefix: _dashboard", "_dashboard", true},
+		{"underscore prefix: _rls_policies", "_rls_policies", true},
+		{"underscore prefix: _schema_migrations", "_schema_migrations", true},
+		{"underscore prefix: _functions", "_functions", true},
+		{"auth prefix: auth_users", "auth_users", true},
+		{"auth prefix: auth_sessions", "auth_sessions", true},
+		{"auth prefix: auth_refresh_tokens", "auth_refresh_tokens", true},
+		{"auth prefix: auth_identities", "auth_identities", true},
+		{"storage prefix: storage_buckets", "storage_buckets", true},
+		{"storage prefix: storage_objects", "storage_objects", true},
+		{"sqlite prefix: sqlite_sequence", "sqlite_sequence", true},
+		{"sqlite prefix: sqlite_master", "sqlite_master", true},
+
+		// User tables (should be allowed)
+		{"user table: todos", "todos", false},
+		{"user table: users", "users", false},
+		{"user table: profiles", "profiles", false},
+		{"user table: countries", "countries", false},
+		{"user table: cities", "cities", false},
+		{"table with auth in name: auth_logs", "authentication_logs", false},
+		{"table with storage in name: storage_files", "user_storage", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isInternalTable(tt.table)
+			if result != tt.expected {
+				t.Errorf("isInternalTable(%q) = %v, want %v", tt.table, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestInternalTableAccess(t *testing.T) {
+	handler, database := setupTestHandler(t)
+	defer database.Close()
+
+	r := chi.NewRouter()
+	r.Get("/rest/v1/{table}", handler.HandleSelect)
+	r.Post("/rest/v1/{table}", handler.HandleInsert)
+	r.Patch("/rest/v1/{table}", handler.HandleUpdate)
+	r.Delete("/rest/v1/{table}", handler.HandleDelete)
+
+	internalTables := []string{
+		"auth_users",
+		"auth_sessions",
+		"_columns",
+		"_dashboard",
+		"storage_buckets",
+		"sqlite_sequence",
+	}
+
+	t.Run("SELECT blocked for internal tables", func(t *testing.T) {
+		for _, table := range internalTables {
+			req := httptest.NewRequest("GET", "/rest/v1/"+table, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusNotFound {
+				t.Errorf("SELECT on %s: expected status 404, got %d: %s", table, w.Code, w.Body.String())
+			}
+
+			// Verify error response format
+			var response map[string]string
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err == nil {
+				if response["error"] != "table_not_found" {
+					t.Errorf("SELECT on %s: expected error code 'table_not_found', got %q", table, response["error"])
+				}
+			}
+		}
+	})
+
+	t.Run("INSERT blocked for internal tables", func(t *testing.T) {
+		for _, table := range internalTables {
+			body := `{"test": "value"}`
+			req := httptest.NewRequest("POST", "/rest/v1/"+table, bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusNotFound {
+				t.Errorf("INSERT on %s: expected status 404, got %d: %s", table, w.Code, w.Body.String())
+			}
+		}
+	})
+
+	t.Run("UPDATE blocked for internal tables", func(t *testing.T) {
+		for _, table := range internalTables {
+			body := `{"test": "value"}`
+			req := httptest.NewRequest("PATCH", "/rest/v1/"+table+"?id=eq.1", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusNotFound {
+				t.Errorf("UPDATE on %s: expected status 404, got %d: %s", table, w.Code, w.Body.String())
+			}
+		}
+	})
+
+	t.Run("DELETE blocked for internal tables", func(t *testing.T) {
+		for _, table := range internalTables {
+			req := httptest.NewRequest("DELETE", "/rest/v1/"+table+"?id=eq.1", nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusNotFound {
+				t.Errorf("DELETE on %s: expected status 404, got %d: %s", table, w.Code, w.Body.String())
+			}
+		}
+	})
+
+	t.Run("Regular tables still work", func(t *testing.T) {
+		// Insert test data
+		database.Exec(`INSERT INTO todos (title, completed) VALUES ('Test', 0)`)
+
+		// SELECT on regular table should work
+		req := httptest.NewRequest("GET", "/rest/v1/todos", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("SELECT on todos: expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+}

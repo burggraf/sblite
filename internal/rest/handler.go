@@ -54,6 +54,36 @@ func (h *Handler) SetRealtimeNotifier(n RealtimeNotifier) {
 	h.notifier = n
 }
 
+// isInternalTable returns true if the table name is an internal/system table
+// that should not be accessible via the public REST API.
+func isInternalTable(table string) bool {
+	// Block tables starting with underscore (sblite internal tables)
+	// e.g., _columns, _dashboard, _rls_policies, _schema_migrations
+	if strings.HasPrefix(table, "_") {
+		return true
+	}
+
+	// Block auth tables (sensitive user data)
+	// e.g., auth_users, auth_sessions, auth_refresh_tokens, auth_identities
+	if strings.HasPrefix(table, "auth_") {
+		return true
+	}
+
+	// Block storage metadata tables
+	// e.g., storage_buckets, storage_objects
+	if strings.HasPrefix(table, "storage_") {
+		return true
+	}
+
+	// Block SQLite internal tables
+	// e.g., sqlite_sequence, sqlite_master
+	if strings.HasPrefix(table, "sqlite_") {
+		return true
+	}
+
+	return false
+}
+
 // GetAuthContextFromRequest extracts auth context from request for RLS
 // The server middleware stores claims in context with string key "claims"
 // and API key role with string key "apikey_role"
@@ -355,6 +385,12 @@ func (h *Handler) parseQueryParams(r *http.Request) Query {
 func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	q := h.parseQueryParams(r)
 
+	// Block access to internal/system tables
+	if isInternalTable(q.Table) {
+		h.writeError(w, http.StatusNotFound, "table_not_found", fmt.Sprintf("Table '%s' not found", q.Table))
+		return
+	}
+
 	// Track if limit/offset were explicitly set via query params
 	hasExplicitLimit := r.URL.Query().Get("limit") != ""
 	hasExplicitOffset := r.URL.Query().Get("offset") != ""
@@ -528,6 +564,13 @@ func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
+
+	// Block access to internal/system tables
+	if isInternalTable(table) {
+		h.writeError(w, http.StatusNotFound, "table_not_found", fmt.Sprintf("Table '%s' not found", table))
+		return
+	}
+
 	selectCols := ParseSelect(r.URL.Query().Get("select"))
 	prefer := r.Header.Get("Prefer")
 	accept := r.Header.Get("Accept")
@@ -665,6 +708,13 @@ func (h *Handler) HandleInsert(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	q := h.parseQueryParams(r)
+
+	// Block access to internal/system tables
+	if isInternalTable(q.Table) {
+		h.writeError(w, http.StatusNotFound, "table_not_found", fmt.Sprintf("Table '%s' not found", q.Table))
+		return
+	}
+
 	prefer := r.Header.Get("Prefer")
 	returnRepresentation := strings.Contains(prefer, "return=representation")
 
@@ -764,6 +814,13 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	q := h.parseQueryParams(r)
+
+	// Block access to internal/system tables
+	if isInternalTable(q.Table) {
+		h.writeError(w, http.StatusNotFound, "table_not_found", fmt.Sprintf("Table '%s' not found", q.Table))
+		return
+	}
+
 	prefer := r.Header.Get("Prefer")
 	returnRepresentation := strings.Contains(prefer, "return=representation")
 
