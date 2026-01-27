@@ -39,8 +39,6 @@ import (
 //go:embed static/*
 var staticFS embed.FS
 
-const sessionCookieName = "_sblite_session"
-
 // RealtimeStatsProvider provides realtime statistics
 type RealtimeStatsProvider interface {
 	Stats() any
@@ -99,6 +97,20 @@ func NewHandler(db *sql.DB, migrationsDir string) *Handler {
 // SetServerConfig sets the server configuration for display.
 func (h *Handler) SetServerConfig(cfg *ServerConfig) {
 	h.serverConfig = cfg
+	// Set port on session manager to scope sessions per-instance
+	if cfg != nil && cfg.Port > 0 {
+		h.sessions.SetPort(cfg.Port)
+	}
+}
+
+// sessionCookieName returns the port-specific session cookie name.
+// This allows multiple sblite instances on different ports to have
+// independent dashboard sessions in the same browser.
+func (h *Handler) sessionCookieName() string {
+	if h.serverConfig != nil && h.serverConfig.Port > 0 {
+		return fmt.Sprintf("_sblite_session_%d", h.serverConfig.Port)
+	}
+	return "_sblite_session"
 }
 
 // SetJWTSecret sets the JWT secret for API key generation.
@@ -453,7 +465,7 @@ func (h *Handler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	authenticated := false
 
 	// Check session cookie
-	cookie, err := r.Cookie(sessionCookieName)
+	cookie, err := r.Cookie(h.sessionCookieName())
 	if err == nil && cookie.Value != "" {
 		authenticated = h.sessions.Validate(cookie.Value)
 	}
@@ -490,7 +502,7 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     h.sessionCookieName(),
 		Value:    token,
 		Path:     "/_/",
 		HttpOnly: true,
@@ -527,7 +539,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     h.sessionCookieName(),
 		Value:    token,
 		Path:     "/_/",
 		HttpOnly: true,
@@ -543,7 +555,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	h.sessions.Destroy()
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     h.sessionCookieName(),
 		Value:    "",
 		Path:     "/_/",
 		HttpOnly: true,
@@ -558,7 +570,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 // requireAuth middleware checks for valid session cookie
 func (h *Handler) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie(sessionCookieName)
+		cookie, err := r.Cookie(h.sessionCookieName())
 		if err != nil || cookie.Value == "" || !h.sessions.Validate(cookie.Value) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)

@@ -3,6 +3,7 @@ package dashboard
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"time"
 )
 
@@ -12,8 +13,9 @@ const (
 
 // SessionManager handles dashboard sessions.
 type SessionManager struct {
-	store  *Store
-	maxAge time.Duration
+	store     *Store
+	maxAge    time.Duration
+	keyPrefix string // Port-specific prefix for session keys (e.g., "8080_")
 }
 
 // NewSessionManager creates a new SessionManager.
@@ -22,6 +24,23 @@ func NewSessionManager(store *Store) *SessionManager {
 		store:  store,
 		maxAge: defaultSessionMaxAge,
 	}
+}
+
+// SetPort sets the port for session key scoping.
+// This allows multiple sblite instances on different ports to share
+// the same database without session conflicts.
+func (s *SessionManager) SetPort(port int) {
+	s.keyPrefix = fmt.Sprintf("%d_", port)
+}
+
+// sessionTokenKey returns the port-scoped session token key.
+func (s *SessionManager) sessionTokenKey() string {
+	return s.keyPrefix + "session_token"
+}
+
+// sessionExpiryKey returns the port-scoped session expiry key.
+func (s *SessionManager) sessionExpiryKey() string {
+	return s.keyPrefix + "session_expiry"
 }
 
 // Create creates a new session and returns the token.
@@ -33,12 +52,12 @@ func (s *SessionManager) Create() (string, error) {
 	}
 	token := hex.EncodeToString(bytes)
 
-	// Store session with expiry
+	// Store session with expiry (using port-scoped keys)
 	expiry := time.Now().Add(s.maxAge).Format(time.RFC3339)
-	if err := s.store.Set("session_token", token); err != nil {
+	if err := s.store.Set(s.sessionTokenKey(), token); err != nil {
 		return "", err
 	}
-	if err := s.store.Set("session_expiry", expiry); err != nil {
+	if err := s.store.Set(s.sessionExpiryKey(), expiry); err != nil {
 		return "", err
 	}
 
@@ -47,12 +66,12 @@ func (s *SessionManager) Create() (string, error) {
 
 // Validate checks if the token is valid and not expired.
 func (s *SessionManager) Validate(token string) bool {
-	storedToken, err := s.store.Get("session_token")
+	storedToken, err := s.store.Get(s.sessionTokenKey())
 	if err != nil || storedToken == "" || storedToken != token {
 		return false
 	}
 
-	expiryStr, err := s.store.Get("session_expiry")
+	expiryStr, err := s.store.Get(s.sessionExpiryKey())
 	if err != nil || expiryStr == "" {
 		return false
 	}
@@ -67,8 +86,8 @@ func (s *SessionManager) Validate(token string) bool {
 
 // Destroy removes the current session.
 func (s *SessionManager) Destroy() {
-	s.store.Set("session_token", "")
-	s.store.Set("session_expiry", "")
+	s.store.Set(s.sessionTokenKey(), "")
+	s.store.Set(s.sessionExpiryKey(), "")
 }
 
 // Refresh extends the session expiry if valid.
@@ -78,6 +97,6 @@ func (s *SessionManager) Refresh(token string) bool {
 	}
 
 	expiry := time.Now().Add(s.maxAge).Format(time.RFC3339)
-	s.store.Set("session_expiry", expiry)
+	s.store.Set(s.sessionExpiryKey(), expiry)
 	return true
 }

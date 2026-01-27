@@ -156,3 +156,55 @@ func TestSessionTokenFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionPortIsolation(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	store := NewStore(database.DB)
+
+	// Create two session managers with different ports (simulating two sblite instances)
+	sessions8080 := NewSessionManager(store)
+	sessions8080.SetPort(8080)
+
+	sessions8081 := NewSessionManager(store)
+	sessions8081.SetPort(8081)
+
+	// Create session on port 8080
+	token8080, err := sessions8080.Create()
+	if err != nil {
+		t.Fatalf("failed to create session for 8080: %v", err)
+	}
+
+	// Create session on port 8081
+	token8081, err := sessions8081.Create()
+	if err != nil {
+		t.Fatalf("failed to create session for 8081: %v", err)
+	}
+
+	// Both sessions should be valid on their respective managers
+	if !sessions8080.Validate(token8080) {
+		t.Error("expected 8080 session to be valid")
+	}
+	if !sessions8081.Validate(token8081) {
+		t.Error("expected 8081 session to be valid")
+	}
+
+	// Cross-validation should fail (8080 token on 8081 manager and vice versa)
+	if sessions8080.Validate(token8081) {
+		t.Error("expected 8081 token to be invalid on 8080 manager")
+	}
+	if sessions8081.Validate(token8080) {
+		t.Error("expected 8080 token to be invalid on 8081 manager")
+	}
+
+	// Destroying one session should not affect the other
+	sessions8080.Destroy()
+
+	if sessions8080.Validate(token8080) {
+		t.Error("expected 8080 session to be invalid after destroy")
+	}
+	if !sessions8081.Validate(token8081) {
+		t.Error("expected 8081 session to still be valid after destroying 8080 session")
+	}
+}
