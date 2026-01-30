@@ -318,6 +318,186 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
+## Observability & Metrics
+
+sblite-hub leverages OpenTelemetry for comprehensive observability, enabling rate limiting, resource quotas, and operational monitoring across all tenant instances.
+
+### OTel Integration
+
+Each sblite instance runs with OpenTelemetry enabled, sending metrics and traces to the hub's central collector:
+
+```bash
+sblite serve \
+  --otel-exporter otlp \
+  --otel-endpoint hub-collector:4317 \
+  --otel-service-name "sblite-{org}-{project}" \
+  --otel-sample-rate 0.1
+```
+
+### Available Metrics
+
+#### Instance Metrics (from sblite)
+
+| Metric | Type | Attributes | Description |
+|--------|------|------------|-------------|
+| `http.server.request_count` | Counter | `tenant.id`, `project.id`, `http.method`, `http.status_code` | HTTP request count per tenant |
+| `http.server.request_duration` | Histogram | `tenant.id`, `project.id` | Request latency (p50, p95, p99) |
+| `http.server.response_size` | Histogram | `tenant.id`, `project.id` | Response body size |
+| `db.connection.count` | Gauge | `tenant.id`, `project.id`, `db.name` | Active database connections |
+| `db.query.duration` | Histogram | `tenant.id`, `project.id`, `db.table` | Query execution time |
+
+#### Hub Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `hub.instance.count` | Gauge | Number of running instances per org |
+| `hub.instance.wakeups` | Counter | Number of scale-up events |
+| `hub.proxy.request_count` | Counter | Total proxied requests |
+| `hub.proxy.queue_duration` | Histogram | Time spent waiting for instance wake-up |
+
+### Multi-Tenant Attribute Enrichment
+
+The hub automatically adds tenant context to all metrics from downstream sblite instances:
+
+```go
+// Hub proxy enriches OTel context
+func (p *Proxy) enrichSpan(ctx context.Context, project *Project) {
+    span := trace.SpanFromContext(ctx)
+    span.SetAttributes(
+        attribute.String("tenant.id", project.OrgID),
+        attribute.String("tenant.slug", project.OrgSlug),
+        attribute.String("project.id", project.ID),
+        attribute.String("project.slug", project.Slug),
+        attribute.String("project.tier", project.Tier), // "shared" or "dedicated"
+    )
+}
+```
+
+### Rate Limiting & Quotas
+
+Metrics drive per-tenant rate limiting:
+
+```go
+type RateLimiter struct {
+    meter    metric.Meter
+    requests metric.Int64Counter
+
+    // Per-tenant quotas
+    quotas   map[string]*TenantQuota  // tenantID -> quota
+}
+
+type TenantQuota struct {
+    OrgID        string
+    ProjectID    string
+
+    // Rate limits
+    RequestsPerSecond int
+    Concurrency      int
+
+    // Resource quotas
+    MaxCPU          float64
+    MaxMemory       int64
+    MaxConnections  int
+}
+
+func (rl *RateLimiter) Check(ctx context.Context, tenantID string) (bool, error) {
+    quota := rl.quotas[tenantID]
+
+    // Read current usage from OTel metrics
+    usage := rl.getUsage(ctx, tenantID)
+
+    // Check against quota
+    if usage.RequestsPerSecond >= quota.RequestsPerSecond {
+        return false, nil  // Rate limit exceeded
+    }
+
+    return true, nil
+}
+```
+
+### Quota Enforcement Points
+
+| Enforcement Point | Metric Used | Action |
+|-------------------|-------------|--------|
+| **Proxy** | `http.server.request_count` | Reject requests over quota |
+| **Orchestrator** | Resource usage | Block new instances if org at capacity |
+| **sblite instance** | `db.connection.count` | Reject new DB connections over limit |
+
+### Dashboard Metrics Display
+
+The hub dashboard shows per-project metrics:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Project: myapp                    Org: acme-corp             │
+├─────────────────────────────────────────────────────────────┤
+│ Rate Limits (Last 24h)                                     │
+│ ├─ Requests:     1.2M / 10M (12%)                         │
+│ ├─ Concurrency: 45 / 100                                   │
+│ ├─ CPU:           0.8 / 2.0 cores                          │
+│ └─ Memory:        512 MB / 4 GB                             │
+│                                                             │
+│ Current Usage (Real-time)                                   │
+│ ├─ Requests/sec: 42 (p95: 87ms)                           │
+│ ├─ Active connections: 12                                  │
+│ └─ Instance: running (uptime: 2h 34m)                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Alerting
+
+Alerts fire on quota thresholds:
+
+```yaml
+# Alert rules for hub
+alerts:
+  - name: HighRequestRate
+    condition: rate(http_server_request_count[5m]) > quota * 0.9
+    action: Notify org admin, consider scaling
+
+  - name: InstanceMemoryLimit
+    condition: process_memory_usage > max_memory * 0.95
+    action: Block new connections, alert ops team
+
+  - name: TooManyWakeups
+    condition: rate(hub_instance_wakeups[1h]) > 10
+    action: Increase idle timeout, suggest dedicated instance
+```
+
+### Trace Correlation
+
+Traces flow from sblite → hub → central collector, maintaining context:
+
+```
+sblite instance (myapp):
+  └─ GET /rest/v1/posts [tenant.id=acme, project.id=myapp]
+      └─ db.query: SELECT * FROM posts [2ms]
+
+Hub proxy:
+  └─ Proxy request to myapp [tenant.id=acme, project.id=myapp]
+      └─ (propagated) GET /rest/v1/posts
+          └─ (propagated) db.query: SELECT * FROM posts
+```
+
+This enables:
+- **End-to-end tracing**: See full request path from client → hub → sblite → database
+- **Performance debugging**: Identify bottlenecks at any layer
+- **Cost allocation**: Attribute resource usage to specific tenants
+
+### Implementation Timeline
+
+| Phase | OTel Features | Status |
+|-------|--------------|--------|
+| **sblite v0.5** | HTTP metrics, traces, stdout/OTLP exporters | ✅ Planned (this doc) |
+| **sblite-hub Phase 3** | Proxy span enrichment, metrics aggregation | Planned |
+| **sblite-hub Phase 4** | Rate limiting based on metrics | Planned |
+| **sblite-hub Phase 8** | Per-tenant quotas, billing integration | Planned |
+
+### See Also
+
+- [OpenTelemetry Implementation Plan](2026-01-30-opentelemetry-implementation.md)
+- [Observability Documentation](../observability.md)
+
 ## Dashboard UI
 
 ### sblite-hub Dashboard
