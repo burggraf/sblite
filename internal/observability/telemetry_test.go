@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 )
 
 func TestConfigDefaults(t *testing.T) {
@@ -145,4 +146,65 @@ func TestTracerSpanAttributes(t *testing.T) {
 
 	// Give exporter time to flush
 	time.Sleep(100 * time.Millisecond)
+}
+
+func TestMeterStdout(t *testing.T) {
+	ctx := context.Background()
+	cfg := NewConfig()
+	cfg.Exporter = "stdout"
+	cfg.MetricsEnabled = true
+
+	tel, cleanup, err := Init(ctx, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	meter := tel.MeterProvider().Meter("test")
+
+	// Create a counter
+	counter, err := meter.Int64Counter("test.counter",
+		metric.WithDescription("A test counter"),
+	)
+	if err != nil {
+		t.Fatalf("failed to create counter: %v", err)
+	}
+
+	// Increment it
+	counter.Add(ctx, 1)
+
+	// Create a histogram
+	histogram, err := meter.Float64Histogram("test.latency",
+		metric.WithDescription("Test latency histogram"),
+		metric.WithUnit("ms"),
+	)
+	if err != nil {
+		t.Fatalf("failed to create histogram: %v", err)
+	}
+
+	histogram.Record(ctx, 42.0)
+}
+
+func TestMeterDisabled(t *testing.T) {
+	ctx := context.Background()
+	cfg := NewConfig()
+	cfg.Exporter = "none"
+	cfg.MetricsEnabled = true
+
+	tel, cleanup, err := Init(ctx, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	meter := tel.MeterProvider().Meter("test")
+
+	// Should work without error even with no-op provider
+	counter, err := meter.Int64Counter("test.counter")
+	if err != nil {
+		t.Fatalf("failed to create counter: %v", err)
+	}
+
+	// Should be a no-op
+	counter.Add(ctx, 1)
 }
