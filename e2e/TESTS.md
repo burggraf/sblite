@@ -1095,4 +1095,170 @@ Each test maps to examples from the Supabase JavaScript documentation:
 | public-access.test.ts | https://supabase.com/docs/reference/javascript/storage-from-getpublicurl |
 | rls.test.ts | https://supabase.com/docs/guides/storage/security/access-control |
 | signed-urls.test.ts | https://supabase.com/docs/reference/javascript/storage-from-createsignedurl |
+| resumable-uploads.test.ts | https://supabase.com/docs/reference/javascript/storage-from-upload#tus-resumable-upload |
+
+---
+
+## Observability Tests
+
+### `tests/observability/otel-configuration.test.ts`
+
+Tests for OpenTelemetry configuration via CLI flags and environment variables (16 tests):
+
+**CLI Flags**
+- ✅ should start with OTel stdout exporter
+- ✅ should start without OTel by default
+- ✅ should use custom service name
+- ✅ should respect sample rate configuration
+- ✅ should allow disabling metrics
+- ✅ should allow disabling traces
+- ✅ should allow OTLP endpoint configuration
+
+**Environment Variables**
+- ✅ should respect SBLITE_OTEL_EXPORTER env var
+- ✅ should respect SBLITE_OTEL_ENDPOINT env var
+- ✅ should respect SBLITE_OTEL_SERVICE_NAME env var
+- ✅ should respect SBLITE_OTEL_SAMPLE_RATE env var
+- ✅ should prioritize CLI flags over environment variables
+
+**Combined Configuration**
+- ✅ should work with all configuration options
+- ✅ should handle metrics disabled while traces enabled
+- ✅ should handle traces disabled while metrics enabled
+- ✅ should handle both metrics and traces disabled
+
+### `tests/observability/otel-metrics.test.ts`
+
+Tests for OpenTelemetry metrics collection (22 tests):
+
+**HTTP Request Metrics**
+- ✅ should record HTTP request count
+- ✅ should record GET requests
+- ✅ should record POST requests
+- ✅ should record PATCH requests
+- ✅ should record DELETE requests
+
+**Request Duration Metrics**
+- ✅ should record request duration
+- ✅ should track slow requests differently
+- ✅ should record duration for different endpoints
+
+**Response Size Metrics**
+- ✅ should record response sizes
+- ✅ should handle empty responses
+- ✅ should handle large responses
+
+**Status Code Metrics**
+- ✅ should record 2xx status codes
+- ✅ should record 4xx status codes
+- ✅ should record 5xx status codes
+
+**Metric Labels and Attributes**
+- ✅ should include HTTP method in metrics
+- ✅ should include HTTP route in metrics
+- ✅ should include status code in metrics
+- ✅ should differentiate by auth endpoint
+- ✅ should differentiate by REST endpoint
+- ✅ should differentiate by storage endpoint
+
+**Concurrent Request Metrics**
+- ✅ should handle concurrent requests
+- ✅ should aggregate metrics correctly
+
+### `tests/observability/otel-traces.test.ts`
+
+Tests for OpenTelemetry distributed tracing (29 tests):
+
+**Span Creation**
+- ✅ should create a span for each HTTP request
+- ✅ should create spans for GET requests
+- ✅ should create spans for POST requests
+- ✅ should create spans for PATCH requests
+- ✅ should create spans for DELETE requests
+
+**Span Attributes**
+- ✅ should include HTTP method in span attributes
+- ✅ should include HTTP route in span attributes
+- ✅ should include status code in span attributes
+- ✅ should include URL in span attributes
+- ✅ should include host in span attributes
+- ✅ should include scheme in span attributes
+
+**Span Status**
+- ✅ should set OK status for successful requests
+- ✅ should set error status for failed requests
+- ✅ should record error description for 4xx status
+- ✅ should record error description for 5xx status
+
+**Trace Sampling**
+- ✅ should respect sample rate configuration
+- ✅ should allow 100% sampling for debugging
+- ✅ should allow 0% sampling to disable traces
+
+**Trace Propagation**
+- ✅ should include trace ID in response headers
+- ✅ should accept trace context from client
+- ✅ should maintain trace context across requests
+
+**Span Timing**
+- ✅ should record span start time
+- ✅ should record span end time
+- ✅ should calculate span duration
+- ✅ should accurately track slow requests
+
+**Different Endpoint Traces**
+- ✅ should trace auth endpoints
+- ✅ should trace REST endpoints
+- ✅ should trace storage endpoints
+- ✅ should trace RPC endpoints
+
+---
+
+## Updated Summary
+
+| Category | Total | Passing | Failing | Skipped |
+|----------|-------|---------|---------|---------|
+| REST - SELECT | 17 | 12 | 0 | 5 |
+| REST - INSERT | 9 | 9 | 0 | 0 |
+| REST - UPDATE | 10 | 8 | 0 | 2 |
+| REST - UPSERT | 7 | 7 | 0 | 0 |
+| REST - DELETE | 10 | 10 | 0 | 0 |
+| REST - Quoted Identifiers | 11 | 11 | 0 | 0 |
+| Filters - Basic | 24 | 24 | 0 | 0 |
+| Filters - Advanced | 17 | 4 | 0 | 13 |
+| Filters - Logical | 12 | 10 | 0 | 2 |
+| Modifiers | 23 | 20 | 0 | 3 |
+| Modifiers - Count | 12 | 12 | 0 | 0 |
+| Modifiers - CSV | 6 | 6 | 0 | 0 |
+| Auth - Sign Up | 11 | 8 | 0 | 3 |
+| Auth - Sign In/Out | 12 | 8 | 0 | 4 |
+| Auth - Session | 11 | 8 | 0 | 3 |
+| Auth - User | 12 | 7 | 0 | 5 |
+| Auth - State Change | 11 | 6 | 0 | 5 |
+| Auth - Password Reset | 6 | 3 | 0 | 3 |
+| Auth - Anonymous | 22 | 22 | 0 | 0 |
+| Dashboard - Anonymous Settings | 19 | 19 | 0 | 0 |
+| Email - Mail API | 13 | 13 | 0 | 0 |
+| Email - Flows | 11 | 8 | 0 | 3 |
+| Email - Verification | 11 | 9 | 0 | 2 |
+| Email - SMTP | 4 | 3 | 0 | 1 |
+| Relations | 10 | 10 | 0 | 0 |
+| RLS | 9 | 9 | 0 | 0 |
+| API Key | 12 | 12 | 0 | 0 |
+| Edge Functions | 17 | 14 | 0 | 3 |
+| Edge Functions - Config | 8 | 8 | 0 | 0 |
+| Edge Functions - Dashboard | 12 | 12 | 0 | 0 |
+| Storage - Buckets | 13 | 13 | 0 | 0 |
+| Storage - Objects | 19 | 19 | 0 | 0 |
+| Storage - Public Access | 6 | 6 | 0 | 0 |
+| Storage - RLS | 11 | 11 | 0 | 0 |
+| Storage - Signed URLs | 12 | 12 | 0 | 0 |
+| Storage - Resumable Uploads | 14 | 14 | 0 | 0 |
+| Dashboard - Storage | 16 | 16 | 0 | 0 |
+| Observability - OTel Config | 16 | 16 | 0 | 0 |
+| Observability - OTel Metrics | 22 | 22 | 0 | 0 |
+| Observability - OTel Traces | 29 | 29 | 0 | 0 |
+| **TOTAL** | **548** | **490** | **0** | **57** |
+
+*Last tested: 2026-01-30*
 | storage.test.ts | (sblite-specific dashboard API for storage) |
