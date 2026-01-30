@@ -256,6 +256,23 @@ const App = {
             error: null,
             pollingInterval: null,  // For migration progress updates
         },
+        observability: {
+            enabled: false,
+            config: null,
+            metrics: null,
+            traces: [],
+            loading: false,
+            selectedTrace: null,
+            timeRange: 15,  // minutes
+            autoRefresh: true,
+            autoRefreshInterval: null,
+            // Trace filters
+            filters: {
+                method: '',
+                path: '',
+                status: '',
+            },
+        },
     },
 
     async init() {
@@ -505,6 +522,11 @@ const App = {
             this.state.mail._initialized = false;
         }
 
+        // Cleanup observability auto-refresh when leaving observability view
+        if (this.state.currentView === 'observability' && view !== 'observability') {
+            this.stopObservabilityAutoRefresh();
+        }
+
         this.state.currentView = view;
         if (view === 'users') {
             this.loadUsers();
@@ -531,6 +553,12 @@ const App = {
             this.initApiDocs();
         } else if (view === 'realtime') {
             this.loadRealtimeStats();
+        } else if (view === 'observability') {
+            this.stopObservabilityAutoRefresh();
+            this.loadObservability();
+            if (this.state.observability.autoRefresh) {
+                this.startObservabilityAutoRefresh();
+            }
         } else if (view === 'migration') {
             this.loadMigrations();
         } else {
@@ -659,6 +687,8 @@ const App = {
                             <div class="nav-section-title">Documentation</div>
                             <a class="nav-item ${this.state.currentView === 'apiDocs' ? 'active' : ''}"
                                onclick="App.navigate('apiDocs')">API Docs</a>
+                            <a class="nav-item ${this.state.currentView === 'observability' ? 'active' : ''}"
+                               onclick="App.navigate('observability')">Observability</a>
                         </div>
 
                         <div class="nav-section">
@@ -717,6 +747,8 @@ const App = {
                 return this.renderApiDocsView();
             case 'realtime':
                 return this.renderRealtimeView();
+            case 'observability':
+                return this.renderObservabilityView();
             case 'migration':
                 return this.renderMigrationView();
             default:
@@ -5109,6 +5141,77 @@ const App = {
         this.state.logs.activeTab = tab;
         this.stopAutoRefresh();
         this.loadLogs();
+    },
+
+    // ==================== Observability Methods ====================
+
+    async loadObservability() {
+        this.state.observability.loading = true;
+        this.render();
+
+        try {
+            const [statusRes, metricsRes, tracesRes] = await Promise.all([
+                fetch('/_/api/observability/status'),
+                fetch('/_/api/observability/metrics?minutes=' + this.state.observability.timeRange),
+                fetch('/_/api/observability/traces?limit=100&method=' + encodeURIComponent(this.state.observability.filters.method) +
+                      '&path=' + encodeURIComponent(this.state.observability.filters.path) +
+                      '&status=' + encodeURIComponent(this.state.observability.filters.status))
+            ]);
+
+            if (statusRes.ok) {
+                this.state.observability.config = await statusRes.json();
+                this.state.observability.enabled = this.state.observability.config.enabled;
+            }
+
+            if (metricsRes.ok) {
+                this.state.observability.metrics = await metricsRes.json();
+            }
+
+            if (tracesRes.ok) {
+                this.state.observability.traces = await tracesRes.json();
+            }
+        } catch (e) {
+            this.state.error = 'Failed to load observability data';
+        }
+
+        this.state.observability.loading = false;
+        this.render();
+    },
+
+    setTimeRange(minutes) {
+        this.state.observability.timeRange = minutes;
+        this.loadObservability();
+    },
+
+    setObservabilityFilter(field, value) {
+        this.state.observability.filters[field] = value;
+        this.loadObservability();
+    },
+
+    startObservabilityAutoRefresh() {
+        this.stopObservabilityAutoRefresh();
+        if (this.state.observability.autoRefresh && this.state.observability.enabled) {
+            this.state.observability.autoRefreshInterval = setInterval(() => {
+                this.loadObservability();
+            }, 5000); // Refresh every 5 seconds
+        }
+    },
+
+    stopObservabilityAutoRefresh() {
+        if (this.state.observability.autoRefreshInterval) {
+            clearInterval(this.state.observability.autoRefreshInterval);
+            this.state.observability.autoRefreshInterval = null;
+        }
+    },
+
+    toggleObservabilityAutoRefresh() {
+        this.state.observability.autoRefresh = !this.state.observability.autoRefresh;
+        if (this.state.observability.autoRefresh) {
+            this.startObservabilityAutoRefresh();
+        } else {
+            this.stopObservabilityAutoRefresh();
+        }
+        this.render();
     },
 
     toggleAutoRefresh() {
@@ -9798,6 +9901,194 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
             }, 5000);
         }
         this.render();
+    },
+
+    renderObservabilityView() {
+        const { enabled, config, metrics, traces, loading, filters, timeRange, autoRefresh } = this.state.observability;
+
+        if (loading) {
+            return `
+                <div class="card-title">Observability</div>
+                <div class="card">
+                    <div class="loading">Loading observability data...</div>
+                </div>
+            `;
+        }
+
+        if (!enabled) {
+            return `
+                <div class="card-title">Observability</div>
+                <div class="card">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📊</div>
+                        <div class="empty-state-title">OpenTelemetry Not Enabled</div>
+                        <div class="empty-state-description">
+                            Observability features are disabled. Start sblite with the --otel-exporter flag to enable metrics and traces collection.
+                        </div>
+                        <div class="empty-state-actions">
+                            <code>./sblite serve --otel-exporter otlp --otel-endpoint localhost:4317</code>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Calculate metrics summary
+        const requestCountMetrics = metrics?.['http.server.request_count'] || [];
+        const durationMetrics = metrics?.['http.server.request_duration_ms'] || [];
+        const totalRequests = requestCountMetrics.reduce((sum, m) => sum + (m.value || 0), 0);
+        const avgDuration = durationMetrics.length > 0
+            ? durationMetrics.reduce((sum, m) => sum + (m.value || 0), 0) / durationMetrics.length
+            : 0;
+
+        // Group traces by status code
+        const tracesByStatus = {};
+        traces.forEach(t => {
+            const status = t['http.status_code'] || 'unknown';
+            if (!tracesByStatus[status]) {
+                tracesByStatus[status] = [];
+            }
+            tracesByStatus[status].push(t);
+        });
+
+        return `
+            <div class="card-title">
+                Observability
+                <div class="title-actions">
+                    <button class="btn btn-sm ${autoRefresh ? 'btn-primary' : ''}" onclick="App.toggleObservabilityAutoRefresh()">
+                        ${autoRefresh ? '🔄 Auto-refreshing' : '▶ Auto-refresh'}
+                    </button>
+                </div>
+            </div>
+
+            <!-- Status Card -->
+            <div class="card">
+                <div class="card-subtitle">Configuration</div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Exporter</div>
+                        <div class="stat-value">${config?.exporter || 'N/A'}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Endpoint</div>
+                        <div class="stat-value">${config?.endpoint || 'N/A'}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Sample Rate</div>
+                        <div class="stat-value">${(config?.sampleRate * 100).toFixed(0)}%</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Metrics</div>
+                        <div class="stat-value">${config?.metricsEnabled ? '✓ Enabled' : 'Disabled'}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Traces</div>
+                        <div class="stat-value">${config?.tracesEnabled ? '✓ Enabled' : 'Disabled'}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Metrics Overview -->
+            <div class="card">
+                <div class="card-subtitle">
+                    Metrics Overview (Last ${timeRange} minutes)
+                    <select class="select-sm" onchange="App.setTimeRange(parseInt(this.value))" style="margin-left: auto;">
+                        <option value="5" ${timeRange === 5 ? 'selected' : ''}>5 min</option>
+                        <option value="15" ${timeRange === 15 ? 'selected' : ''}>15 min</option>
+                        <option value="30" ${timeRange === 30 ? 'selected' : ''}>30 min</option>
+                        <option value="60" ${timeRange === 60 ? 'selected' : ''}>60 min</option>
+                    </select>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Requests</div>
+                        <div class="stat-value">${totalRequests.toLocaleString()}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Avg Duration</div>
+                        <div class="stat-value">${avgDuration.toFixed(1)}ms</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Data Points</div>
+                        <div class="stat-value">${(requestCountMetrics.length + durationMetrics.length).toLocaleString()}</div>
+                    </div>
+                </div>
+
+                <!-- Request Duration Chart (Simple CSS bar chart) -->
+                ${durationMetrics.length > 0 ? `
+                    <div style="margin-top: 1.5rem;">
+                        <div class="card-subtitle" style="font-size: 0.9rem; margin-bottom: 0.5rem;">Request Duration Trend</div>
+                        <div class="chart-container">
+                            <div class="chart-bars">
+                                ${durationMetrics.slice(-20).map((m, i) => {
+                                    const maxVal = Math.max(...durationMetrics.map(d => d.value));
+                                    const height = maxVal > 0 ? (m.value / maxVal * 100) : 0;
+                                    const timestamp = new Date(m.timestamp * 1000).toLocaleTimeString();
+                                    return `
+                                        <div class="chart-bar-wrapper">
+                                            <div class="chart-bar" style="height: ${height}%;" title="${timestamp}: ${m.value.toFixed(1)}ms"></div>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+                    </div>
+                ` : '<div style="margin-top: 1rem; color: var(--text-muted);">No duration data available</div>'}
+            </div>
+
+            <!-- Traces Table -->
+            <div class="card">
+                <div class="card-subtitle">Recent Traces</div>
+
+                <!-- Filters -->
+                <div class="filters-row" style="margin-bottom: 1rem;">
+                    <input type="text" class="input-sm" placeholder="Method (GET, POST...)" value="${filters.method}"
+                           onchange="App.setObservabilityFilter('method', this.value)" style="width: 120px;">
+                    <input type="text" class="input-sm" placeholder="Path (/api/...)" value="${filters.path}"
+                           onchange="App.setObservabilityFilter('path', this.value)" style="width: 180px;">
+                    <input type="text" class="input-sm" placeholder="Status (200, 500...)" value="${filters.status}"
+                           onchange="App.setObservabilityFilter('status', this.value)" style="width: 100px;">
+                    <button class="btn btn-sm" onclick="App.setObservabilityFilter('method', ''); App.setObservabilityFilter('path', ''); App.setObservabilityFilter('status', '');">Clear</button>
+                </div>
+
+                ${traces.length > 0 ? `
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Method</th>
+                                    <th>Status</th>
+                                    <th>Tags</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${traces.slice(0, 50).map(t => {
+                                    const timestamp = new Date(t.timestamp * 1000).toLocaleTimeString();
+                                    const status = t['http.status_code'] || 'N/A';
+                                    const method = t['http.method'] || 'N/A';
+                                    const statusClass = parseInt(status) >= 400 ? 'status-error' : (parseInt(status) >= 300 ? 'status-warning' : 'status-success');
+                                    return `
+                                        <tr>
+                                            <td>${timestamp}</td>
+                                            <td><code>${method}</code></td>
+                                            <td><span class="status-badge ${statusClass}">${status}</span></td>
+                                            <td style="font-size: 0.85rem; color: var(--text-muted); max-width: 300px; overflow: hidden; text-overflow: ellipsis;">${t.tags}</td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                    ${traces.length > 50 ? `<div style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.9rem;">Showing 50 of ${traces.length} traces. Use filters to narrow results.</div>` : ''}
+                ` : `
+                    <div class="empty-state">
+                        <div class="empty-state-title">No traces found</div>
+                        <div class="empty-state-description">Make some requests to see traces appear here.</div>
+                    </div>
+                `}
+            </div>
+        `;
     },
 
     renderRealtimeView() {

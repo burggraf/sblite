@@ -30,6 +30,7 @@ import (
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
+	"github.com/markb/sblite/internal/observability"
 	"github.com/markb/sblite/internal/pgtranslate"
 	"github.com/markb/sblite/internal/rpc"
 	"github.com/markb/sblite/internal/storage"
@@ -66,6 +67,7 @@ type Handler struct {
 	onStorageReload   func(*StorageConfig) error
 	onMailReload      func(*MailConfig) error
 	realtimeService   RealtimeStatsProvider
+	telemetry        *observability.Telemetry
 }
 
 // ServerConfig holds server configuration for display in settings.
@@ -171,6 +173,15 @@ func (h *Handler) SetRealtimeService(svc RealtimeStatsProvider) {
 // SetMigrationService sets the migration service for Supabase migration.
 func (h *Handler) SetMigrationService(svc *migration.Service) {
 	h.migrationService = svc
+}
+
+// SetTelemetry sets the OpenTelemetry manager for metrics access.
+func (h *Handler) SetTelemetry(tel *observability.Telemetry) {
+	h.telemetry = tel
+	// Set database on telemetry for metrics storage
+	if tel != nil && h.db != nil {
+		tel.SetDB(h.db)
+	}
 }
 
 // RegisterRoutes registers the dashboard routes.
@@ -296,6 +307,14 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/config", h.handleGetLogConfig)
 			r.Get("/tail", h.handleTailLogs)
 			r.Get("/buffer", h.handleBufferLogs)
+		})
+
+		// Observability API routes (require auth)
+		r.Route("/observability", func(r chi.Router) {
+			r.Use(h.requireAuth)
+			r.Get("/status", h.handleObservabilityStatus)
+			r.Get("/metrics", h.handleObservabilityMetrics)
+			r.Get("/traces", h.handleObservabilityTraces)
 		})
 
 		// SQL Browser route (require auth)
@@ -7225,4 +7244,155 @@ func (h *Handler) handleVerifyResults(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"verifications": verifications,
 	})
+}
+
+// ==================== Observability Handlers ====================
+
+// handleObservabilityStatus returns OTel configuration status.
+func (h *Handler) handleObservabilityStatus(w http.ResponseWriter, r *http.Request) {
+	if h.telemetry == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"enabled": false,
+		})
+		return
+	}
+
+	cfg := h.telemetry.Config()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"enabled":          true,
+		"exporter":         cfg.Exporter,
+		"endpoint":         cfg.Endpoint,
+		"serviceName":      cfg.ServiceName,
+		"sampleRate":       cfg.SampleRate,
+		"metricsEnabled":   cfg.MetricsEnabled,
+		"tracesEnabled":    cfg.TracesEnabled,
+	})
+}
+
+// handleObservabilityMetrics returns aggregated metrics over time.
+func (h *Handler) handleObservabilityMetrics(w http.ResponseWriter, r *http.Request) {
+	// Parse time range (default 15 minutes)
+	minutes := 15
+	if mins := r.URL.Query().Get("minutes"); mins != "" {
+		if parsed, err := strconv.Atoi(mins); err == nil && parsed > 0 && parsed <= 60 {
+			minutes = parsed
+		}
+	}
+
+	now := time.Now().Unix()
+	start := now - int64(minutes*60)
+
+	// Query metrics from database
+	query := `
+		SELECT timestamp, metric_name, value, tags
+		FROM _observability_metrics
+		WHERE timestamp >= ?
+		ORDER BY timestamp ASC
+	`
+
+	rows, err := h.db.Query(query, start)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	defer rows.Close()
+
+	// Group by metric_name
+	metrics := map[string][]map[string]interface{}{}
+	for rows.Next() {
+		var ts int64
+		var name, tags string
+		var value float64
+		if err := rows.Scan(&ts, &name, &value, &tags); err != nil {
+			continue
+		}
+
+		metrics[name] = append(metrics[name], map[string]interface{}{
+			"timestamp": ts,
+			"value":     value,
+			"tags":      tags,
+		})
+	}
+
+	json.NewEncoder(w).Encode(metrics)
+}
+
+// handleObservabilityTraces returns recent trace information.
+// For now, this returns mock data since full trace storage is not implemented.
+func (h *Handler) handleObservabilityTraces(w http.ResponseWriter, r *http.Request) {
+	// Parse query parameters
+	limit := 100
+	if lim := r.URL.Query().Get("limit"); lim != "" {
+		if parsed, err := strconv.Atoi(lim); err == nil && parsed > 0 && parsed <= 1000 {
+			limit = parsed
+		}
+	}
+
+	method := r.URL.Query().Get("method")
+	path := r.URL.Query().Get("path")
+	status := r.URL.Query().Get("status")
+
+	// Query recent metrics that represent traces (request_count metrics)
+	// This provides a basic trace view from the metrics data
+	query := `
+		SELECT timestamp, metric_name, value, tags
+		FROM _observability_metrics
+		WHERE metric_name = 'http.server.request_count'
+		AND timestamp >= ?
+	`
+	args := []interface{}{time.Now().Unix() - int64(15*60)} // Last 15 minutes
+
+	if method != "" {
+		query += " AND tags LIKE ?"
+		args = append(args, "%http.method:"+method+"%")
+	}
+	if path != "" {
+		query += " AND tags LIKE ?"
+		args = append(args, "%"+path+"%")
+	}
+	if status != "" {
+		query += " AND tags LIKE ?"
+		args = append(args, "%http.status_code:"+status+"%")
+	}
+
+	query += " ORDER BY timestamp DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := h.db.Query(query, args...)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	defer rows.Close()
+
+	traces := []map[string]interface{}{}
+	for rows.Next() {
+		var ts int64
+		var name, tags string
+		var value float64
+		if err := rows.Scan(&ts, &name, &value, &tags); err != nil {
+			continue
+		}
+
+		// Parse tags to extract method, status
+		traceData := map[string]interface{}{
+			"timestamp": ts,
+			"tags":      tags,
+		}
+
+		// Parse tags for display
+		tagPairs := strings.Split(tags, ",")
+		for _, pair := range tagPairs {
+			parts := strings.SplitN(pair, ":", 2)
+			if len(parts) == 2 {
+				key := strings.TrimSpace(parts[0])
+				val := strings.TrimSpace(parts[1])
+				traceData[key] = val
+			}
+		}
+
+		traces = append(traces, traceData)
+	}
+
+	json.NewEncoder(w).Encode(traces)
 }

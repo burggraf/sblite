@@ -228,6 +228,7 @@ sblite includes built-in OpenTelemetry support for production-grade observabilit
 
 - **Metrics**: HTTP request rate, latency histograms, response sizes
 - **Traces**: Distributed tracing with automatic HTTP instrumentation
+- **Dashboard UI**: Built-in web interface for viewing metrics and traces
 - **Zero Overhead**: Completely disabled by default
 - **Standard Protocol**: OTLP compatible with Grafana, Jaeger, Prometheus
 
@@ -245,7 +246,16 @@ sblite includes built-in OpenTelemetry support for production-grade observabilit
 
 # Production: send to Grafana/Tempo
 ./sblite serve --otel-exporter otlp --otel-endpoint grafana:4317
+
+# View in dashboard (opens at http://localhost:8080/_)
+./sblite serve --otel-exporter stdout
 ```
+
+**Dashboard Features:**
+- Real-time metrics charts (request rate, latency, response size)
+- Traces list with filtering (method, path, status code)
+- Auto-refresh for live monitoring
+- Configurable time ranges (1-60 minutes)
 
 **Documentation:** [`docs/observability.md`](docs/observability.md)
 

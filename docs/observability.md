@@ -10,6 +10,10 @@ sblite includes production-grade observability using OpenTelemetry for metrics, 
 
 # Production: send to Grafana/Tempo
 ./sblite serve --otel-exporter otlp --otel-endpoint grafana:4317
+
+# View metrics and traces in the dashboard
+./sblite serve --otel-exporter stdout
+# Then open http://localhost:8080/_ and navigate to Observability
 ```
 
 ## Features
@@ -18,6 +22,7 @@ sblite includes production-grade observability using OpenTelemetry for metrics, 
 |---------|-------------|
 | **Metrics** | HTTP request rate, latency histograms (p50/p95/p99), response sizes |
 | **Traces** | Distributed tracing with automatic HTTP instrumentation |
+| **Dashboard UI** | Built-in web interface for viewing metrics and traces |
 | **Zero Overhead** | Completely disabled by default |
 | **Standard Protocol** | OTLP compatible with Grafana, Jaeger, Prometheus |
 
@@ -60,4 +65,67 @@ import "go.opentelemetry.io/otel"
 tracer := otel.Tracer("my-component")
 ctx, span := tracer.Start(ctx, "my-operation")
 defer span.End()
+```
+
+## Dashboard Observability
+
+When OpenTelemetry is enabled, the web dashboard (`/_`) includes an **Observability** section that provides real-time visibility into your application's performance.
+
+### Accessing Observability
+
+1. Start sblite with OTel enabled:
+   ```bash
+   ./sblite serve --otel-exporter stdout
+   ```
+
+2. Navigate to `http://localhost:8080/_`
+
+3. Click **Observability** in the sidebar
+
+### Dashboard Features
+
+| Feature | Description |
+|---------|-------------|
+| **Status Overview** | Shows OTel configuration (exporter, sample rate, enabled features) |
+| **Metrics Charts** | Time-series graphs for request rate, latency, response size |
+| **Traces List** | Recent HTTP requests with method, path, status code, duration |
+| **Filters** | Filter traces by method (GET/POST/...), path, status code |
+| **Auto-Refresh** | Toggle automatic data refresh every 5 seconds |
+
+### API Endpoints
+
+The dashboard observability feature exposes these API endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /_/api/observability/status` | Get OTel configuration and status |
+| `GET /_/api/observability/metrics` | Get time-series metrics (supports `?minutes=N`) |
+| `GET /_/api/observability/traces` | Get recent traces (supports `?method`, `?path`, `?status` filters) |
+
+### Data Storage
+
+Metrics are stored in the `_observability_metrics` table:
+
+```sql
+CREATE TABLE _observability_metrics (
+    timestamp INTEGER NOT NULL,
+    metric_name TEXT NOT NULL,
+    value REAL,
+    tags TEXT,
+    PRIMARY KEY (timestamp, metric_name, tags)
+);
+```
+
+### Example Dashboard Usage
+
+```javascript
+// Fetch observability status
+const status = await fetch('/_/api/observability/status').then(r => r.json())
+// { enabled: true, exporter: "stdout", sampleRate: 0.1, ... }
+
+// Fetch metrics for last 5 minutes
+const metrics = await fetch('/_/api/observability/metrics?minutes=5').then(r => r.json())
+
+// Fetch traces filtered by GET method
+const traces = await fetch('/_/api/observability/traces?method=GET').then(r => r.json())
 ```

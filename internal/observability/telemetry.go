@@ -2,6 +2,8 @@ package observability
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"sync"
 	"time"
 
@@ -17,8 +19,19 @@ type Telemetry struct {
 	meterProvider  metric.MeterProvider
 	metrics        *Metrics
 	meterReader    any // Stored as any to allow type assertion for ForceFlush
+	db             *sql.DB
 	shutdownFunc   func(context.Context) error
 	_shutdownOnce  sync.Once
+	metricsMu      sync.RWMutex
+	metricsBuffer  []metricData
+}
+
+// metricData holds a single metric data point for storage.
+type metricData struct {
+	timestamp int64
+	name      string
+	value     float64
+	tags      string
 }
 
 // Init initializes OpenTelemetry with the given configuration.
@@ -156,3 +169,74 @@ func (t *Telemetry) Config() *Config {
 
 // shutdownTimeout is the maximum time to wait for shutdown.
 const shutdownTimeout = 5 * time.Second
+
+// SetDB sets the database connection for metrics storage.
+func (t *Telemetry) SetDB(db *sql.DB) {
+	t.metricsMu.Lock()
+	defer t.metricsMu.Unlock()
+	t.db = db
+}
+
+// StoreMetric stores a metric data point to the database.
+// This is called asynchronously by middleware to avoid blocking requests.
+func (t *Telemetry) StoreMetric(timestamp int64, name string, value float64, tags string) {
+	if t.db == nil {
+		return
+	}
+
+	// Buffer metric for batch storage
+	t.metricsMu.Lock()
+	t.metricsBuffer = append(t.metricsBuffer, metricData{
+		timestamp: timestamp,
+		name:      name,
+		value:     value,
+		tags:      tags,
+	})
+	// Flush if buffer is too large
+	if len(t.metricsBuffer) >= 100 {
+		t.flushMetricsLocked()
+	}
+	t.metricsMu.Unlock()
+}
+
+// FlushMetrics flushes any buffered metrics to the database.
+func (t *Telemetry) FlushMetrics() error {
+	t.metricsMu.Lock()
+	defer t.metricsMu.Unlock()
+	return t.flushMetricsLocked()
+}
+
+// flushMetricsLocked flushes buffered metrics. Caller must hold metricsMu.
+func (t *Telemetry) flushMetricsLocked() error {
+	if len(t.metricsBuffer) == 0 || t.db == nil {
+		return nil
+	}
+
+	tx, err := t.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT OR REPLACE INTO _observability_metrics (timestamp, metric_name, value, tags)
+		VALUES (?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, m := range t.metricsBuffer {
+		if _, err := stmt.Exec(m.timestamp, m.name, m.value, m.tags); err != nil {
+			return fmt.Errorf("failed to insert metric: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	t.metricsBuffer = t.metricsBuffer[:0] // Clear buffer
+	return nil
+}

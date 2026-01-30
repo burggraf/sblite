@@ -117,6 +117,11 @@ var serveCmd = &cobra.Command{
 			return fmt.Errorf("failed to run migrations: %w", err)
 		}
 
+		// Create metrics tables for observability
+		if err := db.CreateMetricsTables(database.DB); err != nil {
+			return fmt.Errorf("failed to create metrics tables: %w", err)
+		}
+
 		if !dbExists {
 			log.Info("initialized new database", "path", dbPath)
 

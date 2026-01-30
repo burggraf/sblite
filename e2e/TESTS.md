@@ -49,9 +49,13 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 | Storage - Signed URLs | 12 | 12 | 0 | 0 |
 | Storage - Resumable Uploads | 14 | 14 | 0 | 0 |
 | Dashboard - Storage | 16 | 16 | 0 | 0 |
-| **TOTAL** | **471** | **413** | **0** | **57** |
+| Dashboard - Observability | 9 | 9 | 0 | 0 |
+| Observability - OTel Config | 16 | 16 | 0 | 0 |
+| Observability - OTel Metrics | 22 | 22 | 0 | 0 |
+| Observability - OTel Traces | 29 | 29 | 0 | 0 |
+| **TOTAL** | **557** | **499** | **0** | **57** |
 
-*Last tested: 2026-01-18*
+*Last tested: 2026-01-30*
 
 **Note:** Server must be started in `catch` mode (`--mail-mode catch`) for email tests to pass.
 
@@ -1003,6 +1007,32 @@ Complete list of all E2E test cases for sblite Supabase compatibility.
 - ✅ API: delete bucket (DELETE /_/api/storage/buckets/:id)
 - ✅ API: list objects (POST /_/api/storage/objects/list)
 
+### `tests/dashboard/observability.test.ts`
+
+**OTel Status Endpoint**
+- ✅ should return disabled status when OTel is not enabled
+- ✅ should return enabled status and config when OTel is enabled
+
+**Metrics Endpoint**
+- ✅ should return empty metrics when OTel is disabled
+- ✅ should return aggregated metrics over time range
+- ✅ should support different time ranges
+
+**Traces Endpoint**
+- ✅ should return traces list when OTel is enabled
+- ✅ should support filtering by method
+- ✅ should support filtering by status code
+
+**Dashboard UI Integration**
+- ✅ should load observability page via navigation
+- ✅ should display observability configuration
+
+**Auto-refresh Functionality**
+- ✅ should toggle auto-refresh state
+
+**Empty State**
+- ✅ should show helpful message when OTel is disabled
+
 ### `tests/storage/resumable-uploads.test.ts`
 
 **TUS Protocol - OPTIONS**
@@ -1255,10 +1285,11 @@ Tests for OpenTelemetry distributed tracing (29 tests):
 | Storage - Signed URLs | 12 | 12 | 0 | 0 |
 | Storage - Resumable Uploads | 14 | 14 | 0 | 0 |
 | Dashboard - Storage | 16 | 16 | 0 | 0 |
+| Dashboard - Observability | 9 | 9 | 0 | 0 |
 | Observability - OTel Config | 16 | 16 | 0 | 0 |
 | Observability - OTel Metrics | 22 | 22 | 0 | 0 |
 | Observability - OTel Traces | 29 | 29 | 0 | 0 |
-| **TOTAL** | **548** | **490** | **0** | **57** |
+| **TOTAL** | **557** | **499** | **0** | **57** |
 
 *Last tested: 2026-01-30*
 | storage.test.ts | (sblite-specific dashboard API for storage) |

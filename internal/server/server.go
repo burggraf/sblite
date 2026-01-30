@@ -252,6 +252,7 @@ func (s *Server) SetMigrationService(svc *migration.Service) {
 // SetTelemetry sets the OpenTelemetry manager for the server.
 func (s *Server) SetTelemetry(tel *observability.Telemetry) {
 	s.telemetry = tel
+	s.dashboardHandler.SetTelemetry(tel)
 }
 
 // applyPersistedSettings applies settings persisted in the dashboard to the server config.
