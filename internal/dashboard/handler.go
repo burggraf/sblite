@@ -7271,6 +7271,11 @@ func (h *Handler) handleObservabilityStatus(w http.ResponseWriter, r *http.Reque
 
 // handleObservabilityMetrics returns aggregated metrics over time.
 func (h *Handler) handleObservabilityMetrics(w http.ResponseWriter, r *http.Request) {
+	// Flush any buffered metrics to ensure we have the latest data
+	if h.telemetry != nil {
+		_ = h.telemetry.FlushMetrics()
+	}
+
 	// Parse time range (default 15 minutes)
 	minutes := 15
 	if mins := r.URL.Query().Get("minutes"); mins != "" {
@@ -7320,6 +7325,11 @@ func (h *Handler) handleObservabilityMetrics(w http.ResponseWriter, r *http.Requ
 // handleObservabilityTraces returns recent trace information.
 // For now, this returns mock data since full trace storage is not implemented.
 func (h *Handler) handleObservabilityTraces(w http.ResponseWriter, r *http.Request) {
+	// Flush any buffered metrics to ensure we have the latest data
+	if h.telemetry != nil {
+		_ = h.telemetry.FlushMetrics()
+	}
+
 	// Parse query parameters
 	limit := 100
 	if lim := r.URL.Query().Get("limit"); lim != "" {

@@ -24,6 +24,7 @@ type Telemetry struct {
 	_shutdownOnce  sync.Once
 	metricsMu      sync.RWMutex
 	metricsBuffer  []metricData
+	stopFlusher    chan struct{}
 }
 
 // metricData holds a single metric data point for storage.
@@ -120,6 +121,9 @@ func Init(ctx context.Context, cfg *Config) (*Telemetry, func(), error) {
 		return nil
 	}
 
+	// Start periodic metrics flusher
+	tel.startPeriodicFlusher()
+
 	return tel, tel.Cleanup, nil
 }
 
@@ -148,6 +152,12 @@ func (t *Telemetry) Metrics() *Metrics {
 func (t *Telemetry) Shutdown(ctx context.Context) error {
 	var err error
 	t._shutdownOnce.Do(func() {
+		// Stop periodic flusher
+		t.stopPeriodicFlusher()
+
+		// Final metrics flush
+		_ = t.FlushMetrics()
+
 		if t.shutdownFunc != nil {
 			err = t.shutdownFunc(ctx)
 		}
@@ -239,4 +249,36 @@ func (t *Telemetry) flushMetricsLocked() error {
 
 	t.metricsBuffer = t.metricsBuffer[:0] // Clear buffer
 	return nil
+}
+
+// startPeriodicFlusher starts a background goroutine that periodically flushes metrics.
+func (t *Telemetry) startPeriodicFlusher() {
+	if t.db == nil {
+		return
+	}
+
+	t.stopFlusher = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				_ = t.FlushMetrics()
+			case <-t.stopFlusher:
+				// Final flush before stopping
+				_ = t.FlushMetrics()
+				return
+			}
+		}
+	}()
+}
+
+// stopPeriodicFlusher stops the periodic flusher goroutine.
+func (t *Telemetry) stopPeriodicFlusher() {
+	if t.stopFlusher != nil {
+		close(t.stopFlusher)
+		t.stopFlusher = nil
+	}
 }

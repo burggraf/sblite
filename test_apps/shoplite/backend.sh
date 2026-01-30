@@ -3,5 +3,6 @@ pnpm run build
     --db shoplite.db \
     --functions \
     --static-dir dist \
-    --pg-port 5432
+    --pg-port 5432 \
+    --otel-exporter stdout
 
