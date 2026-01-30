@@ -15,6 +15,8 @@ type Telemetry struct {
 	config         *Config
 	tracerProvider trace.TracerProvider
 	meterProvider  metric.MeterProvider
+	metrics        *Metrics
+	meterReader    any // Stored as any to allow type assertion for ForceFlush
 	shutdownFunc   func(context.Context) error
 	_shutdownOnce  sync.Once
 }
@@ -41,7 +43,7 @@ func Init(ctx context.Context, cfg *Config) (*Telemetry, func(), error) {
 
 	// Initialize meter provider if enabled
 	if cfg.MetricsEnabled {
-		mp, err := initMeterProvider(ctx, cfg)
+		mp, reader, err := initMeterProvider(ctx, cfg)
 		if err != nil {
 			// Shutdown tracer if meter init fails
 			if tp, ok := tel.tracerProvider.(interface{ Shutdown(context.Context) error }); ok {
@@ -50,7 +52,28 @@ func Init(ctx context.Context, cfg *Config) (*Telemetry, func(), error) {
 			return nil, nil, err
 		}
 		tel.meterProvider = mp
+		tel.meterReader = reader
 		otel.SetMeterProvider(mp)
+
+		// Initialize metric instruments
+		metrics, err := InitMetrics(mp)
+		if err != nil {
+			// Shutdown providers on failure
+			if tp, ok := tel.tracerProvider.(interface{ Shutdown(context.Context) error }); ok {
+				_ = tp.Shutdown(ctx)
+			}
+			if reader != nil {
+				// Try to force flush if it's a PeriodicReader
+				if pr, ok := reader.(interface{ ForceFlush(context.Context) error }); ok {
+					_ = pr.ForceFlush(ctx)
+				}
+			}
+			if mp, ok := mp.(interface{ Shutdown(context.Context) error }); ok {
+				_ = mp.Shutdown(ctx)
+			}
+			return nil, nil, err
+		}
+		tel.metrics = metrics
 	}
 
 	// Combine shutdown functions
@@ -59,6 +82,14 @@ func Init(ctx context.Context, cfg *Config) (*Telemetry, func(), error) {
 		if tel.tracerProvider != nil {
 			if tp, ok := tel.tracerProvider.(interface{ Shutdown(context.Context) error }); ok {
 				if err := tp.Shutdown(ctx); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		}
+		if tel.meterReader != nil {
+			// Force flush metrics before shutdown (only works for PeriodicReader)
+			if pr, ok := tel.meterReader.(interface{ ForceFlush(context.Context) error }); ok {
+				if err := pr.ForceFlush(ctx); err != nil {
 					errs = append(errs, err)
 				}
 			}
@@ -93,6 +124,11 @@ func (t *Telemetry) MeterProvider() metric.MeterProvider {
 		return t.meterProvider
 	}
 	return otel.GetMeterProvider()
+}
+
+// Metrics returns the metric instruments (or nil if disabled).
+func (t *Telemetry) Metrics() *Metrics {
+	return t.metrics
 }
 
 // Shutdown flushes and closes all providers.
