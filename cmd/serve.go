@@ -28,6 +28,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// startTime records when the app started (initialized when package loads)
+var startTime = time.Now()
+
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the Supabase Lite server",
@@ -379,10 +382,18 @@ var serveCmd = &cobra.Command{
 				"rest_api", "https://"+httpsDomain+"/rest/v1",
 			)
 
+			// Print startup time
+			startupDuration := time.Since(startTime)
+			fmt.Printf("\n  Ready! Started in %s\n\n", startupDuration.Round(time.Millisecond))
+
 			if err := srv.ListenAndServeTLS(httpsAddr, httpAddr, httpsCfg); err != nil && err != http.ErrServerClosed {
 				return err
 			}
 		} else {
+			// Print startup time
+			startupDuration := time.Since(startTime)
+			fmt.Printf("\n  Ready! Started in %s\n\n", startupDuration.Round(time.Millisecond))
+
 			if err := srv.ListenAndServe(addr); err != nil && err != http.ErrServerClosed {
 				return err
 			}
