@@ -121,12 +121,6 @@ func (t *Telemetry) Config() *Config {
 // shutdownTimeout is the maximum time to wait for shutdown.
 const shutdownTimeout = 5 * time.Second
 
-// initTracerProvider initializes the trace provider based on config.
-func initTracerProvider(ctx context.Context, cfg *Config) (trace.TracerProvider, error) {
-	// TODO: implement in Phase 2
-	return trace.NewNoopTracerProvider(), nil
-}
-
 // initMeterProvider initializes the meter provider based on config.
 func initMeterProvider(ctx context.Context, cfg *Config) (metric.MeterProvider, error) {
 	// TODO: implement in Phase 3
