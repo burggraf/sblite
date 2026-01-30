@@ -122,6 +122,11 @@ var serveCmd = &cobra.Command{
 			return fmt.Errorf("failed to create metrics tables: %w", err)
 		}
 
+		// Set database connection for telemetry metrics storage
+		if tel != nil {
+			tel.SetDB(database.DB)
+		}
+
 		if !dbExists {
 			log.Info("initialized new database", "path", dbPath)
 
@@ -157,10 +162,13 @@ var serveCmd = &cobra.Command{
 			StaticDir:     staticDir,
 		})
 
-		// Set telemetry on server
+		// Set telemetry on server BEFORE setting up routes
 		if tel != nil {
 			srv.SetTelemetry(tel)
 		}
+
+		// Set up routes AFTER telemetry is set (so middleware can be applied)
+		srv.SetupRoutes()
 
 		// Set dashboard config for settings display
 		srv.SetDashboardConfig(&dashboard.ServerConfig{

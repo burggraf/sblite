@@ -52,9 +52,8 @@ func HTTPMiddleware(tel *Telemetry, serviceName string) func(http.Handler) http.
 			duration := time.Since(start)
 
 			// Record metrics
-			if tel.Metrics() != nil {
-				metrics := tel.Metrics()
-
+			metrics := tel.Metrics()
+			if metrics != nil {
 				// Build attribute set for metrics
 				attrs := []attribute.KeyValue{
 					AttrHTTPMethod.String(r.Method),
@@ -71,15 +70,13 @@ func HTTPMiddleware(tel *Telemetry, serviceName string) func(http.Handler) http.
 				if rw.size > 0 {
 					metrics.HTTPResponseSize.Record(ctx, int64(rw.size), metric.WithAttributes(attrs...))
 				}
-
-				// Store metrics to database for dashboard visualization
-				timestamp := start.Unix()
-				tags := fmt.Sprintf("http.method:%s,http.status_code:%d", r.Method, rw.status)
-				go tel.StoreMetric(timestamp, "http.server.request_count", 1, tags)
-				go tel.StoreMetric(timestamp, "http.server.request_duration_ms", float64(duration.Milliseconds()), tags)
-			} else {
-				// Metrics not initialized - skip recording
 			}
+
+			// Store metrics to database for dashboard visualization
+			timestamp := start.Unix()
+			tags := fmt.Sprintf("http.method:%s,http.status_code:%d", r.Method, rw.status)
+			go tel.StoreMetric(timestamp, "http.server.request_count", 1, tags)
+			go tel.StoreMetric(timestamp, "http.server.request_duration_ms", float64(duration.Milliseconds()), tags)
 
 			// Set span status based on HTTP status
 			if rw.status >= 400 {

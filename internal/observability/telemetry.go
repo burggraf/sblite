@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -121,9 +122,6 @@ func Init(ctx context.Context, cfg *Config) (*Telemetry, func(), error) {
 		return nil
 	}
 
-	// Start periodic metrics flusher
-	tel.startPeriodicFlusher()
-
 	return tel, tel.Cleanup, nil
 }
 
@@ -185,34 +183,47 @@ func (t *Telemetry) SetDB(db *sql.DB) {
 	t.metricsMu.Lock()
 	defer t.metricsMu.Unlock()
 	t.db = db
+
+	// Start periodic flusher if not already started
+	if t.stopFlusher == nil && db != nil {
+		log.Printf("[observability] starting periodic metrics flusher")
+		t.startPeriodicFlusher()
+	}
 }
 
 // StoreMetric stores a metric data point to the database.
 // This is called asynchronously by middleware to avoid blocking requests.
 func (t *Telemetry) StoreMetric(timestamp int64, name string, value float64, tags string) {
+	t.metricsMu.Lock()
+	defer t.metricsMu.Unlock()
+
 	if t.db == nil {
 		return
 	}
 
 	// Buffer metric for batch storage
-	t.metricsMu.Lock()
 	t.metricsBuffer = append(t.metricsBuffer, metricData{
 		timestamp: timestamp,
 		name:      name,
 		value:     value,
 		tags:      tags,
 	})
+	// Log first few metrics for debugging
+	if len(t.metricsBuffer) <= 5 {
+		log.Printf("[observability] stored metric: %s = %f (buffer size: %d)", name, value, len(t.metricsBuffer))
+	}
 	// Flush if buffer is too large
 	if len(t.metricsBuffer) >= 100 {
+		log.Printf("[observability] buffer size >= 100, flushing")
 		t.flushMetricsLocked()
 	}
-	t.metricsMu.Unlock()
 }
 
 // FlushMetrics flushes any buffered metrics to the database.
 func (t *Telemetry) FlushMetrics() error {
 	t.metricsMu.Lock()
 	defer t.metricsMu.Unlock()
+	log.Printf("[observability] FlushMetrics called: buffer size = %d", len(t.metricsBuffer))
 	return t.flushMetricsLocked()
 }
 
@@ -253,8 +264,8 @@ func (t *Telemetry) flushMetricsLocked() error {
 
 // startPeriodicFlusher starts a background goroutine that periodically flushes metrics.
 func (t *Telemetry) startPeriodicFlusher() {
-	if t.db == nil {
-		return
+	if t.stopFlusher != nil {
+		return // Already started
 	}
 
 	t.stopFlusher = make(chan struct{})
@@ -265,9 +276,16 @@ func (t *Telemetry) startPeriodicFlusher() {
 		for {
 			select {
 			case <-ticker.C:
-				_ = t.FlushMetrics()
+				t.metricsMu.Lock()
+				bufferSize := len(t.metricsBuffer)
+				t.metricsMu.Unlock()
+				log.Printf("[observability] periodic flush: buffer size = %d", bufferSize)
+				if err := t.FlushMetrics(); err != nil {
+					log.Printf("[observability] periodic flush error: %v", err)
+				}
 			case <-t.stopFlusher:
 				// Final flush before stopping
+				log.Printf("[observability] stopping periodic flusher")
 				_ = t.FlushMetrics()
 				return
 			}

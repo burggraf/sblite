@@ -9904,7 +9904,7 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
     },
 
     renderObservabilityView() {
-        const { enabled, config, metrics, traces, loading, filters, timeRange, autoRefresh } = this.state.observability;
+        const { enabled, config, metrics, traces, loading, filters, timeRange, autoRefresh, selectedTrace } = this.state.observability;
 
         if (loading) {
             return `
@@ -9937,9 +9937,22 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
         const requestCountMetrics = metrics?.['http.server.request_count'] || [];
         const durationMetrics = metrics?.['http.server.request_duration_ms'] || [];
         const totalRequests = requestCountMetrics.reduce((sum, m) => sum + (m.value || 0), 0);
-        const avgDuration = durationMetrics.length > 0
-            ? durationMetrics.reduce((sum, m) => sum + (m.value || 0), 0) / durationMetrics.length
-            : 0;
+
+        // Calculate duration percentiles
+        const sortedDurations = durationMetrics.map(m => m.value).sort((a, b) => a - b);
+        const p50 = sortedDurations[Math.floor(sortedDurations.length * 0.5)] || 0;
+        const p95 = sortedDurations[Math.floor(sortedDurations.length * 0.95)] || 0;
+        const p99 = sortedDurations[Math.floor(sortedDurations.length * 0.99)] || 0;
+        const maxDuration = sortedDurations[sortedDurations.length - 1] || 0;
+
+        // Calculate error rate
+        const errorCount = traces.filter(t => parseInt(t['http.status_code'] || 0) >= 400).length;
+        const errorRate = traces.length > 0 ? (errorCount / traces.length * 100) : 0;
+
+        // Get slowest requests
+        const slowestRequests = [...traces]
+            .sort((a, b) => (b['http.request_duration_ms'] || 0) - (a['http.request_duration_ms'] || 0))
+            .slice(0, 5);
 
         // Group traces by status code
         const tracesByStatus = {};
@@ -10004,9 +10017,15 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
                         <div class="stat-label">Total Requests</div>
                         <div class="stat-value">${totalRequests.toLocaleString()}</div>
                     </div>
+                    <div class="stat-card ${errorRate > 5 ? 'stat-error' : ''}">
+                        <div class="stat-label">Error Rate</div>
+                        <div class="stat-value">${errorRate.toFixed(1)}%</div>
+                        <div class="stat-detail">${errorCount} of ${traces.length} errors</div>
+                    </div>
                     <div class="stat-card">
-                        <div class="stat-label">Avg Duration</div>
-                        <div class="stat-value">${avgDuration.toFixed(1)}ms</div>
+                        <div class="stat-label">P95 Latency</div>
+                        <div class="stat-value">${p95.toFixed(1)}ms</div>
+                        <div class="stat-detail">P50: ${p50.toFixed(1)}ms | P99: ${p99.toFixed(1)}ms</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-label">Data Points</div>
@@ -10014,31 +10033,96 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
                     </div>
                 </div>
 
-                <!-- Request Duration Chart (Simple CSS bar chart) -->
+                <!-- Request Duration Chart with labels -->
                 ${durationMetrics.length > 0 ? `
-                    <div style="margin-top: 1.5rem;">
-                        <div class="card-subtitle" style="font-size: 0.9rem; margin-bottom: 0.5rem;">Request Duration Trend</div>
-                        <div class="chart-container">
-                            <div class="chart-bars">
-                                ${durationMetrics.slice(-20).map((m, i) => {
-                                    const maxVal = Math.max(...durationMetrics.map(d => d.value));
-                                    const height = maxVal > 0 ? (m.value / maxVal * 100) : 0;
-                                    const timestamp = new Date(m.timestamp * 1000).toLocaleTimeString();
-                                    return `
-                                        <div class="chart-bar-wrapper">
-                                            <div class="chart-bar" style="height: ${height}%;" title="${timestamp}: ${m.value.toFixed(1)}ms"></div>
-                                        </div>
-                                    `;
-                                }).join('')}
+                    <div style="margin-top: 2rem;">
+                        <div class="card-subtitle">
+                            Request Duration Trend
+                            <span style="margin-left: auto; font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
+                                Max: ${maxDuration.toFixed(1)}ms | P95: ${p95.toFixed(1)}ms
+                            </span>
+                        </div>
+                        <div class="chart-container-v2">
+                            <div class="chart-y-axis">
+                                <div class="chart-y-label">${maxDuration.toFixed(0)}ms</div>
+                                <div class="chart-y-label">${(maxDuration / 2).toFixed(0)}ms</div>
+                                <div class="chart-y-label">0ms</div>
                             </div>
+                            <div class="chart-content">
+                                <div class="chart-bars-v2">
+                                    ${(() => {
+                                        // Take last 12 data points for better readability
+                                        const recentMetrics = durationMetrics.slice(-12);
+                                        return recentMetrics.map((m, i) => {
+                                            const height = maxDuration > 0 ? (m.value / maxDuration * 100) : 0;
+                                            const timestamp = new Date(m.timestamp * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                                            const isSlow = m.value > p95;
+                                            const isError = m.tags && m.tags.includes('status_code:4') || m.tags.includes('status_code:5');
+                                            return `
+                                                <div class="chart-bar-wrapper-v2" style="cursor: pointer;"
+                                                     onclick="App.showTraceDetails('${m.timestamp}', '${m.tags.replace(/'/g, "\\'")}')"
+                                                     title="${timestamp}: ${m.value.toFixed(1)}ms${isSlow ? ' (slow)' : ''}${isError ? ' (error)' : ''}">
+                                                    <div class="chart-bar-v2 ${isSlow ? 'chart-bar-slow' : ''} ${isError ? 'chart-bar-error' : ''}"
+                                                         style="height: ${Math.max(height, 2)}%;"></div>
+                                                    <div class="chart-x-label">${timestamp}</div>
+                                                </div>
+                                            `;
+                                        }).join('');
+                                    })()}
+                                </div>
+                            </div>
+                        </div>
+                        <div style="text-align: center; margin-top: 0.5rem; color: var(--text-muted); font-size: 0.75rem;">
+                            Hover bars for details • Click to view trace
                         </div>
                     </div>
                 ` : '<div style="margin-top: 1rem; color: var(--text-muted);">No duration data available</div>'}
+
+                <!-- Slowest Requests -->
+                ${slowestRequests.length > 0 ? `
+                    <div style="margin-top: 2rem;">
+                        <div class="card-subtitle">Slowest Requests</div>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Duration</th>
+                                        <th>Method</th>
+                                        <th>Status</th>
+                                        <th>Tags</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${slowestRequests.map(t => {
+                                        const timestamp = new Date(t.timestamp * 1000).toLocaleTimeString();
+                                        const duration = t['http.request_duration_ms'] || 0;
+                                        const status = t['http.status_code'] || 'N/A';
+                                        const method = t['http.method'] || 'N/A';
+                                        const statusClass = parseInt(status) >= 400 ? 'status-error' : (parseInt(status) >= 300 ? 'status-warning' : 'status-success');
+                                        return `
+                                            <tr onclick="App.showTraceDetails('${t.timestamp}', '${t.tags}')" style="cursor: pointer;">
+                                                <td>${timestamp}</td>
+                                                <td style="font-weight: bold; color: var(--accent);">${duration.toFixed(1)}ms</td>
+                                                <td><code>${method}</code></td>
+                                                <td><span class="status-badge ${statusClass}">${status}</span></td>
+                                                <td style="font-size: 0.8rem; color: var(--text-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${t.tags}</td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                ` : ''}
             </div>
 
             <!-- Traces Table -->
             <div class="card">
-                <div class="card-subtitle">Recent Traces</div>
+                <div class="card-subtitle">
+                    Recent Traces (${traces.length})
+                    ${traces.length > 50 ? '<span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted); margin-left: auto;">Showing 50 most recent</span>' : ''}
+                </div>
 
                 <!-- Filters -->
                 <div class="filters-row" style="margin-bottom: 1rem;">
@@ -10046,8 +10130,13 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
                            onchange="App.setObservabilityFilter('method', this.value)" style="width: 120px;">
                     <input type="text" class="input-sm" placeholder="Path (/api/...)" value="${filters.path}"
                            onchange="App.setObservabilityFilter('path', this.value)" style="width: 180px;">
-                    <input type="text" class="input-sm" placeholder="Status (200, 500...)" value="${filters.status}"
-                           onchange="App.setObservabilityFilter('status', this.value)" style="width: 100px;">
+                    <select class="input-sm" onchange="App.setObservabilityFilter('status', this.value)" style="width: 120px;">
+                        <option value="">All Status</option>
+                        <option value="2" ${filters.status === '2' ? 'selected' : ''}>2xx Success</option>
+                        <option value="3" ${filters.status === '3' ? 'selected' : ''}>3xx Redirect</option>
+                        <option value="4" ${filters.status === '4' ? 'selected' : ''}>4xx Client Error</option>
+                        <option value="5" ${filters.status === '5' ? 'selected' : ''}>5xx Server Error</option>
+                    </select>
                     <button class="btn btn-sm" onclick="App.setObservabilityFilter('method', ''); App.setObservabilityFilter('path', ''); App.setObservabilityFilter('status', '');">Clear</button>
                 </div>
 
@@ -10056,24 +10145,28 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>Time</th>
-                                    <th>Method</th>
-                                    <th>Status</th>
+                                    <th style="width: 100px;">Time</th>
+                                    <th style="width: 80px;">Method</th>
+                                    <th style="width: 80px;">Status</th>
+                                    <th style="width: 100px;">Duration</th>
                                     <th>Tags</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 ${traces.slice(0, 50).map(t => {
                                     const timestamp = new Date(t.timestamp * 1000).toLocaleTimeString();
+                                    const duration = t['http.request_duration_ms'] || 0;
                                     const status = t['http.status_code'] || 'N/A';
                                     const method = t['http.method'] || 'N/A';
-                                    const statusClass = parseInt(status) >= 400 ? 'status-error' : (parseInt(status) >= 300 ? 'status-warning' : 'status-success');
+                                    const statusClass = parseInt(status) >= 500 ? 'status-error-5xx' : (parseInt(status) >= 400 ? 'status-error' : (parseInt(status) >= 300 ? 'status-warning' : 'status-success'));
+                                    const isSlow = duration > p95;
                                     return `
-                                        <tr>
+                                        <tr onclick="App.showTraceDetails('${t.timestamp}', '${t.tags.replace(/'/g, "\\'")}')" style="cursor: pointer;" class="trace-row ${isSlow ? 'trace-slow' : ''}">
                                             <td>${timestamp}</td>
                                             <td><code>${method}</code></td>
                                             <td><span class="status-badge ${statusClass}">${status}</span></td>
-                                            <td style="font-size: 0.85rem; color: var(--text-muted); max-width: 300px; overflow: hidden; text-overflow: ellipsis;">${t.tags}</td>
+                                            <td style="${isSlow ? 'color: var(--warning); font-weight: bold;' : ''}">${duration.toFixed(1)}ms</td>
+                                            <td style="font-size: 0.8rem; color: var(--text-muted); max-width: 300px; overflow: hidden; text-overflow: ellipsis;" title="${t.tags}">${t.tags}</td>
                                         </tr>
                                     `;
                                 }).join('')}
@@ -10087,6 +10180,83 @@ curl -X POST '${baseUrl}/auth/v1/invite' \\
                         <div class="empty-state-description">Make some requests to see traces appear here.</div>
                     </div>
                 `}
+            </div>
+
+            <!-- Trace Details Modal -->
+            ${selectedTrace ? this.renderTraceDetailsModal() : ''}
+        `;
+    },
+
+    showTraceDetails(timestamp, tags) {
+        this.state.observability.selectedTrace = { timestamp, tags };
+        this.render();
+    },
+
+    closeTraceDetails() {
+        this.state.observability.selectedTrace = null;
+        this.render();
+    },
+
+    renderTraceDetailsModal() {
+        const { timestamp, tags } = this.state.observability.selectedTrace;
+        const tagPairs = tags.split(',').map(t => t.trim().split(':'));
+
+        // Parse duration from tags
+        const durationTag = tagPairs.find(t => t[0] === 'http.request_duration_ms');
+        const duration = durationTag ? parseFloat(durationTag[1]) : 0;
+
+        // Parse other attributes
+        const attrs = {};
+        tagPairs.forEach(([key, val]) => {
+            attrs[key] = val;
+        });
+
+        return `
+            <div class="modal-overlay" onclick="App.closeTraceDetails()">
+                <div class="modal-content large-modal" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <h3>Trace Details</h3>
+                        <button class="btn-icon" onclick="App.closeTraceDetails()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="trace-details-grid">
+                            <div class="trace-detail-item">
+                                <div class="trace-detail-label">Timestamp</div>
+                                <div class="trace-detail-value">${new Date(timestamp * 1000).toLocaleString()}</div>
+                            </div>
+                            <div class="trace-detail-item">
+                                <div class="trace-detail-label">Duration</div>
+                                <div class="trace-detail-value ${duration > 100 ? 'value-slow' : ''}">${duration.toFixed(2)}ms</div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 1.5rem;">
+                            <div class="trace-detail-label">Attributes</div>
+                            <div class="trace-attributes">
+                                ${Object.entries(attrs).map(([key, val]) => `
+                                    <div class="trace-attribute">
+                                        <span class="trace-attr-key">${key}</span>
+                                        <span class="trace-attr-value">${val}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 1.5rem;">
+                            <div class="trace-detail-label">Raw Tags</div>
+                            <code class="trace-raw-tags">${tags}</code>
+                        </div>
+
+                        ${duration > 100 ? `
+                            <div style="margin-top: 1.5rem; padding: 1rem; background: var(--bg-secondary); border-left: 3px solid var(--warning); border-radius: 4px;">
+                                <strong>⚠️ Performance Note:</strong> This request took ${duration.toFixed(2)}ms, which is slower than the P95 threshold (${this.state.observability.metrics?.['http.server.request_duration_ms'] ? this.calculateP95().toFixed(1) : 'N/A'}ms). Consider optimizing this endpoint.
+                            </div>
+                        ` : ''}
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="App.closeTraceDetails()">Close</button>
+                    </div>
+                </div>
             </div>
         `;
     },

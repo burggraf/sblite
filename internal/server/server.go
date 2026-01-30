@@ -235,8 +235,13 @@ func NewWithConfig(database *db.DB, cfg ServerConfig) *Server {
 		return s.ReloadMail(cfg)
 	})
 
-	s.setupRoutes()
 	return s
+}
+
+// SetupRoutes sets up all HTTP routes for the server.
+// This must be called after SetTelemetry() if telemetry is enabled.
+func (s *Server) SetupRoutes() {
+	s.setupRoutes()
 }
 
 // SetDashboardConfig sets the dashboard server configuration for display in settings.
@@ -387,6 +392,10 @@ func (s *Server) setupRoutes() {
 
 	// REST routes (with API key validation and optional auth for RLS)
 	s.router.Route("/rest/v1", func(r chi.Router) {
+		// Apply OTel middleware to this sub-router
+		if s.telemetry != nil && s.telemetry.Config().ShouldEnable() {
+			r.Use(observability.HTTPMiddleware(s.telemetry, "sblite"))
+		}
 		r.Use(s.apiKeyMiddleware)       // Validates apikey header, extracts role
 		r.Use(s.optionalAuthMiddleware) // Extracts user JWT if present
 		// OpenAPI schema endpoint (must be before /{table} to avoid conflict)
@@ -403,6 +412,10 @@ func (s *Server) setupRoutes() {
 
 	// Admin API routes
 	s.router.Route("/admin/v1", func(r chi.Router) {
+		// Apply OTel middleware to this sub-router
+		if s.telemetry != nil && s.telemetry.Config().ShouldEnable() {
+			r.Use(observability.HTTPMiddleware(s.telemetry, "sblite"))
+		}
 		r.Post("/tables", s.adminHandler.CreateTable)
 		r.Get("/tables", s.adminHandler.ListTables)
 		r.Get("/tables/{name}", s.adminHandler.GetTable)

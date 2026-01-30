@@ -7342,30 +7342,52 @@ func (h *Handler) handleObservabilityTraces(w http.ResponseWriter, r *http.Reque
 	path := r.URL.Query().Get("path")
 	status := r.URL.Query().Get("status")
 
-	// Query recent metrics that represent traces (request_count metrics)
-	// This provides a basic trace view from the metrics data
+	// Query recent request_count metrics with duration data joined
+	// We use a CTE to get request_count metrics with their matching duration
 	query := `
-		SELECT timestamp, metric_name, value, tags
-		FROM _observability_metrics
-		WHERE metric_name = 'http.server.request_count'
-		AND timestamp >= ?
-	`
+		WITH request_counts AS (
+			SELECT timestamp, metric_name, value, tags
+			FROM _observability_metrics
+			WHERE metric_name = 'http.server.request_count'
+			AND timestamp >= ?
+			`
 	args := []interface{}{time.Now().Unix() - int64(15*60)} // Last 15 minutes
 
+	filterIdx := 1
 	if method != "" {
-		query += " AND tags LIKE ?"
+		query += fmt.Sprintf(" AND tags LIKE $%d", filterIdx)
 		args = append(args, "%http.method:"+method+"%")
+		filterIdx++
 	}
 	if path != "" {
-		query += " AND tags LIKE ?"
+		query += fmt.Sprintf(" AND tags LIKE $%d", filterIdx)
 		args = append(args, "%"+path+"%")
+		filterIdx++
 	}
 	if status != "" {
-		query += " AND tags LIKE ?"
+		query += fmt.Sprintf(" AND tags LIKE $%d", filterIdx)
 		args = append(args, "%http.status_code:"+status+"%")
+		filterIdx++
 	}
 
-	query += " ORDER BY timestamp DESC LIMIT ?"
+	query += `
+		ORDER BY timestamp DESC
+		LIMIT ?
+	)
+	SELECT
+		rc.timestamp,
+		rc.tags,
+		COALESCE(
+			(SELECT value FROM _observability_metrics d
+			 WHERE d.metric_name = 'http.server.request_duration_ms'
+			 AND d.timestamp = rc.timestamp
+			 AND d.tags = rc.tags
+			),
+			0
+		) as duration_ms
+	FROM request_counts rc
+	ORDER BY rc.timestamp DESC
+	`
 	args = append(args, limit)
 
 	rows, err := h.db.Query(query, args...)
@@ -7378,19 +7400,20 @@ func (h *Handler) handleObservabilityTraces(w http.ResponseWriter, r *http.Reque
 	traces := []map[string]interface{}{}
 	for rows.Next() {
 		var ts int64
-		var name, tags string
-		var value float64
-		if err := rows.Scan(&ts, &name, &value, &tags); err != nil {
+		var tags string
+		var duration float64
+		if err := rows.Scan(&ts, &tags, &duration); err != nil {
 			continue
 		}
 
-		// Parse tags to extract method, status
+		// Parse tags to extract method, status, etc.
 		traceData := map[string]interface{}{
-			"timestamp": ts,
-			"tags":      tags,
+			"timestamp":                 ts,
+			"tags":                      tags,
+			"http.request_duration_ms": duration,
 		}
 
-		// Parse tags for display
+		// Parse tags for display as individual fields
 		tagPairs := strings.Split(tags, ",")
 		for _, pair := range tagPairs {
 			parts := strings.SplitN(pair, ":", 2)
