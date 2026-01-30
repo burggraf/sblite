@@ -95,6 +95,12 @@ sblite/
 │   │   ├── file.go           # File handler with rotation
 │   │   ├── database.go       # SQLite handler
 │   │   └── middleware.go     # HTTP request logging
+│   ├── observability/        # OpenTelemetry instrumentation
+│   │   ├── telemetry.go      # OTel initialization and lifecycle
+│   │   ├── config.go         # Configuration
+│   │   ├── tracer.go         # Trace provider setup
+│   │   ├── metrics.go        # Meter provider and instruments
+│   │   └── middleware.go     # HTTP instrumentation
 │   ├── pgtranslate/          # PostgreSQL to SQLite translation
 │   │   ├── token.go          # Lexer tokens
 │   │   ├── ast.go            # AST node types
@@ -339,6 +345,24 @@ Certificates are cached in `<db-dir>/certs/` and renewed automatically.
 | `--edge-runtime-dir` | `SBLITE_EDGE_RUNTIME_DIR` | `<db-dir>/edge-runtime/` | Directory for edge runtime binary |
 
 The edge runtime binary is stored in `<db-dir>/edge-runtime/` by default (relative to the database file). This can be overridden with `--edge-runtime-dir` or `SBLITE_EDGE_RUNTIME_DIR`.
+
+### Observability Configuration
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `--otel-exporter` | `SBLITE_OTEL_EXPORTER` | `none` | OTel exporter: none, stdout, otlp |
+| `--otel-endpoint` | `SBLITE_OTEL_ENDPOINT` | `localhost:4317` | OTLP collector endpoint |
+| `--otel-service-name` | `SBLITE_OTEL_SERVICE_NAME` | `sblite` | Service name for telemetry |
+| `--otel-sample-rate` | `SBLITE_OTEL_SAMPLE_RATE` | `0.1` | Trace sampling (0.0-1.0) |
+| `--otel-metrics-enabled` | - | `true` | Enable metrics |
+| `--otel-traces-enabled` | - | `true` | Enable traces |
+
+**Example:**
+```bash
+./sblite serve --otel-exporter stdout --otel-sample-rate 1.0
+```
+
+See `docs/observability.md` for full documentation.
 
 ### PostgreSQL Wire Protocol Configuration
 

@@ -38,6 +38,7 @@ A lightweight, single-binary backend that provides a subset of Supabase function
 | Vector search (pgvector-compatible) | :white_check_mark: |
 | Built-in HTTPS (Let's Encrypt) | :white_check_mark: |
 | Static file hosting (SPA support) | :white_check_mark: |
+| OpenTelemetry (metrics & traces) | :white_check_mark: |
 
 ## Quick Start
 
@@ -221,6 +222,33 @@ Serve your frontend alongside the API from a single binary:
 
 See [Static File Hosting](docs/static-hosting.md) for detailed configuration and SPA setup.
 
+### Observability (OpenTelemetry)
+
+sblite includes built-in OpenTelemetry support for production-grade observability:
+
+- **Metrics**: HTTP request rate, latency histograms, response sizes
+- **Traces**: Distributed tracing with automatic HTTP instrumentation
+- **Zero Overhead**: Completely disabled by default
+- **Standard Protocol**: OTLP compatible with Grafana, Jaeger, Prometheus
+
+| Environment Variable | CLI Flag | Default | Description |
+|---------------------|----------|---------|-------------|
+| `SBLITE_OTEL_EXPORTER` | `--otel-exporter` | `none` | Exporter: `none`, `stdout`, `otlp` |
+| `SBLITE_OTEL_ENDPOINT` | `--otel-endpoint` | `localhost:4317` | OTLP collector endpoint |
+| `SBLITE_OTEL_SERVICE_NAME` | `--otel-service-name` | `sblite` | Service name |
+| `SBLITE_OTEL_SAMPLE_RATE` | `--otel-sample-rate` | `0.1` | Trace sampling (0.0-1.0) |
+
+**Quick Start:**
+```bash
+# Development: see traces and metrics in stdout
+./sblite serve --otel-exporter stdout --otel-sample-rate 1.0
+
+# Production: send to Grafana/Tempo
+./sblite serve --otel-exporter otlp --otel-endpoint grafana:4317
+```
+
+**Documentation:** [`docs/observability.md`](docs/observability.md)
+
 ## API Endpoints
 
 ### Authentication (`/auth/v1`)
@@ -310,6 +338,7 @@ Enable with `--realtime` flag. Supports Broadcast, Presence, and Postgres Change
 - [OAuth Authentication](docs/OAUTH.md) - Google and GitHub OAuth setup, API reference, and troubleshooting
 - [Email System](docs/EMAIL.md) - Complete guide to email modes, configuration, and authentication flows
 - [Logging System](docs/LOGGING.md) - Logging modes, rotation, database queries, and configuration
+- [Observability](docs/observability.md) - OpenTelemetry metrics, traces, and performance monitoring
 - [Full-Text Search](docs/full-text-search.md) - FTS5 indexing, query types, and Supabase textSearch compatibility
 - [PostgreSQL Translation](docs/postgres-translation.md) - Write PostgreSQL syntax that translates to SQLite automatically
 - [PostgreSQL Wire Protocol](docs/pgwire.md) - Connect with psql, pgAdmin, DBeaver, and native PostgreSQL drivers
