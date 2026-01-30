@@ -21,6 +21,7 @@ import (
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
+	"github.com/markb/sblite/internal/observability"
 	"github.com/markb/sblite/internal/pgwire"
 	"github.com/markb/sblite/internal/server"
 	"github.com/markb/sblite/internal/storage"
@@ -36,6 +37,31 @@ var serveCmd = &cobra.Command{
 		logConfig := buildLogConfig(cmd)
 		if err := log.Init(logConfig); err != nil {
 			return fmt.Errorf("failed to initialize logging: %w", err)
+		}
+
+		// Initialize OpenTelemetry
+		otelCfg := buildOTelConfig(cmd)
+		var tel *observability.Telemetry
+		var otelCtx context.Context
+		if otelCfg.ShouldEnable() {
+			var otelCleanup func()
+			var err error
+			tel, otelCleanup, err = observability.Init(context.Background(), otelCfg)
+			if err != nil {
+				return fmt.Errorf("failed to initialize OpenTelemetry: %w", err)
+			}
+			defer otelCleanup()
+			otelCtx = context.Background()
+
+			log.Info("OpenTelemetry enabled",
+				"exporter", otelCfg.Exporter,
+				"endpoint", otelCfg.Endpoint,
+				"metrics", otelCfg.MetricsEnabled,
+				"traces", otelCfg.TracesEnabled,
+				"sample_rate", otelCfg.SampleRate,
+			)
+		} else {
+			otelCtx = context.Background()
 		}
 
 		dbPath, _ := cmd.Flags().GetString("db")
@@ -126,6 +152,11 @@ var serveCmd = &cobra.Command{
 			StaticDir:     staticDir,
 		})
 
+		// Set telemetry on server
+		if tel != nil {
+			srv.SetTelemetry(tel)
+		}
+
 		// Set dashboard config for settings display
 		srv.SetDashboardConfig(&dashboard.ServerConfig{
 			Version: "0.1.1",
@@ -159,7 +190,7 @@ var serveCmd = &cobra.Command{
 
 		// Enable edge functions if requested
 		functionsEnabled, _ := cmd.Flags().GetBool("functions")
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(otelCtx) // Use otelCtx as parent
 		defer cancel()
 
 		if functionsEnabled {
@@ -471,6 +502,64 @@ func buildLogConfig(cmd *cobra.Command) *log.Config {
 	return cfg
 }
 
+// buildOTelConfig creates an observability.Config from environment variables and CLI flags.
+// Priority: CLI flags > environment variables > defaults
+func buildOTelConfig(cmd *cobra.Command) *observability.Config {
+	cfg := observability.NewConfig()
+
+	// Read environment variables first
+	if exporter := os.Getenv("SBLITE_OTEL_EXPORTER"); exporter != "" {
+		cfg.Exporter = exporter
+	}
+	if endpoint := os.Getenv("SBLITE_OTEL_ENDPOINT"); endpoint != "" {
+		cfg.Endpoint = endpoint
+	}
+	if serviceName := os.Getenv("SBLITE_OTEL_SERVICE_NAME"); serviceName != "" {
+		cfg.ServiceName = serviceName
+	}
+	if sampleRate := os.Getenv("SBLITE_OTEL_SAMPLE_RATE"); sampleRate != "" {
+		if rate, err := strconv.ParseFloat(sampleRate, 64); err == nil {
+			cfg.SampleRate = rate
+		}
+	}
+
+	// CLI flags override environment variables
+	if exporter, _ := cmd.Flags().GetString("otel-exporter"); exporter != "" {
+		cfg.Exporter = exporter
+	}
+	if endpoint, _ := cmd.Flags().GetString("otel-endpoint"); endpoint != "" {
+		cfg.Endpoint = endpoint
+	}
+	if serviceName, _ := cmd.Flags().GetString("otel-service-name"); serviceName != "" {
+		cfg.ServiceName = serviceName
+	}
+	if cmd.Flags().Changed("otel-sample-rate") {
+		if sampleRate, _ := cmd.Flags().GetFloat64("otel-sample-rate"); sampleRate >= 0 && sampleRate <= 1 {
+			cfg.SampleRate = sampleRate
+		}
+	}
+
+	// Enable metrics/traces if exporter is set (unless explicitly disabled)
+	if cfg.ShouldEnable() {
+		metricsEnabled, _ := cmd.Flags().GetBool("otel-metrics-enabled")
+		tracesEnabled, _ := cmd.Flags().GetBool("otel-traces-enabled")
+
+		// If flags are not set, default to true
+		if !cmd.Flags().Changed("otel-metrics-enabled") {
+			cfg.MetricsEnabled = true
+		} else {
+			cfg.MetricsEnabled = metricsEnabled
+		}
+		if !cmd.Flags().Changed("otel-traces-enabled") {
+			cfg.TracesEnabled = true
+		} else {
+			cfg.TracesEnabled = tracesEnabled
+		}
+	}
+
+	return cfg
+}
+
 // buildStorageConfig creates a storage.Config from dashboard settings, environment variables, and CLI flags.
 // Priority: Dashboard settings > CLI flags > environment variables > defaults
 func buildStorageConfig(cmd *cobra.Command, db *sql.DB) *storage.Config {
@@ -618,4 +707,12 @@ func init() {
 
 	// Static file serving flags
 	serveCmd.Flags().String("static-dir", "./public", "Directory for static file hosting")
+
+	// OpenTelemetry flags
+	serveCmd.Flags().String("otel-exporter", "", "OpenTelemetry exporter: none (default), stdout, otlp")
+	serveCmd.Flags().String("otel-endpoint", "", "OpenTelemetry OTLP endpoint (default: localhost:4317)")
+	serveCmd.Flags().String("otel-service-name", "", "OpenTelemetry service name (default: sblite)")
+	serveCmd.Flags().Float64("otel-sample-rate", 0.1, "OpenTelemetry trace sampling rate 0.0-1.0 (default: 0.1)")
+	serveCmd.Flags().Bool("otel-metrics-enabled", true, "Enable OpenTelemetry metrics")
+	serveCmd.Flags().Bool("otel-traces-enabled", true, "Enable OpenTelemetry traces")
 }

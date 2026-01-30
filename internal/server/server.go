@@ -22,6 +22,7 @@ import (
 	"github.com/markb/sblite/internal/functions"
 	"github.com/markb/sblite/internal/log"
 	"github.com/markb/sblite/internal/mail"
+	"github.com/markb/sblite/internal/observability"
 	"github.com/markb/sblite/internal/oauth"
 	"github.com/markb/sblite/internal/realtime"
 	"github.com/markb/sblite/internal/rest"
@@ -89,6 +90,9 @@ type Server struct {
 
 	// Static file serving
 	staticDir string
+
+	// Observability
+	telemetry *observability.Telemetry
 }
 
 // ServerConfig holds server configuration.
@@ -245,6 +249,11 @@ func (s *Server) SetMigrationService(svc *migration.Service) {
 	s.dashboardHandler.SetMigrationService(svc)
 }
 
+// SetTelemetry sets the OpenTelemetry manager for the server.
+func (s *Server) SetTelemetry(tel *observability.Telemetry) {
+	s.telemetry = tel
+}
+
 // applyPersistedSettings applies settings persisted in the dashboard to the server config.
 // This is called after the dashboard handler is initialized.
 func (s *Server) applyPersistedSettings() {
@@ -326,6 +335,11 @@ func (s *Server) ReloadMail(cfg *dashboard.MailConfig) error {
 }
 
 func (s *Server) setupRoutes() {
+	// Apply OTel middleware if enabled
+	if s.telemetry != nil && s.telemetry.Config().ShouldEnable() {
+		s.router.Use(observability.HTTPMiddleware(s.telemetry, "sblite"))
+	}
+
 	// CORS middleware for browser-based apps
 	s.router.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},
