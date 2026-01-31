@@ -41,6 +41,7 @@ func TestFullAuthFlow(t *testing.T) {
 	}
 
 	srv := server.New(database, "test-secret-key-min-32-characters", mail.DefaultConfig(), t.TempDir()+"/migrations", t.TempDir()+"/storage")
+	srv.SetupRoutes()
 
 	// 1. Signup
 	signupBody := `{"email": "test@example.com", "password": "password123"}`
@@ -145,6 +146,7 @@ func TestFullRESTFlow(t *testing.T) {
 
 	jwtSecret := "test-secret-key-min-32-characters"
 	srv := server.New(database, jwtSecret, mail.DefaultConfig(), t.TempDir()+"/migrations", t.TempDir()+"/storage")
+	srv.SetupRoutes()
 	apiKey := generateTestAPIKey(jwtSecret, "anon")
 
 	// 1. Create todo

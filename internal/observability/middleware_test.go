@@ -39,6 +39,7 @@ func TestMiddlewareWithEnabledTelemetry(t *testing.T) {
 	cfg := NewConfig()
 	cfg.Exporter = "stdout"
 	cfg.TracesEnabled = true
+	cfg.SampleRate = 1.0 // Ensure all traces are sampled for testing
 
 	tel, cleanup, _ := Init(nil, cfg)
 	defer cleanup()

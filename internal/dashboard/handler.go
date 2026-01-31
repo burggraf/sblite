@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"bytes"
 	"database/sql"
-	"embed"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -25,6 +24,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/markb/sblite/internal/dashboard/assets"
 	"github.com/markb/sblite/internal/dashboard/migration"
 	"github.com/markb/sblite/internal/fts"
 	"github.com/markb/sblite/internal/functions"
@@ -37,8 +37,11 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-//go:embed static/*
-var staticFS embed.FS
+// DashboardFS returns the sub-filesystem for the dashboard static files.
+// This handles both the legacy static/ folder and the new React dashboard.
+func DashboardFS() (fs.FS, error) {
+	return assets.GetStatic()
+}
 
 // RealtimeStatsProvider provides realtime statistics
 type RealtimeStatsProvider interface {
@@ -433,8 +436,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	})
 
 	// Static files - use Route group to ensure priority
+	// Handle both /_/static/* (legacy) and /_/assets/* (React build)
 	r.Route("/static", func(r chi.Router) {
 		r.Get("/*", h.handleStatic)
+	})
+	r.Route("/assets", func(r chi.Router) {
+		r.Get("/*", h.handleAssets)
 	})
 
 	// SPA - serve index.html for root and use NotFound for other routes
@@ -443,7 +450,18 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 }
 
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
-	content, err := staticFS.ReadFile("static/index.html")
+	// Redirect /_ to /_/ for React Router basename to work correctly
+	if r.URL.Path == "/_" {
+		http.Redirect(w, r, "/_/", http.StatusMovedPermanently)
+		return
+	}
+
+	dashboardFS, err := DashboardFS()
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	content, err := fs.ReadFile(dashboardFS, "index.html")
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -456,7 +474,14 @@ func (h *Handler) handleStatic(w http.ResponseWriter, r *http.Request) {
 	// Get the file path from chi wildcard parameter
 	path := chi.URLParam(r, "*")
 
-	content, err := staticFS.ReadFile("static/" + path)
+	// Use legacy static folder for backward compatibility
+	staticFS, err := assets.GetLegacyStatic()
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	content, err := fs.ReadFile(staticFS, path)
 	if err != nil {
 		if _, ok := err.(*fs.PathError); ok {
 			http.NotFound(w, r)
@@ -474,6 +499,59 @@ func (h *Handler) handleStatic(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/javascript; charset=utf-8"
 	} else if strings.HasSuffix(path, ".html") {
 		contentType = "text/html; charset=utf-8"
+	} else if strings.HasSuffix(path, ".json") {
+		contentType = "application/json; charset=utf-8"
+	} else if strings.HasSuffix(path, ".svg") {
+		contentType = "image/svg+xml"
+	} else if strings.HasSuffix(path, ".png") {
+		contentType = "image/png"
+	} else if strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".jpeg") {
+		contentType = "image/jpeg"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Write(content)
+}
+
+func (h *Handler) handleAssets(w http.ResponseWriter, r *http.Request) {
+	// Get the file path from chi wildcard parameter
+	path := chi.URLParam(r, "*")
+
+	dashboardFS, err := DashboardFS()
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Prepend "assets/" to the path since the React build puts files in dist/assets/
+	content, err := fs.ReadFile(dashboardFS, "assets/"+path)
+	if err != nil {
+		if _, ok := err.(*fs.PathError); ok {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Set content type based on extension
+	contentType := "application/octet-stream"
+	if strings.HasSuffix(path, ".css") {
+		contentType = "text/css; charset=utf-8"
+	} else if strings.HasSuffix(path, ".js") {
+		contentType = "application/javascript; charset=utf-8"
+	} else if strings.HasSuffix(path, ".html") {
+		contentType = "text/html; charset=utf-8"
+	} else if strings.HasSuffix(path, ".json") {
+		contentType = "application/json; charset=utf-8"
+	} else if strings.HasSuffix(path, ".svg") {
+		contentType = "image/svg+xml"
+	} else if strings.HasSuffix(path, ".png") {
+		contentType = "image/png"
+	} else if strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".jpeg") {
+		contentType = "image/jpeg"
+	} else if strings.HasSuffix(path, ".woff2") {
+		contentType = "font/woff2"
 	}
 
 	w.Header().Set("Content-Type", contentType)
