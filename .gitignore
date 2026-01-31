@@ -23,3 +23,7 @@ log.db
 
 # runtime binaries
 edge-runtime/
+
+# Dashboard build artifacts
+dashboard/dist
+internal/dashboard/assets/dist
