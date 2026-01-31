@@ -697,17 +697,17 @@ func (h *Handler) handleListTables(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var tables []map[string]interface{}
+	var tables []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			continue
 		}
-		tables = append(tables, map[string]interface{}{"name": name})
+		tables = append(tables, name)
 	}
 
 	if tables == nil {
-		tables = []map[string]interface{}{}
+		tables = []string{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

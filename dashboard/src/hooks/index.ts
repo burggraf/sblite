@@ -5,7 +5,6 @@
 
 import { useEffect, useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { useUIStore } from '@/stores/uiStore'
 
 /**
  * Hook to get a value from localStorage
@@ -206,20 +205,13 @@ export function useToast() {
  * Hook to apply theme to document
  */
 export function useThemeEffect() {
-  const theme = useUIStore((state) => state.theme)
-
   useEffect(() => {
     if (typeof document !== 'undefined') {
       const root = document.documentElement
-      if (theme === 'dark') {
-        root.classList.add('dark')
-      } else {
-        root.classList.remove('dark')
-      }
+      // Default to dark mode
+      root.classList.add('dark')
     }
-  }, [theme])
-
-  return theme
+  }, [])
 }
 
 /**

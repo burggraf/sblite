@@ -165,6 +165,23 @@ export const dataApi = {
 // Users API
 // ============================================================================
 
+export interface User {
+  id: string
+  email: string | null
+  is_anonymous: boolean
+  created_at: string | null
+  updated_at: string | null
+  last_sign_in_at: string | null
+  email_confirmed_at: string | null
+  user_metadata: Record<string, unknown>
+  app_metadata: Record<string, unknown>
+}
+
+export interface UsersListResponse {
+  users: User[]
+  total: number
+}
+
 export const usersApi = {
   list: (params?: {
     limit?: number
@@ -177,10 +194,10 @@ export const usersApi = {
     if (params?.filter) searchParams.set('filter', params.filter)
 
     const query = searchParams.toString()
-    return request<{ users: unknown[]; total: number }>(`/users${query ? `?${query}` : ''}`)
+    return request<UsersListResponse>(`/users${query ? `?${query}` : ''}`)
   },
 
-  get: (id: string) => request<unknown>(`/users/${id}`),
+  get: (id: string) => request<User>(`/users/${id}`),
 
   create: (data: { email: string; password?: string; email_confirm?: boolean }) =>
     post<{ id: string }>('/users', data),
@@ -191,7 +208,7 @@ export const usersApi = {
     email?: string
     password?: string
     email_confirm?: boolean
-    metadata?: Record<string, unknown>
+    user_metadata?: Record<string, unknown>
     app_metadata?: Record<string, unknown>
   }) => patch<void>(`/users/${id}`, data),
 

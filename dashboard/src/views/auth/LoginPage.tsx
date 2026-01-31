@@ -4,7 +4,8 @@
  */
 
 import { useState } from "react"
-import { useAuthStore } from "@/stores/authStore"
+import { useNavigate } from "react-router-dom"
+import { useAuth } from "@/contexts/AuthContext"
 import { useToast } from "@/hooks"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -12,21 +13,23 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
 export function LoginPage() {
-  const { login, loading, error } = useAuthStore()
+  const navigate = useNavigate()
+  const { login, loading } = useAuth()
   const { success, error: showError } = useToast()
 
   const [password, setPassword] = useState("")
+  const [error, setError] = useState("")
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    setError("")
 
     try {
       await login(password)
       success("Login successful", "Welcome back!")
-      // Force navigation using window.location
-      window.location.href = "/_/tables"
-    } catch {
-      showError("Login failed", error || "Invalid password. Please try again.")
+      navigate("/tables")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid password. Please try again.")
     }
   }
 

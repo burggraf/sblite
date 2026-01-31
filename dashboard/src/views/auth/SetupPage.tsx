@@ -5,7 +5,7 @@
 
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { useAuthStore } from "@/stores/authStore"
+import { useAuth } from "@/contexts/AuthContext"
 import { useToast } from "@/hooks"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -14,12 +14,13 @@ import { Label } from "@/components/ui/label"
 
 export function SetupPage() {
   const navigate = useNavigate()
-  const { setup, loading, error } = useAuthStore()
+  const { setup, loading } = useAuth()
   const { success, error: showError } = useToast()
 
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [validationError, setValidationError] = useState("")
+  const [error, setError] = useState("")
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -39,9 +40,9 @@ export function SetupPage() {
     try {
       await setup(password)
       success("Setup complete", "Your dashboard password has been set.")
-      navigate("/")
-    } catch {
-      showError("Setup failed", error || "Failed to set password. Please try again.")
+      navigate("/tables")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to set password. Please try again.")
     }
   }
 
